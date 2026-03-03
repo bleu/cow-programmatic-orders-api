@@ -1,16 +1,16 @@
 import { relations } from "ponder";
-import { conditionalOrder, orders } from "./tables";
+import { conditionalOrder, discreteOrder } from "./tables";
 
 export const conditionalOrderRelations = relations(
   conditionalOrder,
   ({ many }) => ({
-    orders: many(orders),
+    discreteOrders: many(discreteOrder),
   })
 );
 
-export const ordersRelations = relations(orders, ({ one }) => ({
+export const discreteOrderRelations = relations(discreteOrder, ({ one }) => ({
   conditionalOrder: one(conditionalOrder, {
-    fields: [orders.conditionalOrderId],
+    fields: [discreteOrder.conditionalOrderId],
     references: [conditionalOrder.id],
   }),
 }));
