@@ -1,5 +1,5 @@
 import { ponder } from "ponder:registry";
-import { conditionalOrder } from "ponder:schema";
+import { conditionalOrderGenerator, transaction } from "ponder:schema";
 import { encodeAbiParameters, keccak256 } from "viem";
 import { getOrderTypeFromHandler } from "../../utils/order-types";
 
@@ -28,10 +28,21 @@ ponder.on(
 
     console.debug(`[ComposableCow] ConditionalOrderCreated id=${event.id} chain=${context.chain.id} owner=${owner} orderType=${orderType} block=${event.block.number}`);
 
+    // Upsert transaction row (idempotent — multiple events may share a tx)
     await context.db
-      .insert(conditionalOrder)
+      .insert(transaction)
       .values({
-        id: event.id,
+        hash: event.transaction.hash,
+        chainId: context.chain.id,
+        blockNumber: event.block.number,
+        blockTimestamp: event.block.timestamp,
+      })
+      .onConflictDoNothing();
+
+    await context.db
+      .insert(conditionalOrderGenerator)
+      .values({
+        eventId: event.id,
         chainId: context.chain.id,
         owner: owner.toLowerCase() as `0x${string}`,
         handler: handler.toLowerCase() as `0x${string}`,
@@ -42,9 +53,6 @@ ponder.on(
         status: "Active",
         decodedParams: null,
         txHash: event.transaction.hash,
-        blockNumber: event.block.number,
-        blockTimestamp: event.block.timestamp,
-        createdAt: event.block.timestamp,
       })
       .onConflictDoNothing();
   }
