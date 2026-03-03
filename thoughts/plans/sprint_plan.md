@@ -49,7 +49,7 @@
 ### S1.3 — Composable CoW Event Indexing
 **Goal:** Index `ConditionalOrderCreated` and cancellation events
 
-- [ ] Define schema tables: `conditionalOrder` (owner, handler, salt, staticInput, hash, txHash, chainId, blockNumber, cancelled, etc.)
+- [ ] Define schema tables: `conditionalOrderGenerator` (eventId, chainId, owner, handler, hash, txHash, etc.), `transaction` (hash, chainId, blockNumber, blockTimestamp), `discreteOrder` (composite PK)
 - [ ] Define enum for order types (TWAP, StopLoss, PerpetualSwap, GoodAfterTime, TradeAboveThreshold)
 - [ ] Register handler for `ComposableCoW:ConditionalOrderCreated` event
 - [ ] Compute and store `keccak256(abi.encode(handler, salt, staticInput))` as the conditional order hash
