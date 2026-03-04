@@ -9,10 +9,12 @@
     "db": "ponder db",
     "codegen": "ponder codegen",
     "lint": "eslint . --ext .ts",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "test": "vitest run"
   },
   "dependencies": {
-    "@cowprotocol/cow-sdk": "^7.2.13",
+    "@cowprotocol/cow-sdk": "^7.3.8",
+    "@cowprotocol/sdk-composable": "^0.1.34",
     "@cowprotocol/sdk-viem-adapter": "^0.3.1",
     "hono": "^4.5.0",
     "ponder": "^0.16.2",
@@ -24,7 +26,8 @@
     "eslint-config-ponder": "^0.16.2",
     "typescript": "^5.2.2",
     "vite": "^6.0.0",
-    "vite-tsconfig-paths": "^5.0.0"
+    "vite-tsconfig-paths": "^5.0.0",
+    "vitest": "^2.0.0"
   },
   "engines": {
     "node": ">=18.14"
