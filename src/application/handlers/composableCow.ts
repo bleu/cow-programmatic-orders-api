@@ -1,11 +1,13 @@
 import { ponder } from "ponder:registry";
-import { conditionalOrder } from "ponder:schema";
+import { conditionalOrderGenerator, transaction } from "ponder:schema";
 import { encodeAbiParameters, keccak256 } from "viem";
+import { getOrderTypeFromHandler } from "../../utils/order-types";
 
 ponder.on(
   "ComposableCow:ConditionalOrderCreated",
   async ({ event, context }) => {
-    const { handler, salt, staticInput } = event.args.params;
+    const { owner, params } = event.args;
+    const { handler, salt, staticInput } = params;
 
     const encoded = encodeAbiParameters(
       [
@@ -20,18 +22,41 @@ ponder.on(
       ],
       [{ handler, salt, staticInput }]
     );
-
     const hash = keccak256(encoded);
 
+    const orderType = getOrderTypeFromHandler(handler, context.chain.id);
+
+    if (!orderType) {
+      console.warn(`[ComposableCow] Unknown handler ${handler} on chain ${context.chain.id}, skipping event ${event.id}`);
+      return;
+    }
+
+    console.debug(`[ComposableCow] ConditionalOrderCreated id=${event.id} chain=${context.chain.id} owner=${owner} orderType=${orderType} block=${event.block.number}`);
+
+    // Upsert transaction row (idempotent — multiple events may share a tx)
     await context.db
-      .insert(conditionalOrder)
+      .insert(transaction)
       .values({
-        id: event.id,
-        owner: event.args.owner,
-        handler,
+        hash: event.transaction.hash,
+        chainId: context.chain.id,
+        blockNumber: event.block.number,
+        blockTimestamp: event.block.timestamp,
+      })
+      .onConflictDoNothing();
+
+    await context.db
+      .insert(conditionalOrderGenerator)
+      .values({
+        eventId: event.id,
+        chainId: context.chain.id,
+        owner: owner.toLowerCase() as `0x${string}`,
+        handler: handler.toLowerCase() as `0x${string}`,
         salt,
         staticInput,
         hash,
+        orderType,
+        status: "Active",
+        decodedParams: null,
         txHash: event.transaction.hash,
       })
       .onConflictDoNothing();

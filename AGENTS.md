@@ -44,6 +44,8 @@ Start PostgreSQL with `docker compose up -d` to use it instead of the default SQ
 | File | When to read |
 |------|--------------|
 | `agent_docs/architecture.md` | Full data-flow, file responsibilities, schema details |
+| `agent_docs/code-patterns.md` | Schema/naming conventions (snake_case, composite PK, eventId) — **check before schema or handler changes** |
+| `agent_docs/token-indexer-overview.md` | Full Ponder patterns (handlers, repos, services) — **read before writing any implementation plan** |
 | `thoughts/tasks/` | Linear ticket context for each sprint task |
 | `thoughts/reference_docs/grant_proposal.md` | Full project scope across all milestones |
 

@@ -1,16 +1,24 @@
 import { relations } from "ponder";
-import { conditionalOrder, orders } from "./tables";
+import { conditionalOrderGenerator, discreteOrder, transaction } from "./tables";
 
-export const conditionalOrderRelations = relations(
-  conditionalOrder,
-  ({ many }) => ({
-    orders: many(orders),
+export const transactionRelations = relations(transaction, ({ many }) => ({
+  conditionalOrderGenerators: many(conditionalOrderGenerator),
+}));
+
+export const conditionalOrderGeneratorRelations = relations(
+  conditionalOrderGenerator,
+  ({ one, many }) => ({
+    transaction: one(transaction, {
+      fields: [conditionalOrderGenerator.chainId, conditionalOrderGenerator.txHash],
+      references: [transaction.chainId, transaction.hash],
+    }),
+    discreteOrders: many(discreteOrder),
   })
 );
 
-export const ordersRelations = relations(orders, ({ one }) => ({
-  conditionalOrder: one(conditionalOrder, {
-    fields: [orders.conditionalOrderId],
-    references: [conditionalOrder.id],
+export const discreteOrderRelations = relations(discreteOrder, ({ one }) => ({
+  conditionalOrderGenerator: one(conditionalOrderGenerator, {
+    fields: [discreteOrder.chainId, discreteOrder.conditionalOrderGeneratorId],
+    references: [conditionalOrderGenerator.chainId, conditionalOrderGenerator.eventId],
   }),
 }));
