@@ -11,12 +11,6 @@ importers:
       '@cowprotocol/cow-sdk':
         specifier: ^7.3.8
         version: 7.3.8(@openzeppelin/merkle-tree@1.0.8)(ajv@8.18.0)(cross-fetch@3.2.0)(ipfs-only-hash@4.0.0)(multiformats@9.9.0)
-      '@cowprotocol/sdk-composable':
-        specifier: ^0.1.34
-        version: 0.1.34
-      '@cowprotocol/sdk-viem-adapter':
-        specifier: ^0.3.1
-        version: 0.3.8(viem@2.46.3(typescript@5.9.3))
       hono:
         specifier: ^4.5.0
         version: 4.12.3
@@ -96,9 +90,6 @@ packages:
   '@cowprotocol/sdk-common@0.6.2':
     resolution: {integrity: sha512-zoifb8uzi1b8jQh7SidMx3iqRIlL+eu38MzmGIOtcO10oDNEgu8ved479baLdclu+uXb0soutOjAYLj0TAIEFA==}
 
-  '@cowprotocol/sdk-composable@0.1.34':
-    resolution: {integrity: sha512-HxfGMMFSJc1kSjpIjZYwVcZP8UfeNfirN8SZXhZA5q1pnenUdAKZAPnTUjVRQD++CkRDIbVZRq4jCaxO1Bmk4A==}
-
   '@cowprotocol/sdk-config@0.8.1':
     resolution: {integrity: sha512-gKrILavzbIYkvju0Ko58KAw5b+YM6RN7MYfk7qND9RkGi1E99gHOgfgwp9hWvNhlXf2V/ltM0INl5OV2tQuMKg==}
 
@@ -113,11 +104,6 @@ packages:
 
   '@cowprotocol/sdk-trading@1.0.0':
     resolution: {integrity: sha512-iQPA3Fv2eu9jlTD0/YKWGTm425JWhjveSpk9UVYWkK0tP3F/SIAg39DgZv/V3Kd34Z4cnNjRb5mIhFz1v+vVMA==}
-
-  '@cowprotocol/sdk-viem-adapter@0.3.8':
-    resolution: {integrity: sha512-sYsaj3EVgajlF88ZBM0XuEQAMRpHgNgarjvK6FJ/nYn/v37Y+Fz6BbO1/sPqjZgQzAkYgtKzCJz8otZADdnH0w==}
-    peerDependencies:
-      viem: ^2.28.4
 
   '@electric-sql/pglite@0.2.13':
     resolution: {integrity: sha512-YRY806NnScVqa21/1L1vaysSQ+0/cAva50z7vlwzaGiBOTS9JhdzIRHN0KfgMhobFAphbznZJ7urMso4RtMBIQ==}
@@ -2678,18 +2664,6 @@ snapshots:
     dependencies:
       '@cowprotocol/sdk-config': 0.8.1
 
-  '@cowprotocol/sdk-composable@0.1.34':
-    dependencies:
-      '@cowprotocol/sdk-common': 0.6.2
-      '@cowprotocol/sdk-config': 0.8.1
-      '@cowprotocol/sdk-contracts-ts': 1.6.1
-      '@cowprotocol/sdk-order-book': 1.0.0
-      '@cowprotocol/sdk-order-signing': 0.1.34
-      '@openzeppelin/merkle-tree': 1.0.8
-    transitivePeerDependencies:
-      - encoding
-      - supports-color
-
   '@cowprotocol/sdk-config@0.8.1':
     dependencies:
       exponential-backoff: 3.1.3
@@ -2734,11 +2708,6 @@ snapshots:
       - encoding
       - ipfs-only-hash
       - multiformats
-
-  '@cowprotocol/sdk-viem-adapter@0.3.8(viem@2.46.3(typescript@5.9.3))':
-    dependencies:
-      '@cowprotocol/sdk-common': 0.6.2
-      viem: 2.46.3(typescript@5.9.3)
 
   '@electric-sql/pglite@0.2.13': {}
 
@@ -2959,8 +2928,10 @@ snapshots:
     dependencies:
       '@ethereumjs/util': 8.1.0
       crc-32: 1.2.2
+    optional: true
 
-  '@ethereumjs/rlp@4.0.1': {}
+  '@ethereumjs/rlp@4.0.1':
+    optional: true
 
   '@ethereumjs/tx@4.2.0':
     dependencies:
@@ -2968,12 +2939,14 @@ snapshots:
       '@ethereumjs/rlp': 4.0.1
       '@ethereumjs/util': 8.1.0
       ethereum-cryptography: 2.2.1
+    optional: true
 
   '@ethereumjs/util@8.1.0':
     dependencies:
       '@ethereumjs/rlp': 4.0.1
       ethereum-cryptography: 2.2.1
       micro-ftch: 0.3.1
+    optional: true
 
   '@fastify/busboy@3.2.0': {}
 
@@ -3069,8 +3042,10 @@ snapshots:
       '@metamask/utils': 9.3.0
     transitivePeerDependencies:
       - supports-color
+    optional: true
 
-  '@metamask/superstruct@3.2.1': {}
+  '@metamask/superstruct@3.2.1':
+    optional: true
 
   '@metamask/utils@9.3.0':
     dependencies:
@@ -3085,6 +3060,7 @@ snapshots:
       uuid: 9.0.1
     transitivePeerDependencies:
       - supports-color
+    optional: true
 
   '@multiformats/base-x@4.0.1': {}
 
@@ -3093,16 +3069,19 @@ snapshots:
   '@noble/curves@1.4.2':
     dependencies:
       '@noble/hashes': 1.4.0
+    optional: true
 
   '@noble/curves@1.9.0':
     dependencies:
       '@noble/hashes': 1.8.0
+    optional: true
 
   '@noble/curves@1.9.1':
     dependencies:
       '@noble/hashes': 1.8.0
 
-  '@noble/hashes@1.4.0': {}
+  '@noble/hashes@1.4.0':
+    optional: true
 
   '@noble/hashes@1.8.0': {}
 
@@ -3126,6 +3105,7 @@ snapshots:
       ethereum-cryptography: 3.2.0
     transitivePeerDependencies:
       - supports-color
+    optional: true
 
   '@pkgjs/parseargs@0.11.0':
     optional: true
@@ -3236,7 +3216,8 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.59.0':
     optional: true
 
-  '@scure/base@1.1.9': {}
+  '@scure/base@1.1.9':
+    optional: true
 
   '@scure/base@1.2.6': {}
 
@@ -3245,6 +3226,7 @@ snapshots:
       '@noble/curves': 1.4.2
       '@noble/hashes': 1.4.0
       '@scure/base': 1.1.9
+    optional: true
 
   '@scure/bip32@1.7.0':
     dependencies:
@@ -3256,6 +3238,7 @@ snapshots:
     dependencies:
       '@noble/hashes': 1.4.0
       '@scure/base': 1.1.9
+    optional: true
 
   '@scure/bip39@1.6.0':
     dependencies:
@@ -3265,6 +3248,7 @@ snapshots:
   '@types/debug@4.1.12':
     dependencies:
       '@types/ms': 2.1.0
+    optional: true
 
   '@types/estree@1.0.8': {}
 
@@ -3274,7 +3258,8 @@ snapshots:
 
   '@types/minimist@1.2.5': {}
 
-  '@types/ms@2.1.0': {}
+  '@types/ms@2.1.0':
+    optional: true
 
   '@types/node@20.19.35':
     dependencies:
@@ -3602,7 +3587,8 @@ snapshots:
     dependencies:
       is-what: 5.5.0
 
-  crc-32@1.2.2: {}
+  crc-32@1.2.2:
+    optional: true
 
   cross-fetch@3.2.0:
     dependencies:
@@ -3829,6 +3815,7 @@ snapshots:
       '@noble/hashes': 1.4.0
       '@scure/bip32': 1.4.0
       '@scure/bip39': 1.3.0
+    optional: true
 
   ethereum-cryptography@3.2.0:
     dependencies:
@@ -3837,6 +3824,7 @@ snapshots:
       '@noble/hashes': 1.8.0
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0
+    optional: true
 
   event-target-shim@5.0.1: {}
 
@@ -4234,7 +4222,8 @@ snapshots:
 
   merge2@1.4.1: {}
 
-  micro-ftch@0.3.1: {}
+  micro-ftch@0.3.1:
+    optional: true
 
   micromatch@4.0.8:
     dependencies:
@@ -4571,7 +4560,8 @@ snapshots:
       - utf-8-validate
       - zod
 
-  pony-cause@2.1.11: {}
+  pony-cause@2.1.11:
+    optional: true
 
   postcss@8.5.6:
     dependencies:
@@ -4918,7 +4908,8 @@ snapshots:
 
   util-deprecate@1.0.2: {}
 
-  uuid@9.0.1: {}
+  uuid@9.0.1:
+    optional: true
 
   validate-npm-package-license@3.0.4:
     dependencies:
