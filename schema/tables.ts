@@ -8,7 +8,6 @@ export const orderTypeEnum = onchainEnum("order_type", [
   "PerpetualSwap",
   "GoodAfterTime",
   "TradeAboveThreshold",
-  "Unknown",
 ]);
 
 export const orderStatusEnum = onchainEnum("order_status", [

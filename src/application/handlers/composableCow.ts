@@ -26,6 +26,11 @@ ponder.on(
 
     const orderType = getOrderTypeFromHandler(handler, context.chain.id);
 
+    if (!orderType) {
+      console.warn(`[ComposableCow] Unknown handler ${handler} on chain ${context.chain.id}, skipping event ${event.id}`);
+      return;
+    }
+
     console.debug(`[ComposableCow] ConditionalOrderCreated id=${event.id} chain=${context.chain.id} owner=${owner} orderType=${orderType} block=${event.block.number}`);
 
     // Upsert transaction row (idempotent — multiple events may share a tx)
