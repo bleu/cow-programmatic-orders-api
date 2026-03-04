@@ -27,12 +27,14 @@ ponder.on(
 
     const orderType = getOrderTypeFromHandler(handler, context.chain.id);
 
-    if (!orderType) {
-      console.warn(`[ComposableCow] Unknown handler ${handler} on chain ${context.chain.id}, skipping event ${event.id}`);
-      return;
+    if (orderType === "Unknown") {
+      console.warn(
+        `[ComposableCow] Unknown handler ${handler} on chain ${context.chain.id}, ` +
+        `saving as Unknown — event=${event.id}`
+      );
+    } else {
+      console.debug(`[ComposableCow] ConditionalOrderCreated id=${event.id} chain=${context.chain.id} owner=${owner} orderType=${orderType} block=${event.block.number}`);
     }
-
-    console.debug(`[ComposableCow] ConditionalOrderCreated id=${event.id} chain=${context.chain.id} owner=${owner} orderType=${orderType} block=${event.block.number}`);
 
     // Upsert transaction row (idempotent — multiple events may share a tx)
     await context.db
@@ -57,14 +59,17 @@ ponder.on(
         hash,
         orderType,
         status: "Active",
-        decodedParams: (() => {
+        ...(() => {
+          if (orderType === "Unknown") {
+            return { decodedParams: null, decodeError: null };
+          }
           try {
-            return decodeStaticInput(orderType, staticInput) ?? null;
+            return { decodedParams: decodeStaticInput(orderType, staticInput) ?? null, decodeError: null };
           } catch (err) {
             console.warn(
               `[ComposableCow] Failed to decode staticInput for ${orderType} event=${event.id}: ${err}`
             );
-            return null;
+            return { decodedParams: null, decodeError: "invalid_static_input" };
           }
         })(),
         txHash: event.transaction.hash,

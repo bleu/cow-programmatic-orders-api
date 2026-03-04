@@ -21,5 +21,6 @@ export function decodeStaticInput(orderType: OrderType, staticInput: Hex): unkno
     case "PerpetualSwap":       return decodePerpetualSwapStaticInput(staticInput);
     case "GoodAfterTime":       return decodeGoodAfterTimeStaticInput(staticInput);
     case "TradeAboveThreshold": return decodeTradeAboveThresholdStaticInput(staticInput);
+    case "Unknown":             return null;
   }
 }

@@ -8,6 +8,7 @@ export const orderTypeEnum = onchainEnum("order_type", [
   "PerpetualSwap",
   "GoodAfterTime",
   "TradeAboveThreshold",
+  "Unknown",
 ]);
 
 export const orderStatusEnum = onchainEnum("order_status", [
@@ -43,7 +44,8 @@ export const conditionalOrderGenerator = onchainTable(
     hash: t.hex().notNull(),               // keccak256(abi.encode(params))
     orderType: orderTypeEnum("order_type").notNull(),
     status: orderStatusEnum("order_status").notNull().default("Active"),
-    decodedParams: t.json(),               // null until decoder tasks populate it
+    decodedParams: t.json(),               // null if unknown type or decode failed
+    decodeError: t.text(),                 // "invalid_static_input" | null
     txHash: t.hex().notNull(),             // FK → transaction.hash
   }),
   (table) => ({

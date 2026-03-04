@@ -1,11 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { encodeAbiParameters } from "viem";
+import { encodeAbiParameters, type Hex } from "viem";
 import {
   decodeTwapStaticInput,
   decodeStopLossStaticInput,
   decodePerpetualSwapStaticInput,
   decodeGoodAfterTimeStaticInput,
   decodeTradeAboveThresholdStaticInput,
+  decodeStaticInput,
 } from "../index";
 
 const ADDR_A = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as const;
@@ -149,5 +150,16 @@ describe("decodeTradeAboveThresholdStaticInput", () => {
     expect(result.threshold).toBe(1000000n);
     expect(result.validityBucketSeconds).toBe(1800);
     expect(result.receiver).toBe(ADDR_C);
+  });
+});
+
+describe("decodeStaticInput error handling", () => {
+  it("throws on malformed staticInput for a known type", () => {
+    expect(() => decodeTwapStaticInput("0xdeadbeef")).toThrow();
+  });
+
+  it("returns null for Unknown order type", () => {
+    const result = decodeStaticInput("Unknown", "0x1234" as Hex);
+    expect(result).toBeNull();
   });
 });
