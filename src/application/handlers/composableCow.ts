@@ -1,4 +1,5 @@
 import { ponder } from "ponder:registry";
+import { replaceBigInts } from "ponder";
 import { conditionalOrderGenerator, transaction } from "ponder:schema";
 import { encodeAbiParameters, keccak256 } from "viem";
 import { getOrderTypeFromHandler } from "../../utils/order-types";
@@ -33,7 +34,7 @@ ponder.on(
         `saving as Unknown — event=${event.id}`
       );
     } else {
-      console.debug(`[ComposableCow] ConditionalOrderCreated id=${event.id} chain=${context.chain.id} owner=${owner} orderType=${orderType} block=${event.block.number}`);
+      console.log(`[ComposableCow] ConditionalOrderCreated event=${event.id} chain=${context.chain.id} orderType=${orderType} block=${event.block.number}`);
     }
 
     // Upsert transaction row (idempotent — multiple events may share a tx)
@@ -64,11 +65,12 @@ ponder.on(
             return { decodedParams: null, decodeError: null };
           }
           try {
-            return { decodedParams: decodeStaticInput(orderType, staticInput) ?? null, decodeError: null };
+            const decoded = decodeStaticInput(orderType, staticInput) ?? null;
+            const decodedParams = decoded ? replaceBigInts(decoded, String) : null;
+            console.log(`[ComposableCow] Decoded event=${event.id} orderType=${orderType} decodedParams=${decodedParams ? "ok" : "null"}`);
+            return { decodedParams, decodeError: null };
           } catch (err) {
-            console.warn(
-              `[ComposableCow] Failed to decode staticInput for ${orderType} event=${event.id}: ${err}`
-            );
+            console.warn(`[ComposableCow] Decode failed event=${event.id} orderType=${orderType} err=${err}`);
             return { decodedParams: null, decodeError: "invalid_static_input" };
           }
         })(),
