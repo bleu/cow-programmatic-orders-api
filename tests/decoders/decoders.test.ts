@@ -7,7 +7,7 @@ import {
   decodeGoodAfterTimeStaticInput,
   decodeTradeAboveThresholdStaticInput,
   decodeStaticInput,
-} from "../index";
+} from "../../src/decoders/index";
 
 const ADDR_A = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as const;
 const ADDR_B = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" as const;
