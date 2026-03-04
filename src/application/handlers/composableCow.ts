@@ -2,6 +2,7 @@ import { ponder } from "ponder:registry";
 import { conditionalOrderGenerator, transaction } from "ponder:schema";
 import { encodeAbiParameters, keccak256 } from "viem";
 import { getOrderTypeFromHandler } from "../../utils/order-types";
+import { decodeStaticInput } from "../../decoders/index";
 
 ponder.on(
   "ComposableCow:ConditionalOrderCreated",
@@ -56,7 +57,16 @@ ponder.on(
         hash,
         orderType,
         status: "Active",
-        decodedParams: null,
+        decodedParams: (() => {
+          try {
+            return decodeStaticInput(orderType, staticInput) ?? null;
+          } catch (err) {
+            console.warn(
+              `[ComposableCow] Failed to decode staticInput for ${orderType} event=${event.id}: ${err}`
+            );
+            return null;
+          }
+        })(),
         txHash: event.transaction.hash,
       })
       .onConflictDoNothing();
