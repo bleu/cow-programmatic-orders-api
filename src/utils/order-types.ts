@@ -7,7 +7,8 @@ export type OrderType =
   | "StopLoss"
   | "PerpetualSwap"
   | "GoodAfterTime"
-  | "TradeAboveThreshold";
+  | "TradeAboveThreshold"
+  | "Unknown";
 
 const HANDLER_MAP: Record<number, Record<string, OrderType>> = {
   1: {
@@ -24,6 +25,6 @@ const HANDLER_MAP: Record<number, Record<string, OrderType>> = {
 export function getOrderTypeFromHandler(
   handler: string,
   chainId: number,
-): OrderType | null {
-  return HANDLER_MAP[chainId]?.[handler.toLowerCase()] ?? null;
+): OrderType {
+  return HANDLER_MAP[chainId]?.[handler.toLowerCase()] ?? "Unknown";
 }
