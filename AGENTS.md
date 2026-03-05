@@ -15,7 +15,7 @@ ComposableCoW contract (mainnet; gnosis/arbitrum in future sprints)
        ↓
   src/application/handlers/  (one file per contract)
        ↓
-  schema/tables.ts  (conditionalOrder, orders, ...)
+  schema/tables.ts  (transaction, conditionalOrderGenerator, discreteOrder)
        ↓
   src/api/index.ts  (Hono: /graphql  /  /sql/*)
 ```
@@ -44,8 +44,11 @@ Start PostgreSQL with `docker compose up -d` to use it instead of the default SQ
 | File | When to read |
 |------|--------------|
 | `agent_docs/architecture.md` | Full data-flow, file responsibilities, schema details |
+| `agent_docs/project-structure.md` | Current file map, schema tables, env vars, key commands |
 | `agent_docs/code-patterns.md` | Schema/naming conventions (snake_case, composite PK, eventId) — **check before schema or handler changes** |
 | `agent_docs/token-indexer-overview.md` | Full Ponder patterns (handlers, repos, services) — **read before writing any implementation plan** |
+| `agent_docs/decoder-reference.md` | All 5 order type ABI structs, handler addresses, PollResultErrors — **read before any decoder or M3 block-handler work** |
+| `agent_docs/slack_decisions_summary.md` | Technical decisions from CoW Protocol team (flash loans, CoWShed, orderbook, scope) — **read before planning M2/M3** |
 | `thoughts/tasks/` | Linear ticket context for each sprint task |
 | `thoughts/reference_docs/grant_proposal.md` | Full project scope across all milestones |
 

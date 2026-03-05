@@ -1,7 +1,7 @@
 # Architecture
 
 For a full file-by-file breakdown, schema overview, and environment variables table, see:
-`thoughts/analysis/ponder-project-structure.md`
+`agent_docs/project-structure.md`
 
 ---
 
@@ -22,12 +22,14 @@ src/application/handlers/composableCow.ts
   └─ ponder.on("ComposableCow:ConditionalOrderCreated", async ({ event, context }) => {
        1. Destructure event.args.params  →  { handler, salt, staticInput }
        2. encodeAbiParameters(tuple) + keccak256  →  hash
-       3. context.db.insert(conditionalOrder).values({...}).onConflictDoNothing()
+       3. context.db.insert(transaction).values({...}).onConflictDoNothing()
+       4. context.db.insert(conditionalOrderGenerator).values({...}).onConflictDoNothing()
      })
        │
        ▼
-schema/tables.ts  →  conditionalOrder table (id, owner, handler, salt, staticInput, hash, txHash)
-                 →  orders table (orderUid, conditionalOrderId)  [placeholder for S2.x]
+schema/tables.ts  →  transaction table (hash, chainId, blockNumber, blockTimestamp)
+                 →  conditionalOrderGenerator table (eventId, chainId, owner, handler, salt, staticInput, hash, orderType, status, decodedParams, txHash)
+                 →  discreteOrder table (orderUid, chainId, conditionalOrderGeneratorId)  [stub for M3]
 
 src/api/index.ts
   └─ Hono app
