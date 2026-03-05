@@ -28,7 +28,7 @@ Both are NOT in cow-sdk (per grant), so we need to implement from scratch.
 - [ ] Research Trade Above Threshold static input structure
 - [ ] Implement GAT decoder
 - [ ] Implement TAT decoder
-- [ ] Store decoded parameters in `conditionalOrder.decodedParams`
+- [ ] Store decoded parameters in `conditionalOrderGenerator.decodedParams`
 - [ ] Update event handler to call decoders for these order types
 - [ ] Add unit tests
 

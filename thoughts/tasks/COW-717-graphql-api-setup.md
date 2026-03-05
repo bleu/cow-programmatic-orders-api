@@ -69,8 +69,8 @@ With Ponder's automatic GraphQL generation from schema:
 
 ```graphql
 # List conditional orders with filters
-query ConditionalOrders($owner: String, $orderType: String, $chainId: Int) {
-  conditionalOrders(
+query ConditionalOrderGenerators($owner: String, $orderType: String, $chainId: Int) {
+  conditionalOrderGenerators(
     where: {
       owner: $owner
       orderType: $orderType
@@ -81,14 +81,13 @@ query ConditionalOrders($owner: String, $orderType: String, $chainId: Int) {
     first: 50
   ) {
     items {
-      id
+      eventId
       chainId
       owner
       handler
       orderType
       status
       decodedParams
-      createdAt
       discreteOrders {
         items {
           orderUid
@@ -102,10 +101,11 @@ query ConditionalOrders($owner: String, $orderType: String, $chainId: Int) {
   }
 }
 
-# Get single order by ID
-query ConditionalOrder($id: String!) {
-  conditionalOrder(id: $id) {
-    id
+# Get single order by chainId + eventId (composite PK)
+query ConditionalOrderGenerator($chainId: Int!, $eventId: String!) {
+  conditionalOrderGenerator(chainId: $chainId, eventId: $eventId) {
+    eventId
+    chainId
     owner
     handler
     salt
@@ -115,15 +115,18 @@ query ConditionalOrder($id: String!) {
     status
     decodedParams
     txHash
-    blockNumber
+    transaction {
+      blockNumber
+      blockTimestamp
+    }
   }
 }
 
 # Get orders by hash (for signature matching in M3)
 query OrdersByHash($hash: String!) {
-  conditionalOrders(where: { hash: $hash }) {
+  conditionalOrderGenerators(where: { hash: $hash }) {
     items {
-      id
+      eventId
       owner
       chainId
     }
@@ -137,7 +140,7 @@ Ensure relations are properly defined in `schema/relations.ts` so GraphQL can re
 
 ```typescript
 // Already in schema task, but verify:
-export const conditionalOrderRelations = relations(conditionalOrder, ({ many }) => ({
+export const conditionalOrderGeneratorRelations = relations(conditionalOrderGenerator, ({ many }) => ({
   discreteOrders: many(discreteOrder),
 }));
 ```
@@ -148,7 +151,7 @@ Ponder uses cursor-based pagination:
 
 ```graphql
 query PaginatedOrders($cursor: String) {
-  conditionalOrders(first: 50, after: $cursor) {
+  conditionalOrderGenerators(first: 50, after: $cursor) {
     items { ... }
     pageInfo {
       hasNextPage
@@ -162,11 +165,11 @@ query PaginatedOrders($cursor: String) {
 
 | Use Case | Query Pattern |
 |----------|---------------|
-| User's orders | `conditionalOrders(where: { owner: $address })` |
-| TWAP orders only | `conditionalOrders(where: { orderType: "TWAP" })` |
-| Orders on Gnosis | `conditionalOrders(where: { chainId: 100 })` |
-| Active orders | `conditionalOrders(where: { status: "Active" })` |
-| Order details | `conditionalOrder(id: $id)` |
+| User's orders | `conditionalOrderGenerators(where: { owner: $address })` |
+| TWAP orders only | `conditionalOrderGenerators(where: { orderType: "TWAP" })` |
+| Orders on Gnosis | `conditionalOrderGenerators(where: { chainId: 100 })` |
+| Active orders | `conditionalOrderGenerators(where: { status: "Active" })` |
+| Order details | `conditionalOrderGenerator(chainId: $chainId, eventId: $eventId)` |
 
 ## Acceptance Criteria
 

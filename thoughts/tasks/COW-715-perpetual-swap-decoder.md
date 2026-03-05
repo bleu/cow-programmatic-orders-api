@@ -23,7 +23,7 @@ The PoC already demonstrates matching Perpetual Swap orders via signature decodi
 
 - [ ] Research Perpetual Swap static input structure from composable-cow contracts
 - [ ] Implement Perpetual Swap static input decoder
-- [ ] Store decoded parameters in `conditionalOrder.decodedParams`
+- [ ] Store decoded parameters in `conditionalOrderGenerator.decodedParams`
 - [ ] Update event handler to call decoder for Perpetual Swap orders
 - [ ] Add unit tests against known on-chain Perpetual Swap orders (PoC example)
 

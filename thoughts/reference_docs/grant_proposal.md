@@ -64,7 +64,8 @@ Ponder automatically caches RPC calls, but has no built-in support for persisten
 - Event listening for Composable CoW order creation and cancellation
 - Historical backfilling and real-time monitoring
 - Decoders for all five order types (TWAP, Stop Loss, Perpetual Swap, Good After Time, Trade Above Threshold)
-- Integration of missing conditional orders (all except TWAP) into cow-sdk
+
+_Scope revised on forum ([Update #2](https://forum.cow.fi/t/grant-application-programmatic-orders-api/3346)): cow-sdk integration for new conditional orders was removed; decoders are implemented locally in this project._
 
 ### 2. Flash Loan Order Tracking & CoWShed Ownership Mapping _(1.5 weeks)_
 

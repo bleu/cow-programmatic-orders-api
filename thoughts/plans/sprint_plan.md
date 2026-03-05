@@ -57,17 +57,13 @@
 - [ ] Historical backfilling: verify all historical events are indexed correctly
 - [ ] Real-time monitoring: verify new events are picked up
 
-### S1.4 — cow-sdk Integration for Conditional Orders
-**Goal:** Integrate missing conditional order types into cow-sdk (upstream contribution)
+### S1.4 — Decoder Planning (Local Implementation)
+**Goal:** Plan local decoder implementation; use cow-sdk as reference only (upstream integration was removed from grant scope per [forum Update #2](https://forum.cow.fi/t/grant-application-programmatic-orders-api/3346))
 
-- [ ] Review cow-sdk composable package: what order types are already supported?
-- [ ] Identify missing decoders (all except TWAP are mentioned as missing)
-- [ ] Plan contribution to cow-sdk for Stop Loss, Perpetual Swap, Good After Time, Trade Above Threshold
-
-> **Questions to resolve:**
-> - What exactly is missing in cow-sdk? Only decoders or also encoders?
-> - Should this be a PR to cowprotocol/cow-sdk or a local implementation first?
-> - What's the process for contributing upstream?
+- [ ] Review cow-sdk composable package as reference: which order types have decoders we can mirror?
+- [ ] Document staticInput ABI / struct for each order type (TWAP, Stop Loss, Perpetual Swap, GAT, TAT)
+- [ ] Document decoder interface pattern for use in S2 decoder tasks
+- [ ] Note: all decoders are implemented locally in this project; no upstream PR to cow-sdk required for M1
 
 ---
 
@@ -86,7 +82,7 @@
 
 > **Questions to resolve:**
 > - What is the ABI / struct layout for each handler's staticInput?
-> - Are there existing decoder implementations we can reference besides cow-sdk?
+> - Use cow-sdk (e.g. TWAP) as reference; implement all decoders locally in this project.
 > - Should decoded data be stored as separate tables per type or a single polymorphic table?
 
 ### S2.2 — GraphQL API Setup
@@ -180,7 +176,7 @@
   - Decode ComposableCoW payload (proof, params, offchainInput)
   - Hash params and match with indexed conditional orders
 - [ ] Schema: `order` table (orderUid, conditionalOrderId, chainId, status, fillAmount, etc.)
-- [ ] Schema: relations between `order` and `conditionalOrder`
+- [ ] Schema: relations between `order` and `conditionalOrderGenerator`
 - [ ] Unit tests for signature decoding against known orders
 
 ### S4.3 — Research: Orderbook API Integration
@@ -348,7 +344,7 @@
 |---|---|---|
 | Block handler performance | Slow indexing, unusable in production | Early benchmarking (S6), optimize per-block work |
 | Orderbook API access | Can't integrate without access | Request access early (S1), design with mocks |
-| cow-sdk contribution delays | Missing decoders block M1 | Implement locally first, upstream later |
+| Decoder implementation delays | M1 delivery blocked | cow-sdk is reference only; decoders are local (scope per forum Update #2) |
 | MFW composable cow changes | Indexing logic may change | Monitor upstream, design for flexibility |
 | RPC costs / rate limits | Slow or failed indexing | Use CoW's private RPC, batch calls, caching |
 | Call trace support per chain | Flash loan Solution 1 may not work everywhere | Solution 2 as fallback |

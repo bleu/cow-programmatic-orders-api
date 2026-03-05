@@ -23,7 +23,7 @@ This decoder is NOT in cow-sdk (per grant), so we need to implement it from scra
 
 - [ ] Research Stop Loss static input structure from composable-cow contracts
 - [ ] Implement Stop Loss static input decoder
-- [ ] Store decoded parameters in `conditionalOrder.decodedParams`
+- [ ] Store decoded parameters in `conditionalOrderGenerator.decodedParams`
 - [ ] Update event handler to call decoder for Stop Loss orders
 - [ ] Add unit tests against known on-chain Stop Loss orders
 

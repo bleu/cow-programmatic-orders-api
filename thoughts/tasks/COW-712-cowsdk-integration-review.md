@@ -11,25 +11,24 @@ estimate: 1
 depends_on: []
 ---
 
-# cow-sdk Review & Decoder Integration Planning
+# cow-sdk Review & Decoder Planning (Reference Only)
 
 ## Problem
 
-The grant requires integrating missing conditional order types into cow-sdk. Before implementing decoders, we need to understand:
-- What's already available in cow-sdk
-- What's missing and needs implementation
-- Whether to implement locally first or contribute upstream immediately
+Decoders for all five order types are implemented **locally** in this project. The grant scope was revised on the forum ([Update #2](https://forum.cow.fi/t/grant-application-programmatic-orders-api/3346)): *"We're removing the cow-sdk integration for new conditional orders from the scope."* Before implementing decoders, we need to understand:
+- What's already available in cow-sdk (as reference, e.g. TWAP)
+- What we need to implement locally for each order type
+- The decoder interface pattern to follow
 
 This research task unblocks the decoder tasks in Sprint 2.
 
 ## Scope
 
-- [ ] Review cow-sdk composable package structure
-- [ ] Document which order types have decoders
-- [ ] Identify exact gaps (decoders, encoders, types)
+- [ ] Review cow-sdk composable package structure (reference only; no upstream contribution required)
+- [ ] Document which order types have decoders we can mirror or reference
+- [ ] Document staticInput ABI / struct for each order type
 - [ ] Review `PollResultErrors` pattern for future use (M3)
-- [ ] Decide: local implementation vs upstream PR
-- [ ] Document findings for decoder tasks
+- [ ] Document decoder interface and findings for local decoder implementation
 
 ## Technical Details
 
@@ -73,29 +72,22 @@ cow-sdk/packages/composable/src/
 | What's the decoder interface/pattern? | TBD |
 | Are encoders also missing? | TBD |
 
-### Decision: Local vs Upstream
+### Decision: Local Implementation (Grant Scope)
 
-**Factors to consider:**
-- Upstream contribution delays could block M1
-- Local implementation allows faster iteration
-- Eventually want everything in cow-sdk for ecosystem benefit
+**Grant scope (forum Update #2):** cow-sdk integration was removed. Decoders are implemented locally in this project.
 
-**Recommended approach (from Slack decisions):**
-> "Implement locally first, upstream later"
-
-This means:
-1. Implement decoders in this project for M1
-2. After grant completion, contribute back to cow-sdk
-3. Structure code so it can be easily ported
+- Implement all decoders in this repo for M1
+- Use cow-sdk as reference (e.g. TWAP, PollResultErrors pattern)
+- Upstream contribution to cow-sdk is out of scope for the grant; can be considered after handoff if desired
 
 ### Output: Decoder Planning Document
 
 Create a summary document with:
-- Available decoders in cow-sdk
-- Missing decoders we need to implement
+- Available decoders in cow-sdk (as reference)
+- What we need to implement locally for each order type
 - Interface pattern to follow
 - Static input ABI for each order type
-- Implementation priority
+- Implementation priority for S2 decoder tasks
 
 ## Acceptance Criteria
 
@@ -103,14 +95,13 @@ Create a summary document with:
 - [ ] All 5 order types assessed (available vs missing)
 - [ ] Decoder interface pattern documented
 - [ ] Static input struct for each order type documented (if found)
-- [ ] Decision documented: local implementation for M1
+- [ ] Decision documented: local implementation only (cow-sdk integration out of scope per grant)
 - [ ] Findings shared with team
 
 ## Open Questions
 
-- [ ] What's the contribution process for cow-sdk?
-- [ ] Are there existing tests we can reference?
-- [ ] Should we mirror cow-sdk's interface for easier porting?
+- [ ] Are there existing tests in cow-sdk we can reference for decoder behavior?
+- [ ] Should we mirror cow-sdk's interface for easier porting (if we contribute upstream later)?
 
 ## References
 

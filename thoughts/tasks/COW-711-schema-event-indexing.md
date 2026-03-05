@@ -25,9 +25,10 @@ The PoC has a basic schema but lacks order type classification, decoded paramete
 
 ## Scope
 
-- [ ] Define `conditionalOrder` table with all required fields
+- [ ] Define `conditionalOrderGenerator` table with all required fields
+- [ ] Define `transaction` table for tx metadata (blockNumber, blockTimestamp, hash)
 - [ ] Define enum for order types (TWAP, StopLoss, PerpetualSwap, GoodAfterTime, TradeAboveThreshold)
-- [ ] Define `orders` table for discrete orders (orderbook orders)
+- [ ] Define `discreteOrder` table for discrete orders (orderbook orders)
 - [ ] Define relations between tables
 - [ ] Implement `ComposableCow:ConditionalOrderCreated` event handler
 - [ ] Implement cancellation handler (if cancellation event exists)
@@ -39,7 +40,7 @@ The PoC has a basic schema but lacks order type classification, decoded paramete
 ### Schema Design (`schema/tables.ts`)
 
 ```typescript
-import { onchainTable, onchainEnum, primaryKey, index } from "ponder";
+import { index, onchainEnum, onchainTable, primaryKey } from "ponder";
 
 export const orderTypeEnum = onchainEnum("order_type", [
   "TWAP",
@@ -55,27 +56,37 @@ export const orderStatusEnum = onchainEnum("order_status", [
   "Cancelled",
 ]);
 
-export const conditionalOrder = onchainTable(
-  "conditional_order",
+export const transaction = onchainTable(
+  "transaction",
   (t) => ({
-    id: t.text().primaryKey(),          // Event ID
+    hash: t.hex().notNull(),
     chainId: t.integer().notNull(),
-    owner: t.hex().notNull(),            // Order owner address
-    handler: t.hex().notNull(),          // Handler contract address
-    salt: t.hex().notNull(),
-    staticInput: t.hex().notNull(),      // Raw encoded params
-    hash: t.hex().notNull(),             // keccak256(handler, salt, staticInput)
-    orderType: orderTypeEnum("order_type").notNull(),
-    status: orderStatusEnum("order_status").notNull().default("Active"),
-    // Decoded params stored as JSON (type-specific fields added by decoders)
-    decodedParams: t.json(),
-    // Metadata
-    txHash: t.hex().notNull(),
     blockNumber: t.bigint().notNull(),
     blockTimestamp: t.bigint().notNull(),
-    createdAt: t.bigint().notNull(),
   }),
   (table) => ({
+    pk: primaryKey({ columns: [table.chainId, table.hash] }),
+    blockIdx: index().on(table.blockNumber),
+  })
+);
+
+export const conditionalOrderGenerator = onchainTable(
+  "conditional_order_generator",
+  (t) => ({
+    eventId: t.text().notNull(),            // ponder event.id
+    chainId: t.integer().notNull(),
+    owner: t.hex().notNull(),
+    handler: t.hex().notNull(),
+    salt: t.hex().notNull(),
+    staticInput: t.hex().notNull(),
+    hash: t.hex().notNull(),
+    orderType: orderTypeEnum("order_type").notNull(),
+    status: orderStatusEnum("order_status").notNull().default("Active"),
+    decodedParams: t.json(),
+    txHash: t.hex().notNull(),              // FK → transaction.hash
+  }),
+  (table) => ({
+    pk: primaryKey({ columns: [table.chainId, table.eventId] }),
     ownerIdx: index().on(table.owner),
     handlerIdx: index().on(table.handler),
     hashIdx: index().on(table.hash),
@@ -86,13 +97,13 @@ export const conditionalOrder = onchainTable(
 export const discreteOrder = onchainTable(
   "discrete_order",
   (t) => ({
-    orderUid: t.text().primaryKey(),     // CoW Protocol order UID
-    conditionalOrderId: t.text().notNull(),
+    orderUid: t.text().notNull(),
     chainId: t.integer().notNull(),
-    // Additional fields for M3 (orderbook integration)
+    conditionalOrderGeneratorId: t.text().notNull(),
   }),
   (table) => ({
-    conditionalOrderIdx: index().on(table.conditionalOrderId),
+    pk: primaryKey({ columns: [table.chainId, table.orderUid] }),
+    generatorIdx: index().on(table.conditionalOrderGeneratorId),
   })
 );
 ```
@@ -101,16 +112,27 @@ export const discreteOrder = onchainTable(
 
 ```typescript
 import { relations } from "ponder";
-import { conditionalOrder, discreteOrder } from "./tables";
+import { conditionalOrderGenerator, discreteOrder, transaction } from "./tables";
 
-export const conditionalOrderRelations = relations(conditionalOrder, ({ many }) => ({
-  discreteOrders: many(discreteOrder),
+export const transactionRelations = relations(transaction, ({ many }) => ({
+  conditionalOrderGenerators: many(conditionalOrderGenerator),
 }));
 
+export const conditionalOrderGeneratorRelations = relations(
+  conditionalOrderGenerator,
+  ({ one, many }) => ({
+    transaction: one(transaction, {
+      fields: [conditionalOrderGenerator.chainId, conditionalOrderGenerator.txHash],
+      references: [transaction.chainId, transaction.hash],
+    }),
+    discreteOrders: many(discreteOrder),
+  })
+);
+
 export const discreteOrderRelations = relations(discreteOrder, ({ one }) => ({
-  conditionalOrder: one(conditionalOrder, {
-    fields: [discreteOrder.conditionalOrderId],
-    references: [conditionalOrder.id],
+  conditionalOrderGenerator: one(conditionalOrderGenerator, {
+    fields: [discreteOrder.chainId, discreteOrder.conditionalOrderGeneratorId],
+    references: [conditionalOrderGenerator.chainId, conditionalOrderGenerator.eventId],
   }),
 }));
 ```
@@ -119,7 +141,7 @@ export const discreteOrderRelations = relations(discreteOrder, ({ one }) => ({
 
 ```typescript
 import { ponder } from "ponder:registry";
-import { conditionalOrder } from "ponder:schema";
+import { conditionalOrderGenerator, transaction } from "ponder:schema";
 import { encodeAbiParameters, keccak256 } from "viem";
 import { getOrderTypeFromHandler } from "../utils/order-types";
 
@@ -127,7 +149,6 @@ ponder.on("ComposableCow:ConditionalOrderCreated", async ({ event, context }) =>
   const { owner, params } = event.args;
   const { handler, salt, staticInput } = params;
 
-  // Compute hash (same as PoC)
   const encoded = encodeAbiParameters(
     [{ type: "tuple", components: [
       { name: "handler", type: "address" },
@@ -137,25 +158,28 @@ ponder.on("ComposableCow:ConditionalOrderCreated", async ({ event, context }) =>
     [{ handler, salt, staticInput }]
   );
   const hash = keccak256(encoded);
-
-  // Determine order type from handler address
   const orderType = getOrderTypeFromHandler(handler, context.chain.id);
 
-  await context.db.insert(conditionalOrder).values({
-    id: event.id,
+  // Upsert transaction row first (idempotent)
+  await context.db.insert(transaction).values({
+    hash: event.transaction.hash,
     chainId: context.chain.id,
-    owner,
-    handler,
+    blockNumber: event.block.number,
+    blockTimestamp: event.block.timestamp,
+  }).onConflictDoNothing();
+
+  await context.db.insert(conditionalOrderGenerator).values({
+    eventId: event.id,
+    chainId: context.chain.id,
+    owner: owner.toLowerCase() as `0x${string}`,
+    handler: handler.toLowerCase() as `0x${string}`,
     salt,
     staticInput,
     hash,
     orderType,
     status: "Active",
-    decodedParams: null, // Populated by decoder tasks
+    decodedParams: null,
     txHash: event.transaction.hash,
-    blockNumber: event.block.number,
-    blockTimestamp: event.block.timestamp,
-    createdAt: event.block.timestamp,
   }).onConflictDoNothing();
 });
 ```

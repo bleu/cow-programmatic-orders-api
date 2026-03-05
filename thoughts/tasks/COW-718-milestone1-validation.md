@@ -39,17 +39,17 @@ Compare indexed data against known sources:
 const verificationChecks = [
   {
     name: "Total mainnet orders",
-    query: `SELECT COUNT(*) FROM conditional_order WHERE chain_id = 1`,
+    query: `SELECT COUNT(*) FROM conditional_order_generator WHERE chain_id = 1`,
     expectedMin: 1000, // Adjust based on known data
   },
   {
     name: "TWAP orders exist",
-    query: `SELECT COUNT(*) FROM conditional_order WHERE order_type = 'TWAP'`,
+    query: `SELECT COUNT(*) FROM conditional_order_generator WHERE order_type = 'TWAP'`,
     expectedMin: 100,
   },
   {
     name: "PoC perpetual swap indexed",
-    query: `SELECT * FROM conditional_order WHERE hash = '0x...'`, // From PoC example
+    query: `SELECT * FROM conditional_order_generator WHERE hash = '0x...'`, // From PoC example
     expectedRows: 1,
   },
 ];
@@ -81,17 +81,17 @@ Test all documented query patterns:
 # List orders for known owner
 curl -X POST http://localhost:42069/graphql \
   -H "Content-Type: application/json" \
-  -d '{"query": "{ conditionalOrders(where: { owner: \"0x...\" }) { items { id orderType } } }"}'
+  -d '{"query": "{ conditionalOrderGenerators(where: { owner: \"0x...\" }) { items { eventId orderType } } }"}'
 
 # Get order by ID
 curl -X POST http://localhost:42069/graphql \
   -H "Content-Type: application/json" \
-  -d '{"query": "{ conditionalOrder(id: \"...\") { id owner decodedParams } }"}'
+  -d '{"query": "{ conditionalOrderGenerator(chainId: 1, eventId: \"...\") { eventId owner decodedParams } }"}'
 
 # Filter by type and chain
 curl -X POST http://localhost:42069/graphql \
   -H "Content-Type: application/json" \
-  -d '{"query": "{ conditionalOrders(where: { orderType: \"TWAP\", chainId: 1 }) { items { id } } }"}'
+  -d '{"query": "{ conditionalOrderGenerators(where: { orderType: \"TWAP\", chainId: 1 }) { items { eventId } } }"}'
 ```
 
 ### Performance Benchmarks
@@ -133,8 +133,7 @@ From grant proposal:
 - [x] Ponder indexer setup with PostgreSQL database
 - [ ] Event listening for Composable CoW order creation and cancellation
 - [ ] Historical backfilling and real-time monitoring
-- [ ] Decoders for all five order types
-- [ ] Integration of missing conditional orders into cow-sdk (deferred - local implementation)
+- [ ] Decoders for all five order types (implemented locally; cow-sdk integration was removed from grant scope per forum Update #2)
 
 ## Acceptance Criteria
 

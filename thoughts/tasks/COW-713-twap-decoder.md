@@ -22,7 +22,7 @@ TWAP is the most common Composable CoW order type and is already supported in co
 ## Scope
 
 - [ ] Implement TWAP static input decoder
-- [ ] Store decoded parameters in `conditionalOrder.decodedParams`
+- [ ] Store decoded parameters in `conditionalOrderGenerator.decodedParams`
 - [ ] Update event handler to call decoder for TWAP orders
 - [ ] Add unit tests against known on-chain TWAP orders
 
