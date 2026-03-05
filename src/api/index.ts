@@ -8,5 +8,6 @@ const app = new Hono();
 app.use("/sql/*", client({ db, schema }));
 app.use("/", graphql({ db, schema }));
 app.use("/graphql", graphql({ db, schema }));
+app.get("/health", (c) => c.json({ status: "ok" }));
 
 export default app;
