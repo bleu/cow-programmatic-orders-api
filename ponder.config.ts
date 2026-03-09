@@ -1,5 +1,5 @@
 import { createConfig } from "ponder";
-import { ComposableCowContract } from "./src/data";
+import { ComposableCowContract, COMPOSABLE_COW_DEPLOYMENTS } from "./src/data";
 
 export default createConfig({
   chains: {
@@ -10,5 +10,12 @@ export default createConfig({
   },
   contracts: {
     ComposableCow: ComposableCowContract,
+  },
+  blocks: {
+    RemovalPoller: {
+      chain: "mainnet",
+      startBlock: COMPOSABLE_COW_DEPLOYMENTS.mainnet.startBlock,
+      interval: 100, // every ~20 min at 12s/block
+    },
   },
 });
