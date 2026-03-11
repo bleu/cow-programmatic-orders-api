@@ -1,6 +1,7 @@
 import { ponder } from "ponder:registry";
 import { and, eq } from "ponder";
 import {
+  AddressType,
   conditionalOrderGenerator,
   ownerMapping,
   transaction,
@@ -24,8 +25,8 @@ ponder.on("CoWShedFactory:COWShedBuilt", async ({ event, context }) => {
     .values({
       chainId: context.chain.id,
       address: shed.toLowerCase() as `0x${string}`,
-      eoaOwner: user.toLowerCase() as `0x${string}`,
-      addressType: "cowshed_proxy",
+      owner: user.toLowerCase() as `0x${string}`,
+      addressType: AddressType.CowshedProxy,
       txHash: event.transaction.hash,
       blockNumber: event.block.number,
       resolutionDepth: 0,

@@ -21,6 +21,11 @@ export const addressTypeEnum = onchainEnum("address_type", [
   "flash_loan_helper",
 ]);
 
+export const AddressType = {
+  CowshedProxy: "cowshed_proxy",
+  FlashLoanHelper: "flash_loan_helper",
+} as const;
+
 // ── Tables ───────────────────────────────────────────────────────────────────
 
 export const transaction = onchainTable(
@@ -82,7 +87,7 @@ export const ownerMapping = onchainTable(
   (t) => ({
     address: t.hex().notNull(),             // the proxy or helper contract address (PK part)
     chainId: t.integer().notNull(),         // (PK part)
-    eoaOwner: t.hex().notNull(),            // fully resolved EOA (never an intermediate proxy)
+    owner: t.hex().notNull(),               // fully resolved owner (never an intermediate proxy)
     addressType: addressTypeEnum("address_type").notNull(),
     txHash: t.hex().notNull(),              // transaction where this mapping was discovered
     blockNumber: t.bigint().notNull(),
@@ -90,6 +95,6 @@ export const ownerMapping = onchainTable(
   }),
   (table) => ({
     pk: primaryKey({ columns: [table.chainId, table.address] }),
-    eoaOwnerIdx: index().on(table.eoaOwner),
+    ownerIdx: index().on(table.owner),
   })
 );

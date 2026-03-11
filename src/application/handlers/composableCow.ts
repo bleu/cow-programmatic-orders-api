@@ -48,7 +48,7 @@ ponder.on(
     // Resolve EOA: look up owner_mapping in case owner is a known proxy (CoWShed).
     // For AAVE adapters the mapping won't exist yet; settlement.ts will backfill later.
     const mappingRows = await context.db.sql
-      .select({ eoaOwner: ownerMapping.eoaOwner })
+      .select({ owner: ownerMapping.owner })
       .from(ownerMapping)
       .where(
         and(
@@ -59,7 +59,7 @@ ponder.on(
       .limit(1);
 
     const resolvedEoaOwner =
-      mappingRows.length > 0 ? mappingRows[0]!.eoaOwner : ownerAddress;
+      mappingRows.length > 0 ? mappingRows[0]!.owner : ownerAddress;
 
     // Upsert transaction row (idempotent — multiple events may share a tx)
     await context.db
