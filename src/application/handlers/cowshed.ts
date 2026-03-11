@@ -1,11 +1,5 @@
 import { ponder } from "ponder:registry";
-import { and, eq } from "ponder";
-import {
-  AddressType,
-  conditionalOrderGenerator,
-  ownerMapping,
-  transaction,
-} from "ponder:schema";
+import { AddressType, ownerMapping, transaction } from "ponder:schema";
 
 ponder.on("CoWShedFactory:COWShedBuilt", async ({ event, context }) => {
   const { user, shed } = event.args;
@@ -33,17 +27,4 @@ ponder.on("CoWShedFactory:COWShedBuilt", async ({ event, context }) => {
     })
     .onConflictDoNothing();
 
-  // Backfill resolvedEoaOwner on any pre-existing orders for this proxy
-  await context.db.sql
-    .update(conditionalOrderGenerator)
-    .set({ resolvedEoaOwner: user.toLowerCase() as `0x${string}` })
-    .where(
-      and(
-        eq(conditionalOrderGenerator.chainId, context.chain.id),
-        eq(
-          conditionalOrderGenerator.owner,
-          shed.toLowerCase() as `0x${string}`,
-        ),
-      ),
-    );
 });

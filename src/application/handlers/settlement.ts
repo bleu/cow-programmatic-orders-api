@@ -72,10 +72,10 @@ ponder.on("GPv2Settlement:Trade", async ({ event, context }) => {
     })
     .onConflictDoNothing();
 
-  // Backfill resolvedEoaOwner on existing conditionalOrderGenerator rows for this adapter
+  // Backfill resolvedOwner on existing conditionalOrderGenerator rows for this adapter
   await context.db.sql
     .update(conditionalOrderGenerator)
-    .set({ resolvedEoaOwner: eoaOwner.toLowerCase() as `0x${string}` })
+    .set({ resolvedOwner: eoaOwner.toLowerCase() as `0x${string}` })
     .where(
       and(
         eq(conditionalOrderGenerator.chainId, chainId),

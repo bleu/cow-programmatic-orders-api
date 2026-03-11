@@ -58,7 +58,7 @@ ponder.on(
       )
       .limit(1);
 
-    const resolvedEoaOwner =
+    const resolvedOwner =
       mappingRows.length > 0 ? mappingRows[0]!.owner : ownerAddress;
 
     // Upsert transaction row (idempotent — multiple events may share a tx)
@@ -78,7 +78,7 @@ ponder.on(
         eventId: event.id,
         chainId,
         owner: ownerAddress,
-        resolvedEoaOwner,
+        resolvedOwner,
         handler: handler.toLowerCase() as `0x${string}`,
         salt,
         staticInput,
