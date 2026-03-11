@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@cowprotocol/cow-sdk": "^7.3.8",
-    "hono": "^4.5.0",
+    "hono": "^4.12.7",
     "ponder": "^0.16.2",
     "viem": "^2.21.3"
   },
