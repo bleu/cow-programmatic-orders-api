@@ -43,6 +43,7 @@ export const conditionalOrderGenerator = onchainTable(
     eventId: t.text().notNull(),            // ponder event.id
     chainId: t.integer().notNull(),
     owner: t.hex().notNull(),               // indexed address from event
+    resolvedEoaOwner: t.hex(),              // EOA controlling this owner (null transiently; set at insert)
     handler: t.hex().notNull(),             // IConditionalOrder handler address
     salt: t.hex().notNull(),                // bytes32
     staticInput: t.hex().notNull(),         // encoded handler params
@@ -59,6 +60,7 @@ export const conditionalOrderGenerator = onchainTable(
     handlerIdx: index().on(table.handler),
     hashIdx: index().on(table.hash),
     chainOwnerIdx: index().on(table.chainId, table.owner),
+    resolvedEoaOwnerIdx: index().on(table.resolvedEoaOwner),
   })
 );
 

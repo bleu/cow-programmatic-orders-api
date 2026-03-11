@@ -1,5 +1,5 @@
 import { ponder } from "ponder:registry";
-import { ownerMapping, transaction } from "ponder:schema";
+import { conditionalOrderGenerator, ownerMapping, transaction } from "ponder:schema";
 import { and, eq } from "ponder";
 import { AaveV3AdapterHelperAbi } from "../../../abis/AaveV3AdapterHelperAbi";
 import { AAVE_V3_ADAPTER_FACTORY_ADDRESS } from "../../data";
@@ -71,6 +71,17 @@ ponder.on("GPv2Settlement:Trade", async ({ event, context }) => {
       resolutionDepth: 1,
     })
     .onConflictDoNothing();
+
+  // Backfill resolvedEoaOwner on existing conditionalOrderGenerator rows for this adapter
+  await context.db.sql
+    .update(conditionalOrderGenerator)
+    .set({ resolvedEoaOwner: eoaOwner.toLowerCase() as `0x${string}` })
+    .where(
+      and(
+        eq(conditionalOrderGenerator.chainId, chainId),
+        eq(conditionalOrderGenerator.owner, ownerAddress),
+      ),
+    );
 
   console.log(
     `[COW:SETTLEMENT:TRADE] AAVE_ADAPTER_MAPPED adapter=${ownerAddress} eoa=${eoaOwner.toLowerCase()} block=${event.block.number} chain=${chainId}`,

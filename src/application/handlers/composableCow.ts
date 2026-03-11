@@ -1,6 +1,10 @@
 import { ponder } from "ponder:registry";
-import { replaceBigInts } from "ponder";
-import { conditionalOrderGenerator, transaction } from "ponder:schema";
+import { and, eq, replaceBigInts } from "ponder";
+import {
+  conditionalOrderGenerator,
+  ownerMapping,
+  transaction,
+} from "ponder:schema";
 import { encodeAbiParameters, keccak256 } from "viem";
 import { getOrderTypeFromHandler } from "../../utils/order-types";
 import { decodeStaticInput } from "../../decoders/index";
@@ -22,27 +26,47 @@ ponder.on(
           ],
         },
       ],
-      [{ handler, salt, staticInput }]
+      [{ handler, salt, staticInput }],
     );
     const hash = keccak256(encoded);
 
-    const orderType = getOrderTypeFromHandler(handler, context.chain.id);
+    const ownerAddress = owner.toLowerCase() as `0x${string}`;
+    const chainId = context.chain.id;
+    const orderType = getOrderTypeFromHandler(handler, chainId);
 
     if (orderType === "Unknown") {
       console.warn(
-        `[ComposableCow] Unknown handler ${handler} on chain ${context.chain.id}, ` +
-        `saving as Unknown — event=${event.id}`
+        `[ComposableCow] Unknown handler ${handler} on chain ${chainId}, ` +
+          `saving as Unknown — event=${event.id}`,
       );
     } else {
-      console.log(`[ComposableCow] ConditionalOrderCreated event=${event.id} chain=${context.chain.id} orderType=${orderType} block=${event.block.number}`);
+      console.log(
+        `[ComposableCow] ConditionalOrderCreated event=${event.id} chain=${chainId} orderType=${orderType} block=${event.block.number}`,
+      );
     }
+
+    // Resolve EOA: look up owner_mapping in case owner is a known proxy (CoWShed).
+    // For AAVE adapters the mapping won't exist yet; settlement.ts will backfill later.
+    const mappingRows = await context.db.sql
+      .select({ eoaOwner: ownerMapping.eoaOwner })
+      .from(ownerMapping)
+      .where(
+        and(
+          eq(ownerMapping.chainId, chainId),
+          eq(ownerMapping.address, ownerAddress),
+        ),
+      )
+      .limit(1);
+
+    const resolvedEoaOwner =
+      mappingRows.length > 0 ? mappingRows[0]!.eoaOwner : ownerAddress;
 
     // Upsert transaction row (idempotent — multiple events may share a tx)
     await context.db
       .insert(transaction)
       .values({
         hash: event.transaction.hash,
-        chainId: context.chain.id,
+        chainId,
         blockNumber: event.block.number,
         blockTimestamp: event.block.timestamp,
       })
@@ -52,8 +76,9 @@ ponder.on(
       .insert(conditionalOrderGenerator)
       .values({
         eventId: event.id,
-        chainId: context.chain.id,
-        owner: owner.toLowerCase() as `0x${string}`,
+        chainId,
+        owner: ownerAddress,
+        resolvedEoaOwner,
         handler: handler.toLowerCase() as `0x${string}`,
         salt,
         staticInput,
@@ -66,16 +91,22 @@ ponder.on(
           }
           try {
             const decoded = decodeStaticInput(orderType, staticInput) ?? null;
-            const decodedParams = decoded ? replaceBigInts(decoded, String) : null;
-            console.log(`[ComposableCow] Decoded event=${event.id} orderType=${orderType} decodedParams=${decodedParams ? "ok" : "null"}`);
+            const decodedParams = decoded
+              ? replaceBigInts(decoded, String)
+              : null;
+            console.log(
+              `[ComposableCow] Decoded event=${event.id} orderType=${orderType} decodedParams=${decodedParams ? "ok" : "null"}`,
+            );
             return { decodedParams, decodeError: null };
           } catch (err) {
-            console.warn(`[ComposableCow] Decode failed event=${event.id} orderType=${orderType} err=${err}`);
+            console.warn(
+              `[ComposableCow] Decode failed event=${event.id} orderType=${orderType} err=${err}`,
+            );
             return { decodedParams: null, decodeError: "invalid_static_input" };
           }
         })(),
         txHash: event.transaction.hash,
       })
       .onConflictDoNothing();
-  }
+  },
 );
