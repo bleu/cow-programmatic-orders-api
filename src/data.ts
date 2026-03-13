@@ -56,3 +56,12 @@ export const GPv2SettlementContract = {
     mainnet: GPV2_SETTLEMENT_DEPLOYMENTS.mainnet,
   },
 } as const;
+
+/**
+ * AaveV3AdapterFactory — deploys per-user flash loan adapter proxies.
+ * Detection: call FACTORY() on a contract; if it returns this address, it is an Aave adapter.
+ * Same address across all chains (CREATE2 deterministic deployment).
+ * Not a Ponder-indexed contract — used for view calls only.
+ */
+export const AAVE_V3_ADAPTER_FACTORY_ADDRESS =
+  "0xdeCc46a4b09162f5369c5c80383aaa9159bcf192" as const;
