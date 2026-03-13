@@ -1,5 +1,10 @@
 import { createConfig } from "ponder";
-import { ComposableCowContract, COMPOSABLE_COW_DEPLOYMENTS } from "./src/data";
+import {
+  ComposableCowContract,
+  COMPOSABLE_COW_DEPLOYMENTS,
+  CoWShedFactoryContract,
+  GPv2SettlementContract,
+} from "./src/data";
 
 export default createConfig({
   chains: {
@@ -10,6 +15,8 @@ export default createConfig({
   },
   contracts: {
     ComposableCow: ComposableCowContract,
+    CoWShedFactory: CoWShedFactoryContract,
+    GPv2Settlement: GPv2SettlementContract,
   },
   blocks: {
     RemovalPoller: {
