@@ -1,5 +1,5 @@
 import { ponder } from "ponder:registry";
-import { ownerMapping, transaction } from "ponder:schema";
+import { AddressType, ownerMapping, transaction } from "ponder:schema";
 import { and, eq } from "ponder";
 import { AaveV3AdapterHelperAbi } from "../../../abis/AaveV3AdapterHelperAbi";
 import { AAVE_V3_ADAPTER_FACTORY_ADDRESS } from "../../data";
@@ -64,8 +64,8 @@ ponder.on("GPv2Settlement:Trade", async ({ event, context }) => {
     .values({
       chainId,
       address: ownerAddress,
-      eoaOwner: eoaOwner.toLowerCase() as `0x${string}`,
-      addressType: "flash_loan_helper",
+      owner: eoaOwner.toLowerCase() as `0x${string}`,
+      addressType: AddressType.FlashLoanHelper,
       txHash: event.transaction.hash,
       blockNumber: event.block.number,
       resolutionDepth: 1,

@@ -9,12 +9,20 @@ const DEPLOYMENTS_BY_CHAIN_ID: Record<number, { address: `0x${string}` }> = {
 };
 
 ponder.on("RemovalPoller:block", async ({ event, context }) => {
+  // Dev: skip REMOVE poll (multicall singleOrders) to save RPC during sync.
+  if (process.env.DISABLE_REMOVAL_POLL) {
+    console.log(
+      `[COW:REMOVE:POLL] DISABLE_REMOVAL_POLL=true — skipping removal poll`,
+    );
+    return;
+  }
+
   const chainId = context.chain.id;
 
   const deployment = DEPLOYMENTS_BY_CHAIN_ID[chainId];
   if (!deployment) {
     console.warn(
-      `[COW:REMOVE:POLL] UNKNOWN_CHAIN chain=${chainId} block=${event.block.number} — skipping`
+      `[COW:REMOVE:POLL] UNKNOWN_CHAIN chain=${chainId} block=${event.block.number} — skipping`,
     );
     return;
   }
@@ -33,7 +41,7 @@ ponder.on("RemovalPoller:block", async ({ event, context }) => {
   if (activeOrders.length === 0) return;
 
   console.log(
-    `[COW:REMOVE:POLL] ENTER block=${event.block.number} chain=${chainId} activeOrders=${activeOrders.length}`
+    `[COW:REMOVE:POLL] ENTER block=${event.block.number} chain=${chainId} activeOrders=${activeOrders.length}`,
   );
 
   // Batch all singleOrders(owner, hash) checks into a single multicall
@@ -52,7 +60,7 @@ ponder.on("RemovalPoller:block", async ({ event, context }) => {
 
     if (result === undefined || result.status === "failure") {
       console.warn(
-        `[COW:REMOVE:POLL] MULTICALL_FAIL hash=${order.hash} owner=${order.owner} block=${event.block.number} chain=${chainId} err=${result?.error}`
+        `[COW:REMOVE:POLL] MULTICALL_FAIL hash=${order.hash} owner=${order.owner} block=${event.block.number} chain=${chainId} err=${result?.error}`,
       );
       continue;
     }
@@ -70,7 +78,7 @@ ponder.on("RemovalPoller:block", async ({ event, context }) => {
         );
 
       console.log(
-        `[COW:REMOVE:POLL] CANCELLED hash=${order.hash} owner=${order.owner} block=${event.block.number} chain=${chainId}`
+        `[COW:REMOVE:POLL] CANCELLED hash=${order.hash} owner=${order.owner} block=${event.block.number} chain=${chainId}`,
       );
     }
   }

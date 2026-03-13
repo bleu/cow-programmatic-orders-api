@@ -21,6 +21,11 @@ export const addressTypeEnum = onchainEnum("address_type", [
   "flash_loan_helper",
 ]);
 
+export const AddressType = {
+  CowshedProxy: "cowshed_proxy",
+  FlashLoanHelper: "flash_loan_helper",
+} as const;
+
 // ── Tables ───────────────────────────────────────────────────────────────────
 
 export const transaction = onchainTable(
@@ -43,6 +48,7 @@ export const conditionalOrderGenerator = onchainTable(
     eventId: t.text().notNull(),            // ponder event.id
     chainId: t.integer().notNull(),
     owner: t.hex().notNull(),               // indexed address from event
+    resolvedOwner: t.hex(),                 // resolved owner of this order (null transiently; set at insert)
     handler: t.hex().notNull(),             // IConditionalOrder handler address
     salt: t.hex().notNull(),                // bytes32
     staticInput: t.hex().notNull(),         // encoded handler params
@@ -59,6 +65,7 @@ export const conditionalOrderGenerator = onchainTable(
     handlerIdx: index().on(table.handler),
     hashIdx: index().on(table.hash),
     chainOwnerIdx: index().on(table.chainId, table.owner),
+    resolvedOwnerIdx: index().on(table.resolvedOwner),
   })
 );
 
@@ -80,7 +87,7 @@ export const ownerMapping = onchainTable(
   (t) => ({
     address: t.hex().notNull(),             // the proxy or helper contract address (PK part)
     chainId: t.integer().notNull(),         // (PK part)
-    eoaOwner: t.hex().notNull(),            // fully resolved EOA (never an intermediate proxy)
+    owner: t.hex().notNull(),               // fully resolved owner (never an intermediate proxy)
     addressType: addressTypeEnum("address_type").notNull(),
     txHash: t.hex().notNull(),              // transaction where this mapping was discovered
     blockNumber: t.bigint().notNull(),
@@ -88,6 +95,6 @@ export const ownerMapping = onchainTable(
   }),
   (table) => ({
     pk: primaryKey({ columns: [table.chainId, table.address] }),
-    eoaOwnerIdx: index().on(table.eoaOwner),
+    ownerIdx: index().on(table.owner),
   })
 );

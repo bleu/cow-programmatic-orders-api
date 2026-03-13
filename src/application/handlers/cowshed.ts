@@ -1,5 +1,5 @@
 import { ponder } from "ponder:registry";
-import { ownerMapping, transaction } from "ponder:schema";
+import { AddressType, ownerMapping, transaction } from "ponder:schema";
 
 ponder.on("CoWShedFactory:COWShedBuilt", async ({ event, context }) => {
   const { user, shed } = event.args;
@@ -19,11 +19,12 @@ ponder.on("CoWShedFactory:COWShedBuilt", async ({ event, context }) => {
     .values({
       chainId: context.chain.id,
       address: shed.toLowerCase() as `0x${string}`,
-      eoaOwner: user.toLowerCase() as `0x${string}`,
-      addressType: "cowshed_proxy",
+      owner: user.toLowerCase() as `0x${string}`,
+      addressType: AddressType.CowshedProxy,
       txHash: event.transaction.hash,
       blockNumber: event.block.number,
       resolutionDepth: 0,
     })
     .onConflictDoNothing();
+
 });
