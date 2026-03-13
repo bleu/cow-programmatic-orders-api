@@ -1,0 +1,90 @@
+export const CoWShedFactoryAbi = [
+  {
+    type: "constructor",
+    inputs: [{ name: "impl", type: "address", internalType: "address" }],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "event",
+    name: "COWShedBuilt",
+    inputs: [
+      { name: "user", type: "address", indexed: false, internalType: "address" },
+      { name: "shed", type: "address", indexed: false, internalType: "address" },
+    ],
+    anonymous: false,
+  },
+  {
+    type: "function",
+    name: "implementation",
+    inputs: [],
+    outputs: [{ name: "", type: "address", internalType: "address" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "PROXY_CREATION_CODE",
+    inputs: [],
+    outputs: [{ name: "", type: "bytes", internalType: "bytes" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "ownerOf",
+    inputs: [{ name: "", type: "address", internalType: "address" }],
+    outputs: [{ name: "", type: "address", internalType: "address" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "initializeProxy",
+    inputs: [{ name: "user", type: "address", internalType: "address" }],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "executeHooks",
+    inputs: [
+      {
+        name: "calls",
+        type: "tuple[]",
+        internalType: "struct Call[]",
+        components: [
+          { name: "target", type: "address", internalType: "address" },
+          { name: "value", type: "uint256", internalType: "uint256" },
+          { name: "callData", type: "bytes", internalType: "bytes" },
+          { name: "allowFailure", type: "bool", internalType: "bool" },
+          { name: "isDelegateCall", type: "bool", internalType: "bool" },
+        ],
+      },
+      { name: "nonce", type: "bytes32", internalType: "bytes32" },
+      { name: "deadline", type: "uint256", internalType: "uint256" },
+      { name: "user", type: "address", internalType: "address" },
+      { name: "signature", type: "bytes", internalType: "bytes" },
+    ],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "proxyOf",
+    inputs: [{ name: "who", type: "address", internalType: "address" }],
+    outputs: [{ name: "", type: "address", internalType: "address" }],
+    stateMutability: "view",
+  },
+  {
+    type: "error",
+    name: "InvalidSignature",
+    inputs: [],
+  },
+  {
+    type: "error",
+    name: "NoCodeAtImplementation",
+    inputs: [],
+  },
+  {
+    type: "error",
+    name: "NonceAlreadyUsed",
+    inputs: [],
+  },
+] as const;

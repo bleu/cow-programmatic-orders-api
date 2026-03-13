@@ -16,6 +16,11 @@ export const orderStatusEnum = onchainEnum("order_status", [
   "Cancelled",
 ]);
 
+export const addressTypeEnum = onchainEnum("address_type", [
+  "cowshed_proxy",
+  "flash_loan_helper",
+]);
+
 // ── Tables ───────────────────────────────────────────────────────────────────
 
 export const transaction = onchainTable(
@@ -67,5 +72,22 @@ export const discreteOrder = onchainTable(
   (table) => ({
     pk: primaryKey({ columns: [table.chainId, table.orderUid] }),
     generatorIdx: index().on(table.conditionalOrderGeneratorId),
+  })
+);
+
+export const ownerMapping = onchainTable(
+  "owner_mapping",
+  (t) => ({
+    address: t.hex().notNull(),             // the proxy or helper contract address (PK part)
+    chainId: t.integer().notNull(),         // (PK part)
+    eoaOwner: t.hex().notNull(),            // fully resolved EOA (never an intermediate proxy)
+    addressType: addressTypeEnum("address_type").notNull(),
+    txHash: t.hex().notNull(),              // transaction where this mapping was discovered
+    blockNumber: t.bigint().notNull(),
+    resolutionDepth: t.integer().notNull(), // hops walked to reach EOA (0 = direct)
+  }),
+  (table) => ({
+    pk: primaryKey({ columns: [table.chainId, table.address] }),
+    eoaOwnerIdx: index().on(table.eoaOwner),
   })
 );
