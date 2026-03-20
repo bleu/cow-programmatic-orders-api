@@ -46,7 +46,7 @@ export const CoWShedFactoryContract = {
 export const GPV2_SETTLEMENT_DEPLOYMENTS = {
   mainnet: {
     address: "0x9008D19f58AAbD9eD0D60971565AA8510560ab41" as const,
-    startBlock: 17883049,
+    startBlock: 23812751, // AaveV3AdapterFactory deployment block (Nov 16, 2025)
   },
 } as const;
 
