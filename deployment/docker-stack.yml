@@ -1,0 +1,44 @@
+x-ponder-deploy: &ponder-deploy
+  replicas: 1
+  resources:
+    limits:
+      cpus: "2"
+      memory: ${PONDER_MEMORY_LIMIT:-2G}
+    reservations:
+      cpus: "0.5"
+      memory: 512M
+  update_config:
+    order: start-first
+    failure_action: rollback
+  restart_policy:
+    condition: on-failure
+    delay: 10s
+    max_attempts: 5
+    window: 120s
+
+services:
+  ponder:
+    image: ${PROJECT_PREFIX:?error}-ponder:${APP_REVISION:?error}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        PIPELINE_BUILD_TAG: ${APP_REVISION}
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_SCHEMA: ${DATABASE_SCHEMA:?error}
+      MAINNET_RPC_URL: ${MAINNET_RPC_URL:?error}
+    ports:
+      - "${PONDER_EXPOSED_PORT:-40000}:3000"
+    deploy:
+      <<: *ponder-deploy
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+networks:
+  default:
+    name: ${PROJECT_PREFIX:?error}-default
+    external: ${EXTERNAL_RESOURCES:-false}

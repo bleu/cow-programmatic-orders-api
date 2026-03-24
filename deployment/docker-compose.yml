@@ -1,0 +1,37 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    command: ["bash", "/start-db.sh"]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?error}
+      POSTGRES_USER: ${POSTGRES_USER:?error}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?error}
+      POSTGRES_MEMORY_LIMIT: ${POSTGRES_MEMORY_LIMIT:-1G}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.UTF-8"
+    shm_size: 256m
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: ${POSTGRES_MEMORY_LIMIT:-1G}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - ./static/start-db.sh:/start-db.sh:ro
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  default:
+    name: ${PROJECT_PREFIX:?error}-default
+    external: true
+
+volumes:
+  postgres-data:
+    name: ${PROJECT_PREFIX:?error}-postgres-data
+    driver: local
