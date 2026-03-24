@@ -49,8 +49,7 @@ fi
 
 export PROJECT_PREFIX
 export APP_REVISION="${APP_REVISION:-latest}"
-# Inject schema name: programmatic_orders_<git-sha>
-export DATABASE_SCHEMA="programmatic_orders_${APP_REVISION}"
+export DATABASE_SCHEMA="programmatic_orders"
 
 cmd_up() {
     if [[ -z "${APP_REVISION:-}" || "$APP_REVISION" == "latest" ]]; then
@@ -107,7 +106,7 @@ cmd_up() {
     docker image prune -f 2>/dev/null || true
     docker container prune -f 2>/dev/null || true
 
-    echo ">>> Deploy complete. DATABASE_SCHEMA=${DATABASE_SCHEMA}"
+    echo ">>> Deploy complete."
 }
 
 cmd_down() {
