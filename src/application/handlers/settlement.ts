@@ -27,7 +27,7 @@ const stats = {
 let statsLastLogAt = Date.now();
 const LOG_INTERVAL_MS = 30_000;
 
-function maybeLogStats() {
+function logStatsIfIntervalPassed() {
   if (Date.now() - statsLastLogAt < LOG_INTERVAL_MS) return;
   const contractAddresses =
     stats.tradeLogsFound - stats.skippedAlreadyMapped - stats.skippedEOA;
@@ -104,7 +104,7 @@ ponder.on("GPv2Settlement:Settlement", async ({ event, context }) => {
 
     if (existing.length > 0) {
       stats.skippedAlreadyMapped++;
-      maybeLogStats();
+      logStatsIfIntervalPassed();
       continue;
     }
 
@@ -112,7 +112,7 @@ ponder.on("GPv2Settlement:Settlement", async ({ event, context }) => {
     const code = await context.client.getCode({ address: owner });
     if (!code || code === "0x") {
       stats.skippedEOA++;
-      maybeLogStats();
+      logStatsIfIntervalPassed();
       continue;
     }
 
@@ -130,7 +130,7 @@ ponder.on("GPv2Settlement:Settlement", async ({ event, context }) => {
     } catch {
       stats.msFactory += Date.now() - t1;
       stats.skippedNotAdapter++;
-      maybeLogStats();
+      logStatsIfIntervalPassed();
       continue;
     }
     stats.msFactory += Date.now() - t1;
@@ -138,7 +138,7 @@ ponder.on("GPv2Settlement:Settlement", async ({ event, context }) => {
     // ABI-encoded address = 32 bytes = 66 hex chars (including 0x prefix)
     if (!factoryData || factoryData.length < 66) {
       stats.skippedNotAdapter++;
-      maybeLogStats();
+      logStatsIfIntervalPassed();
       continue;
     }
 
@@ -147,7 +147,7 @@ ponder.on("GPv2Settlement:Settlement", async ({ event, context }) => {
 
     if (factoryAddress.toLowerCase() !== adapterFactoryAddress) {
       stats.skippedNotAdapter++;
-      maybeLogStats();
+      logStatsIfIntervalPassed();
       continue;
     }
 
@@ -182,12 +182,12 @@ ponder.on("GPv2Settlement:Settlement", async ({ event, context }) => {
       .onConflictDoNothing();
 
     stats.mapped++;
-    maybeLogStats();
+    logStatsIfIntervalPassed();
 
     console.log(
       `[COW:SETTLEMENT:TRADE] AAVE_ADAPTER_MAPPED adapter=${ownerAddress} eoa=${eoaOwner.toLowerCase()} block=${event.block.number} chain=${chainId}`,
     );
   }
 
-  maybeLogStats();
+  logStatsIfIntervalPassed();
 });
