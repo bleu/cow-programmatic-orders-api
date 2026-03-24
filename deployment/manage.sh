@@ -58,44 +58,14 @@ cmd_up() {
     fi
 
     echo ">>> Building ponder image..."
-    EXTERNAL_RESOURCES=true docker compose \
-        -p "${PROJECT_PREFIX}-stack" -f docker-stack.yml \
-        build --no-cache --build-arg BUILDKIT_INLINE_CACHE=1
+    docker compose \
+        -p "${PROJECT_PREFIX}" -f docker-compose.yml \
+        build --no-cache
 
-    # Ensure swarm overlay network exists
-    NETWORK_NAME="${PROJECT_PREFIX}-default"
-    echo ">>> Ensuring swarm network: ${NETWORK_NAME}..."
-
-    NETWORK_SCOPE=$(docker network inspect "$NETWORK_NAME" --format '{{.Scope}}' 2>/dev/null || echo "none")
-
-    if [[ "$NETWORK_SCOPE" == "local" ]]; then
-        echo ">>> Migrating local network to overlay..."
-        CONTAINERS=$(docker network inspect "$NETWORK_NAME" --format '{{range .Containers}}{{.Name}} {{end}}' 2>/dev/null || echo "")
-        for container in $CONTAINERS; do
-            docker stop "$container" 2>/dev/null || true
-            docker rm "$container" 2>/dev/null || true
-        done
-        docker compose -p "${PROJECT_PREFIX}" -f docker-compose.yml down --remove-orphans 2>/dev/null || true
-        docker network rm "$NETWORK_NAME" 2>/dev/null && NETWORK_SCOPE="none" || true
-    fi
-
-    if [[ "$NETWORK_SCOPE" == "none" ]]; then
-        docker network create --driver overlay --attachable "$NETWORK_NAME"
-    fi
-
-    echo ">>> Starting postgres..."
+    echo ">>> Deploying (DATABASE_SCHEMA=${DATABASE_SCHEMA})..."
     docker compose \
         -p "${PROJECT_PREFIX}" -f docker-compose.yml \
         up -d --remove-orphans
-
-    echo ">>> Waiting for postgres to be healthy..."
-    sleep 5s
-
-    echo ">>> Deploying stack (DATABASE_SCHEMA=${DATABASE_SCHEMA})..."
-    EXTERNAL_RESOURCES=true docker stack deploy \
-        --compose-file docker-stack.yml \
-        --prune --detach --with-registry-auth --resolve-image never \
-        "${PROJECT_PREFIX}"
 
     echo ">>> Cleaning up old ponder images..."
     IMAGE_NAME="${PROJECT_PREFIX}-ponder"
@@ -110,10 +80,7 @@ cmd_up() {
 }
 
 cmd_down() {
-    echo ">>> Removing stack..."
-    EXTERNAL_RESOURCES=true docker stack rm "${PROJECT_PREFIX}" || true
-
-    echo ">>> Stopping postgres..."
+    echo ">>> Stopping stack..."
     docker compose \
         -p "${PROJECT_PREFIX}" -f docker-compose.yml \
         down -v --remove-orphans || true
