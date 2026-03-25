@@ -3,6 +3,7 @@ import {
   ComposableCowContract,
   COMPOSABLE_COW_DEPLOYMENTS,
   CoWShedFactoryContract,
+  FLASH_LOAN_ROUTER_ADDRESSES,
   GPv2SettlementContract,
 } from "./src/data";
 
@@ -16,7 +17,13 @@ export default createConfig({
   contracts: {
     ComposableCow: ComposableCowContract,
     CoWShedFactory: CoWShedFactoryContract,
-    GPv2Settlement: GPv2SettlementContract,
+    GPv2Settlement: {
+      ...GPv2SettlementContract,
+      filter: {
+        event: "Settlement",
+        args: { solver: FLASH_LOAN_ROUTER_ADDRESSES.mainnet },
+      },
+    },
   },
   blocks: {
     RemovalPoller: {
