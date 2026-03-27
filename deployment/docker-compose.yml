@@ -1,0 +1,51 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    command: ["bash", "/start-db.sh"]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?error}
+      POSTGRES_USER: ${POSTGRES_USER:?error}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?error}
+      POSTGRES_MEMORY_LIMIT: ${POSTGRES_MEMORY_LIMIT:-1G}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.UTF-8"
+    shm_size: 256m
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - ./static/start-db.sh:/start-db.sh:ro
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ponder:
+    image: ${PROJECT_PREFIX:?error}-ponder:${APP_REVISION:?error}
+    restart: unless-stopped
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        PIPELINE_BUILD_TAG: ${APP_REVISION}
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_SCHEMA: ${DATABASE_SCHEMA:?error}
+      MAINNET_RPC_URL: ${MAINNET_RPC_URL:?error}
+      DISABLE_REMOVAL_POLL: ${DISABLE_REMOVAL_POLL:-false}
+      DISABLE_SETTLEMENT_FACTORY_CHECK: ${DISABLE_SETTLEMENT_FACTORY_CHECK:-false}
+    ports:
+      - "${PONDER_EXPOSED_PORT:-40000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+volumes:
+  postgres-data:
+    name: ${PROJECT_PREFIX:?error}-postgres-data

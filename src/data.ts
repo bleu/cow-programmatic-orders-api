@@ -40,13 +40,13 @@ export const CoWShedFactoryContract = {
 
 /**
  * GPv2Settlement — mainnet only.
- * Start block 17883049 (ComposableCoW genesis), not 12593265 (Settlement genesis),
- * to avoid syncing 2+ years of unrelated trades.
+ *
+ * Start block = AaveV3AdapterFactory deployment block, NOT ComposableCoW genesis.
  */
 export const GPV2_SETTLEMENT_DEPLOYMENTS = {
   mainnet: {
     address: "0x9008D19f58AAbD9eD0D60971565AA8510560ab41" as const,
-    startBlock: 17883049,
+    startBlock: 23812751, // AaveV3AdapterFactory deployment block (Nov 16, 2025)
   },
 } as const;
 
@@ -60,8 +60,21 @@ export const GPv2SettlementContract = {
 /**
  * AaveV3AdapterFactory — deploys per-user flash loan adapter proxies.
  * Detection: call FACTORY() on a contract; if it returns this address, it is an Aave adapter.
- * Same address across all chains (CREATE2 deterministic deployment).
  * Not a Ponder-indexed contract — used for view calls only.
  */
-export const AAVE_V3_ADAPTER_FACTORY_ADDRESS =
-  "0xdeCc46a4b09162f5369c5c80383aaa9159bcf192" as const;
+export const AAVE_V3_ADAPTER_FACTORY_ADDRESSES = {
+  mainnet: "0xdeCc46a4b09162f5369c5c80383aaa9159bcf192" as const,
+  // gnosis: "0x...",   // TODO: verify
+  // arbitrum: "0x...", // TODO: verify
+} as const;
+
+/**
+ * FlashLoanRouter — the CoW Protocol solver that submits all Aave flash loan settlements.
+ * Confirmed via ROUTER() on AaveV3AdapterFactory (immutable variable, cannot change).
+ * Used to filter GPv2Settlement:Settlement events to only those involving flash loans.
+ */
+export const FLASH_LOAN_ROUTER_ADDRESSES = {
+  mainnet: "0x9da8B48441583a2b93e2eF8213aAD0EC0b392C69" as const,
+  // gnosis: "0x...",   // TODO: confirm via ROUTER() on gnosis AaveV3AdapterFactory
+  // arbitrum: "0x...", // TODO: confirm via ROUTER() on arbitrum AaveV3AdapterFactory
+} as const;

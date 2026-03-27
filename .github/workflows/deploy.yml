@@ -1,0 +1,52 @@
+name: Deploy to Production
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Set up SSH config
+        run: |
+          cat <<EOF > ~/.ssh/config
+          Host cow-deploy
+              HostName ${{ secrets.DEPLOY_SERVER_HOST }}
+              User ${{ secrets.DEPLOY_SERVER_USER }}
+              Port 22
+              IdentityFile ~/.ssh/id_ed25519
+              StrictHostKeyChecking no
+              ServerAliveInterval 30
+              ServerAliveCountMax 10
+              TCPKeepAlive yes
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Create .env file
+        run: |
+          echo "${{ secrets.DEPLOY_ENV_FILE_CONTENT }}" > .env
+
+      - name: Run deploy script
+        run: |
+          cd deployment
+          bash deploy-remotely.sh \
+            cow-deploy:${{ secrets.DEPLOY_PATH }} \
+            ../.env

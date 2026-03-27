@@ -1,0 +1,10 @@
+.git
+node_modules
+.env
+.env.local
+.vite
+tmp
+*.log
+ponder.log
+deployment/.env
+generated
