@@ -23,6 +23,7 @@ export const ComposableCowContract = {
   abi: ComposableCowAbi,
   chain: {
     mainnet: COMPOSABLE_COW_DEPLOYMENTS.mainnet,
+    gnosis: COMPOSABLE_COW_DEPLOYMENTS.gnosis,
   },
 } as const;
 
@@ -42,6 +43,7 @@ export const CoWShedFactoryContract = {
   abi: CoWShedFactoryAbi,
   chain: {
     mainnet: COW_SHED_FACTORY_DEPLOYMENTS.mainnet,
+    gnosis: COW_SHED_FACTORY_DEPLOYMENTS.gnosis,
   },
 } as const;
 
