@@ -37,15 +37,25 @@ export const ComposableCowContract = {
   },
 } as const;
 
-/** CoWShedFactory — mainnet only. Emits COWShedBuilt (shed, user). */
+/**
+ * CoWShedFactory — emits COWShedBuilt (user, shed).
+ *
+ * Gnosis has two factory deployments with the same ABI:
+ *   - 0x4f4350bf... (current) — deploys CoWShedForComposableCoW proxies
+ *   - 0x312f92fe... (legacy)  — deploys standard COWShed proxies (2 historical events)
+ * Both are indexed via a single Ponder contract entry using an address array.
+ */
 export const COW_SHED_FACTORY_DEPLOYMENTS = {
   mainnet: {
     address: "0x312f92fe5f1710408b20d52a374fa29e099cfa86" as const,
     startBlock: 22939254,
   },
   gnosis: {
-    address: "0x4f4350bf2c74aacd508d598a1ba94ef84378793d" as const, // different address on Gnosis
-    startBlock: 42037401,
+    address: [
+      "0x4f4350bf2c74aacd508d598a1ba94ef84378793d", // current (CoWShedForComposableCoW)
+      "0x312f92fe5f1710408b20d52a374fa29e099cfa86", // legacy (COWShed); 2 historical events
+    ] as const,
+    startBlock: 41469991, // earliest COWShedBuilt from either factory on Gnosis
   },
 } as const;
 
