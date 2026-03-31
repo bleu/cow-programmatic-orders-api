@@ -13,6 +13,10 @@ export default createConfig({
       id: 1,
       rpc: process.env.MAINNET_RPC_URL!,
     },
+    gnosis: {
+      id: 100,
+      rpc: process.env.GNOSIS_RPC_URL!,
+    },
   },
   contracts: {
     ComposableCow: ComposableCowContract,
