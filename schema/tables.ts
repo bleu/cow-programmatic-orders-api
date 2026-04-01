@@ -14,6 +14,7 @@ export const orderTypeEnum = onchainEnum("order_type", [
 export const orderStatusEnum = onchainEnum("order_status", [
   "Active",
   "Cancelled",
+  "Invalid",
 ]);
 
 export const addressTypeEnum = onchainEnum("address_type", [

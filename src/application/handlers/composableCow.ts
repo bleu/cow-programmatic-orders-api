@@ -2,6 +2,7 @@ import { ponder } from "ponder:registry";
 import { and, eq, replaceBigInts } from "ponder";
 import {
   conditionalOrderGenerator,
+  orderPollState,
   ownerMapping,
   transaction,
 } from "ponder:schema";
@@ -108,6 +109,17 @@ ponder.on(
           }
         })(),
         txHash: event.transaction.hash,
+      })
+      .onConflictDoNothing();
+
+    // Create initial poll state so the block handler starts checking this order
+    await context.db
+      .insert(orderPollState)
+      .values({
+        chainId,
+        conditionalOrderGeneratorId: event.id,
+        nextCheckBlock: event.block.number,
+        isActive: true,
       })
       .onConflictDoNothing();
 

@@ -38,12 +38,18 @@ export default createConfig({
     },
   },
   blocks: {
-    RemovalPoller: {
+    // One PollResultPoller entry per chain — fires every block to check due orders via
+    // getTradeableOrderWithSignature. Replaces the old RemovalPoller (singleOrders check).
+    // To add a new chain: copy this pattern and register a handler in blockHandler.ts.
+    PollResultPollerMainnet: {
       chain: "mainnet",
       startBlock: COMPOSABLE_COW_DEPLOYMENTS.mainnet.startBlock,
-      // Ponder uses a single interval for both sync (backfill) and live — no separate "sync interval" vs "live interval".
-      // 1000 blocks ≈ ~3.3 hours at 12s/block on mainnet.
-      interval: 1000,
+      interval: 1,
+    },
+    PollResultPollerGnosis: {
+      chain: "gnosis",
+      startBlock: COMPOSABLE_COW_DEPLOYMENTS.gnosis.startBlock,
+      interval: 1,
     },
   },
 });
