@@ -5,6 +5,7 @@ import {
   CoWShedFactoryContract,
   FLASH_LOAN_ROUTER_ADDRESSES,
   GPv2SettlementContract,
+  GPv2SettlementTradeContract,
 } from "./src/data";
 
 export default createConfig({
@@ -27,6 +28,12 @@ export default createConfig({
         event: "Settlement",
         args: { solver: FLASH_LOAN_ROUTER_ADDRESSES.mainnet },
       },
+    },
+    // Separate entry for Trade events — different start block (ComposableCoW genesis)
+    // and no solver filter. The handler gates on owner membership to skip non-composable trades.
+    GPv2SettlementTrade: {
+      ...GPv2SettlementTradeContract,
+      filter: { event: "Trade", args: {} },
     },
   },
   blocks: {

@@ -91,6 +91,29 @@ export const GPv2SettlementContract = {
 } as const;
 
 /**
+ * GPv2Settlement — Trade event indexing.
+ *
+ * Separate contract entry from GPv2SettlementContract so we can use a different
+ * start block (ComposableCoW genesis, not AaveV3 genesis) and a different filter.
+ * The Settlement handler (M2) must stay tied to its late start block and
+ * FlashLoanRouter filter; Trade indexing (M3) needs the full history from when
+ * composable orders first appeared.
+ */
+export const GPv2SettlementTradeContract = {
+  abi: GPv2SettlementAbi,
+  chain: {
+    mainnet: {
+      address: GPV2_SETTLEMENT_ADDRESS,
+      startBlock: COMPOSABLE_COW_DEPLOYMENTS.mainnet.startBlock,
+    },
+    gnosis: {
+      address: GPV2_SETTLEMENT_ADDRESS,
+      startBlock: COMPOSABLE_COW_DEPLOYMENTS.gnosis.startBlock,
+    },
+  },
+} as const;
+
+/**
  * AaveV3AdapterFactory — deploys per-user flash loan adapter proxies.
  * Detection: call FACTORY() on a contract; if it returns this address, it is an Aave adapter.
  * Not a Ponder-indexed contract — used for view calls only.
