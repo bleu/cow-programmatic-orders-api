@@ -111,3 +111,28 @@ export const FLASH_LOAN_ROUTER_ADDRESSES = {
   gnosis: FLASH_LOAN_ROUTER_ADDRESS, // confirmed via ROUTER() on Gnosis AaveV3AdapterFactory
   // arbitrum: "0x...", // TODO: confirm via ROUTER() on arbitrum AaveV3AdapterFactory
 } as const;
+
+/**
+ * Known ComposableCoW order handler addresses (CREATE2-deployed, identical across all chains).
+ * Used by the EIP-1271 decoder to validate that a decoded signature belongs to a composable order.
+ */
+export const COMPOSABLE_COW_HANDLER_ADDRESSES = new Set<string>([
+  "0x6cf1e9ca41f7611def408122793c358a3d11e5a5", // TWAP
+  "0x412c36e5011cd2517016d243a2dfb37f73a242e7", // StopLoss
+  "0xdaf33924925e03c9cc3a10d434016d6cfad0add5", // GoodAfterTime
+  "0x519ba24e959e33b3b6220ca98bd353d8c2d89920", // PerpetualSwap
+  "0x812308712a6d1367f437e1c1e4af85c854e1e9f6", // TradeAboveThreshold
+]);
+
+/**
+ * CoW Protocol Orderbook API base URLs per chain ID.
+ * Used by the M3 orderbook API client (COW-735).
+ * No authentication required. Append /api/v1/<endpoint> for all calls.
+ */
+export const ORDERBOOK_API_URLS: Record<number, string> = {
+  1: "https://api.cow.fi/mainnet",
+  100: "https://api.cow.fi/xdai",
+  42161: "https://api.cow.fi/arbitrum_one",
+  8453: "https://api.cow.fi/base",
+  11155111: "https://api.cow.fi/sepolia",
+};
