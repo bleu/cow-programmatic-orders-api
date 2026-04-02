@@ -1,10 +1,12 @@
 ---
-status: draft
-linear_synced: false
+status: todo
+linear_synced: true
 created: 2026-03-06
 milestone: M3
 estimate: 1
 labels: [schema, feature]
+linear_url: https://linear.app/bleu-builders/issue/COW-733/schema-add-orderpollstate-table-for-block-handler-scheduling
+git_branch: jefferson/cow-733-schema-add-orderpollstate-table-for-block-handler-scheduling
 ---
 
 # Schema: add orderPollState table for block handler scheduling
@@ -34,9 +36,12 @@ The M3 block handler needs to call `getTradableOrder` on active composable cow o
 - File to edit: `schema/tables.ts`
 - Run `pnpm codegen` after changes
 
+**Index required for the block handler:** The block handler runs **every block** and needs the query "which orders are due now?" (`nextCheckBlock <= currentBlock AND isActive = true`). This query runs every time a block is processed — it **must be indexed** and fast, or the indexer will be slow. E.g. index on `(isActive, nextCheckBlock)` or whatever Ponder/schema recommends for this filter. **Warning:** do not implement without an index; a per-block query without an index makes the block handler unusable in production.
+
 ## Acceptance Criteria
 
 - Table defined in `schema/tables.ts`
+- **Index** created for the block handler query (orders due: `nextCheckBlock <= N` and `isActive = true`) — verify the query is fast
 - `pnpm codegen` and `pnpm typecheck` pass
 
 ## Dependencies

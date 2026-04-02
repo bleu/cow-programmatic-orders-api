@@ -1,10 +1,12 @@
 ---
-status: draft
-linear_synced: false
+status: backlog
+linear_synced: true
 created: 2026-03-06
 milestone: M3
 estimate: 2
 labels: [chores, feature]
+linear_url: https://linear.app/bleu-builders/issue/COW-740/m3-end-to-end-validation-against-real-mainnet-data
+git_branch: jefferson/cow-740-m3-end-to-end-validation-against-real-mainnet-data
 ---
 
 # M3 end-to-end validation against real mainnet data

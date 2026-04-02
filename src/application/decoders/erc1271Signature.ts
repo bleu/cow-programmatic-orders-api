@@ -103,7 +103,7 @@ function decodeIsafeSignatureVerifierFormat(
   signature: Hex
 ): DecodedEip1271Signature | null {
   // PayloadStruct starts at byte offset 548 (length word) + 32 (length itself)
-  const PAYLOAD_LEN_OFFSET = 4 + 32 + 32 + 64 + GPV2_ORDER_BYTES; // = 548
+  const PAYLOAD_LEN_OFFSET = 4 + 32 + 32 + 64 + 32 + GPV2_ORDER_BYTES; // = 548
 
   const payloadLenHex = signature.slice(
     2 + PAYLOAD_LEN_OFFSET * 2,
