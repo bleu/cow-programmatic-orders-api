@@ -45,12 +45,12 @@ export default createConfig({
     PollResultPollerMainnet: {
       chain: "mainnet",
       startBlock: COMPOSABLE_COW_DEPLOYMENTS.mainnet.startBlock,
-      interval: 1,
+      interval: ORDERBOOK_POLL_INTERVAL,
     },
     PollResultPollerGnosis: {
       chain: "gnosis",
       startBlock: COMPOSABLE_COW_DEPLOYMENTS.gnosis.startBlock,
-      interval: 1,
+      interval: ORDERBOOK_POLL_INTERVAL,
     },
   },
 });
