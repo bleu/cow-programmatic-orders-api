@@ -136,6 +136,31 @@ export const FLASH_LOAN_ROUTER_ADDRESSES = {
 } as const;
 
 /**
+ * Orderbook polling interval in blocks.
+ * ~20 blocks ≈ 4 min on mainnet (12s/block), ~2 min on Gnosis (5s/block).
+ * Used in ponder.config.ts for block handler intervals and in constants.ts for RECHECK_INTERVAL.
+ */
+export const ORDERBOOK_POLL_INTERVAL = 20;
+
+/**
+ * Approximate block time in seconds per chain ID.
+ * Used by the block handler to estimate block numbers from epoch timestamps (PollTryAtEpoch).
+ */
+export const BLOCK_TIME_SECONDS: Record<number, number> = {
+  1: 12,    // mainnet
+  100: 5,   // gnosis
+};
+
+/**
+ * ComposableCoW address keyed by numeric chain ID.
+ * Derived from COMPOSABLE_COW_DEPLOYMENTS — update that map to add new chains.
+ */
+export const COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID: Record<number, `0x${string}`> = {
+  1: COMPOSABLE_COW_DEPLOYMENTS.mainnet.address,
+  100: COMPOSABLE_COW_DEPLOYMENTS.gnosis.address,
+};
+
+/**
  * Known ComposableCoW order handler addresses (CREATE2-deployed, identical across all chains).
  * Used by the EIP-1271 decoder to validate that a decoded signature belongs to a composable order.
  */

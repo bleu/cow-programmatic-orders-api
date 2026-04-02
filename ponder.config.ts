@@ -6,6 +6,7 @@ import {
   FLASH_LOAN_ROUTER_ADDRESSES,
   GPv2SettlementContract,
   GPv2SettlementTradeContract,
+  ORDERBOOK_POLL_INTERVAL,
 } from "./src/data";
 
 export default createConfig({
