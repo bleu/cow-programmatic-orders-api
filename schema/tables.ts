@@ -95,6 +95,7 @@ export const discreteOrder = onchainTable(
     buyAmount: t.text().notNull(),
     feeAmount: t.text().notNull(),
     filledAtBlock: t.bigint(),                        // set when status = fulfilled
+    validTo: t.integer(),                             // uint32 Unix timestamp — from API or getTradeableOrderWithSignature
     detectedBy: detectedByEnum("detected_by").notNull(),
     creationDate: t.bigint().notNull(),               // block timestamp (seconds)
   }),
