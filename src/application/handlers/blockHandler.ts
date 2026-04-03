@@ -19,38 +19,19 @@
  */
 
 import { ponder } from "ponder:registry";
-import { conditionalOrderGenerator, orderPollState } from "ponder:schema";
+import { conditionalOrderGenerator, discreteOrder, orderPollState } from "ponder:schema";
 import { and, eq, lte } from "ponder";
 import type { Hex } from "viem";
 import {
-  COMPOSABLE_COW_DEPLOYMENTS,
+  BLOCK_TIME_SECONDS,
+  COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID,
 } from "../../data";
+import { LIVE_LAG_THRESHOLD_SECONDS, RECHECK_INTERVAL } from "../../constants";
 import {
   GET_TRADEABLE_ORDER_WITH_ERRORS_ABI,
   parsePollError,
 } from "../helpers/pollResultErrors";
-
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-/**
- * After a successful getTradeableOrderWithSignature call, schedule next check this
- * many blocks later. Avoids hammering RPC on every block for tradeable orders.
- * ~4 min on mainnet (12s/block), ~1.7 min on gnosis (5s/block).
- */
-const RECHECK_INTERVAL = 20n;
-
-/** Approximate block time in seconds per chain — used for PollTryAtEpoch estimation. */
-const BLOCK_TIME_SECONDS: Record<number, number> = {
-  1: 12,
-  100: 5,
-};
-
-// ─── ComposableCoW address lookup ─────────────────────────────────────────────
-
-const COMPOSABLE_COW_ADDRESS_BY_CHAIN: Record<number, Hex> = {
-  1: COMPOSABLE_COW_DEPLOYMENTS.mainnet.address,
-  100: COMPOSABLE_COW_DEPLOYMENTS.gnosis.address,
-};
+import { computeOrderUid, type GPv2OrderData } from "../helpers/orderUid";
 
 // ─── Handler registrations ────────────────────────────────────────────────────
 // One entry per chain. Both call the shared implementation.
@@ -77,7 +58,7 @@ async function runPollResultCheck(
   }
 
   const chainId: number = context.chain.id;
-  const composableCowAddress = COMPOSABLE_COW_ADDRESS_BY_CHAIN[chainId];
+  const composableCowAddress = COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID[chainId];
   if (!composableCowAddress) {
     console.warn(`[COW:POLL:RESULT] No address for chainId=${chainId}`);
     return;
@@ -85,6 +66,11 @@ async function runPollResultCheck(
 
   const currentBlock: bigint = event.block.number;
   const currentTimestamp: bigint = event.block.timestamp;
+
+  // Skip expensive RPC multicall during backfill — historical results don't change
+  // terminal state (orders are re-evaluated at live sync and correctly resolved then).
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (nowSeconds - Number(currentTimestamp) > LIVE_LAG_THRESHOLD_SECONDS) return;
 
   // Query due orders — uses checkBlockActiveIdx for O(1) lookup
   const dueOrders = await context.db.sql
@@ -94,6 +80,8 @@ async function runPollResultCheck(
       handler: conditionalOrderGenerator.handler,
       salt: conditionalOrderGenerator.salt,
       staticInput: conditionalOrderGenerator.staticInput,
+      orderType: conditionalOrderGenerator.orderType,
+      decodedParams: conditionalOrderGenerator.decodedParams,
     })
     .from(orderPollState)
     .innerJoin(
@@ -115,6 +103,8 @@ async function runPollResultCheck(
       handler: Hex;
       salt: Hex;
       staticInput: Hex;
+      orderType: string;
+      decodedParams: Record<string, string> | null;
     }[];
 
   if (dueOrders.length === 0) return;
@@ -149,7 +139,43 @@ async function runPollResultCheck(
     if (result === undefined) continue;
 
     if (result.status === "success") {
-      // Order is tradeable — schedule recheck after RECHECK_INTERVAL blocks
+      // Extract order data from multicall result
+      const [orderData] = result.result as [GPv2OrderData, Hex];
+
+      // Compute orderUid for this order
+      const orderUid = computeOrderUid(chainId, orderData, order.owner);
+
+      // Derive TWAP partIndex when t0 is known
+      let partIndex: bigint | null = null;
+      if (order.orderType === "TWAP" && order.decodedParams) {
+        const t0 = BigInt(order.decodedParams["t0"] ?? "0");
+        const t = BigInt(order.decodedParams["t"] ?? "0");
+        if (t0 > 0n && t > 0n) {
+          partIndex = (BigInt(orderData.validTo) + 1n - t0) / t - 1n;
+        }
+      }
+
+      // Upsert discrete order — onConflictDoNothing so we don't overwrite
+      // fulfilled/expired status set by trade events or expiry detection
+      await context.db.sql
+        .insert(discreteOrder)
+        .values({
+          orderUid: orderUid.toLowerCase(),
+          chainId,
+          conditionalOrderGeneratorId: order.generatorId,
+          status: "open",
+          partIndex,
+          sellAmount: orderData.sellAmount.toString(),
+          buyAmount: orderData.buyAmount.toString(),
+          feeAmount: orderData.feeAmount.toString(),
+          filledAtBlock: null,
+          validTo: orderData.validTo,
+          detectedBy: "block_handler" as const,
+          creationDate: BigInt(Number(event.block.timestamp)),
+        })
+        .onConflictDoNothing();
+
+      // Schedule recheck after RECHECK_INTERVAL blocks
       await updatePollState(context, chainId, order.generatorId, currentBlock, {
         nextCheckBlock: currentBlock + RECHECK_INTERVAL,
         lastPollResult: "success",
@@ -215,6 +241,18 @@ async function runPollResultCheck(
               ),
             );
 
+          // Also expire any open discrete orders for this generator
+          await context.db.sql
+            .update(discreteOrder)
+            .set({ status: "expired" })
+            .where(
+              and(
+                eq(discreteOrder.chainId, chainId),
+                eq(discreteOrder.conditionalOrderGeneratorId, order.generatorId),
+                eq(discreteOrder.status, "open"),
+              ),
+            );
+
           console.log(
             `[COW:POLL:RESULT] NEVER generatorId=${order.generatorId} reason=${pollResult.reason} block=${currentBlock} chain=${chainId}`,
           );
@@ -223,6 +261,18 @@ async function runPollResultCheck(
       }
     }
   }
+
+  // Mark open discrete orders as expired if their validTo has passed
+  await context.db.sql
+    .update(discreteOrder)
+    .set({ status: "expired" })
+    .where(
+      and(
+        eq(discreteOrder.chainId, chainId),
+        eq(discreteOrder.status, "open"),
+        lte(discreteOrder.validTo, Number(currentTimestamp)),
+      ),
+    );
 
   console.log(
     `[COW:POLL:RESULT] DONE block=${currentBlock} chain=${chainId} due=${dueOrders.length} success=${successCount} never=${neverCount}`,
