@@ -197,7 +197,7 @@ ponder.on("GPv2SettlementTrade:Trade", async ({ event, context }) => {
     const t = BigInt(generator.decodedParams["t"] ?? "0");
     if (t0 > 0n && t > 0n) {
       const validTo = BigInt(order.validTo);
-      partIndex = (validTo - t0) / t - 1n;
+      partIndex = (validTo + 1n - t0) / t - 1n;
     }
   }
 
@@ -219,6 +219,7 @@ ponder.on("GPv2SettlementTrade:Trade", async ({ event, context }) => {
       buyAmount: order.buyAmount,
       feeAmount: order.feeAmount,
       filledAtBlock: event.block.number,
+      validTo: order.validTo,
       detectedBy: "trade_event" as const,
       creationDate,
     })
@@ -227,6 +228,7 @@ ponder.on("GPv2SettlementTrade:Trade", async ({ event, context }) => {
       set: {
         status: "fulfilled" as const,
         filledAtBlock: event.block.number,
+        validTo: order.validTo,
       },
     });
 
