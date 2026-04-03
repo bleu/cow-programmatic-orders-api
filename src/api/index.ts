@@ -123,6 +123,7 @@ app.get("/api/orders/by-owner/:owner", async (c) => {
       buyAmount: schema.discreteOrder.buyAmount,
       feeAmount: schema.discreteOrder.feeAmount,
       filledAtBlock: schema.discreteOrder.filledAtBlock,
+      validTo: schema.discreteOrder.validTo,
       detectedBy: schema.discreteOrder.detectedBy,
       creationDate: schema.discreteOrder.creationDate,
       generatorId: schema.discreteOrder.conditionalOrderGeneratorId,
