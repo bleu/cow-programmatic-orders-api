@@ -171,24 +171,6 @@ export const COMPOSABLE_COW_HANDLER_ADDRESSES = new Set(
 );
 
 /**
- * Orderbook/block handler polling interval in blocks.
- * ~20 blocks ≈ 4 min on mainnet (12s/block), ~2 min on Gnosis (5s/block).
- */
-export const ORDERBOOK_POLL_INTERVAL = 20;
-
-/** Approximate block time in seconds per chain — used for epoch-to-block estimation. */
-export const BLOCK_TIME_SECONDS: Record<number, number> = {
-  1: 12,
-  100: 5,
-};
-
-/** ComposableCoW address by chain ID — for block handler multicall target. */
-export const COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID: Record<number, `0x${string}`> = {
-  1: COMPOSABLE_COW_DEPLOYMENTS.mainnet.address,
-  100: COMPOSABLE_COW_DEPLOYMENTS.gnosis.address,
-};
-
-/**
  * CoW Protocol Orderbook API base URLs per chain ID.
  * Used by the M3 orderbook API client (COW-735).
  * No authentication required. Append /api/v1/<endpoint> for all calls.
