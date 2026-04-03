@@ -1,3 +1,25 @@
+/**
+ * ConditionalOrderCreated event handler — indexes generators and triggers
+ * initial order discovery.
+ *
+ * KNOWN LIMITATION — Off-chain cancellation gap:
+ *   Orders cancelled via the CoW Orderbook API's DELETE endpoint (off-chain
+ *   soft cancel) are NOT detected after the initial fetch. There is no on-chain
+ *   event for API-only cancellations, and without periodic polling the indexer
+ *   has no mechanism to discover them.
+ *
+ *   This affects only EIP-1271 composable orders where the user cancels through
+ *   the API rather than calling ComposableCoW.remove() on-chain. In practice
+ *   this is rare — the standard cancellation path for composable orders is
+ *   on-chain, which emits ConditionalOrderCancelled (handled elsewhere) or
+ *   triggers PollNever in the block handler.
+ *
+ *   If this gap proves significant in production, a lightweight periodic check
+ *   can be added for owners with open orders. Track via Linear if needed.
+ *
+ * See: thoughts/plan-orderbook-cache-refactor.md § E3
+ */
+
 import { ponder } from "ponder:registry";
 import { and, eq, replaceBigInts } from "ponder";
 import {
