@@ -5,7 +5,7 @@ import { GPv2SettlementAbi } from "../abis/GPv2SettlementAbi";
 // CREATE2-deployed contracts share the same address across chains
 const COMPOSABLE_COW_ADDRESS =
   "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74" as const;
-const GPV2_SETTLEMENT_ADDRESS =
+export const GPV2_SETTLEMENT_ADDRESS =
   "0x9008D19f58AAbD9eD0D60971565AA8510560ab41" as const;
 const AAVE_V3_ADAPTER_FACTORY_ADDRESS =
   "0xdeCc46a4b09162f5369c5c80383aaa9159bcf192" as const;
