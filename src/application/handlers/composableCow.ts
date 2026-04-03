@@ -8,6 +8,9 @@ import {
 import { encodeAbiParameters, keccak256 } from "viem";
 import { getOrderTypeFromHandler } from "../../utils/order-types";
 import { decodeStaticInput } from "../../decoders/index";
+import { ORDERBOOK_API_URLS } from "../../data";
+import { LIVE_LAG_THRESHOLD_SECONDS } from "../../constants";
+import { fetchAndMatchOwnerOrders } from "../helpers/orderbookFetch";
 
 ponder.on(
   "ComposableCow:ConditionalOrderCreated",
@@ -108,5 +111,22 @@ ponder.on(
         txHash: event.transaction.hash,
       })
       .onConflictDoNothing();
+
+    // Fetch owner's orders from the API (live only — skip during backfill).
+    // The API only has current state, so fetching during historical sync is useless.
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const lagSeconds = nowSeconds - Number(event.block.timestamp);
+    if (lagSeconds <= LIVE_LAG_THRESHOLD_SECONDS) {
+      const apiBaseUrl = ORDERBOOK_API_URLS[chainId];
+      if (apiBaseUrl) {
+        await fetchAndMatchOwnerOrders(
+          context,
+          chainId,
+          apiBaseUrl,
+          ownerAddress,
+          Number(event.block.timestamp),
+        );
+      }
+    }
   },
 );
