@@ -20,7 +20,6 @@ Ponder drops all `onchainTable`-managed tables on a full resync. The orderbook A
 //   cacheKey      text     — PK: hash or composite of (endpoint + owner + orderUid)
 //   responseJson  json     — full API response object
 //   fetchedAt     bigint   — unix timestamp of last fetch
-//   expiresAt     bigint   — unix timestamp after which to re-fetch (TTL)
 ```
 
 **Critical:** This table must NOT be an `onchainTable`. It must survive Ponder resyncs.
@@ -29,9 +28,9 @@ Ponder drops all `onchainTable`-managed tables on a full resync. The orderbook A
 - Use a Ponder `onApplicationStart` hook (or similar startup mechanism) to ensure the table exists before handlers run
 - Intentionally excluded from Ponder's resync lifecycle — persists until DB is fully dropped
 
-**TTL guidance:**
-- Orders in terminal states (`fulfilled`, `expired`, `cancelled`): cache indefinitely
-- Open orders: short TTL (e.g., 60–300 seconds)
+**Cache policy:**
+- Orders in terminal states (`fulfilled`, `expired`, `cancelled`): cached indefinitely (terminal states cannot change)
+- Open orders: not cached — always re-fetched
 
 ## Implementation Notes
 

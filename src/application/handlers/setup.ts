@@ -10,8 +10,8 @@ import { sql } from "ponder";
  * (cow_cache.orderbook_cache) work from event handlers. The `readonly` pool used
  * by the API layer also works with fully qualified names.
  *
- * Cache TTL semantics (enforced by consumers, not here):
- *   - Terminal states (fulfilled/expired/cancelled/unfilled): indefinite
+ * Cache semantics (enforced by consumers, not here):
+ *   - Terminal states (fulfilled/expired/cancelled): cached indefinitely (cannot change)
  *   - Open orders: not cached — always re-fetched
  */
 ponder.on("ComposableCow:setup", async ({ context }) => {
@@ -22,8 +22,7 @@ ponder.on("ComposableCow:setup", async ({ context }) => {
     CREATE TABLE IF NOT EXISTS cow_cache.orderbook_cache (
       cache_key     TEXT PRIMARY KEY,
       response_json TEXT NOT NULL,
-      fetched_at    INTEGER NOT NULL,
-      expires_at    INTEGER NOT NULL
+      fetched_at    BIGINT NOT NULL
     )
   `);
 
