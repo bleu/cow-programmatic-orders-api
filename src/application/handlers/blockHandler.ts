@@ -28,7 +28,7 @@ import {
   ORDERBOOK_API_URLS,
   type SupportedChainId,
 } from "../../data";
-import { LIVE_LAG_THRESHOLD_SECONDS, RECHECK_INTERVAL } from "../../constants";
+import { RECHECK_INTERVAL } from "../../constants";
 import { fetchAndMatchOwnerOrders } from "../helpers/orderbookFetch";
 import {
   GET_TRADEABLE_ORDER_WITH_ERRORS_ABI,
@@ -65,10 +65,8 @@ async function runPollResultCheck(
   const currentBlock: bigint = event.block.number;
   const currentTimestamp: bigint = event.block.timestamp;
 
-  // Skip expensive RPC multicall during backfill — historical results don't change
-  // terminal state (orders are re-evaluated at live sync and correctly resolved then).
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  if (nowSeconds - Number(currentTimestamp) > LIVE_LAG_THRESHOLD_SECONDS) return;
+  // No backfill skip needed — PollResultPoller starts at "latest" in ponder.config.ts,
+  // so this handler only fires at live sync.
 
   // Query due orders — uses checkBlockActiveIdx for O(1) lookup
   const dueOrders = await context.db.sql
