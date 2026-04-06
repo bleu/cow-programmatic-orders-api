@@ -278,17 +278,7 @@ async function runPollResultCheck(
     }
   }
 
-  // Mark open discrete orders as expired if their validTo has passed
-  await context.db.sql
-    .update(discreteOrder)
-    .set({ status: "expired" })
-    .where(
-      and(
-        eq(discreteOrder.chainId, chainId),
-        eq(discreteOrder.status, "open"),
-        lte(discreteOrder.validTo, Number(currentTimestamp)),
-      ),
-    );
+  await expireOpenOrders(context, chainId, currentTimestamp);
 
   console.log(
     `[COW:POLL:RESULT] DONE block=${currentBlock} chain=${chainId} due=${dueOrders.length} success=${successCount} never=${neverCount}`,
@@ -316,6 +306,28 @@ async function updatePollState(
       and(
         eq(orderPollState.chainId, chainId),
         eq(orderPollState.conditionalOrderGeneratorId, generatorId),
+      ),
+    );
+}
+
+/**
+ * Mark all open discrete orders as expired if their validTo has passed.
+ * Runs once per block handler invocation, across all generators on this chain.
+ */
+async function expireOpenOrders(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  context: any,
+  chainId: SupportedChainId,
+  currentTimestamp: bigint,
+): Promise<void> {
+  await context.db.sql
+    .update(discreteOrder)
+    .set({ status: "expired" })
+    .where(
+      and(
+        eq(discreteOrder.chainId, chainId),
+        eq(discreteOrder.status, "open"),
+        lte(discreteOrder.validTo, Number(currentTimestamp)),
       ),
     );
 }
