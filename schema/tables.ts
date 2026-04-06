@@ -26,6 +26,20 @@ export const AddressType = {
   FlashLoanHelper: "flash_loan_helper",
 } as const;
 
+export const discreteOrderStatusEnum = onchainEnum("discrete_order_status", [
+  "open",
+  "fulfilled",
+  "unfilled",
+  "expired",
+  "cancelled",
+]);
+
+export const detectedByEnum = onchainEnum("detected_by", [
+  "trade_event",
+  "orderbook_api",
+  "block_handler",
+]);
+
 // ── Tables ───────────────────────────────────────────────────────────────────
 
 export const transaction = onchainTable(
@@ -75,10 +89,38 @@ export const discreteOrder = onchainTable(
     orderUid: t.text().notNull(),
     chainId: t.integer().notNull(),
     conditionalOrderGeneratorId: t.text().notNull(),  // references eventId
+    status: discreteOrderStatusEnum("status").notNull(),
+    partIndex: t.bigint(),                            // TWAP only: (validTo + 1 - startTime) / t - 1
+    sellAmount: t.text().notNull(),                   // uint256 as decimal string
+    buyAmount: t.text().notNull(),
+    feeAmount: t.text().notNull(),
+    filledAtBlock: t.bigint(),                        // set when status = fulfilled
+    validTo: t.integer(),                             // uint32 Unix timestamp — from API or getTradeableOrderWithSignature
+    detectedBy: detectedByEnum("detected_by").notNull(),
+    creationDate: t.bigint().notNull(),               // block timestamp (seconds)
   }),
   (table) => ({
     pk: primaryKey({ columns: [table.chainId, table.orderUid] }),
-    generatorIdx: index().on(table.conditionalOrderGeneratorId),
+    generatorIdx: index("discrete_order_generator_idx")
+      .on(table.chainId, table.conditionalOrderGeneratorId),
+    statusIdx: index("discrete_order_status_idx").on(table.status),
+  })
+);
+
+export const orderPollState = onchainTable(
+  "order_poll_state",
+  (t) => ({
+    chainId: t.integer().notNull(),
+    conditionalOrderGeneratorId: t.text().notNull(),  // references eventId
+    nextCheckBlock: t.bigint().notNull(),
+    lastCheckBlock: t.bigint(),
+    lastPollResult: t.text(),
+    isActive: t.boolean().notNull().default(true),
+  }),
+  (table) => ({
+    pk: primaryKey({ columns: [table.chainId, table.conditionalOrderGeneratorId] }),
+    checkBlockActiveIdx: index("order_poll_state_check_block_active_idx")
+      .on(table.nextCheckBlock, table.isActive),
   })
 );
 
