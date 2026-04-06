@@ -25,6 +25,7 @@ import type { Hex } from "viem";
 import {
   BLOCK_TIME_SECONDS,
   COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID,
+  type SupportedChainId,
 } from "../../data";
 import { LIVE_LAG_THRESHOLD_SECONDS, RECHECK_INTERVAL } from "../../constants";
 import {
@@ -52,7 +53,7 @@ async function runPollResultCheck(
     return;
   }
 
-  const chainId: number = context.chain.id;
+  const chainId = context.chain.id as SupportedChainId;
   const composableCowAddress = COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID[chainId];
   if (!composableCowAddress) {
     console.warn(`[COW:POLL:RESULT] No address for chainId=${chainId}`);
@@ -303,9 +304,9 @@ function estimateBlockForEpoch(
   targetTimestamp: bigint,
   currentBlock: bigint,
   currentTimestamp: bigint,
-  chainId: number,
+  chainId: SupportedChainId,
 ): bigint {
-  const blockTime = BLOCK_TIME_SECONDS[chainId] ?? 12;
+  const blockTime = BLOCK_TIME_SECONDS[chainId];
   const secondsUntil = Number(targetTimestamp) - Number(currentTimestamp);
   if (secondsUntil <= 0) return currentBlock + 1n;
   const blocksUntil = Math.ceil(secondsUntil / blockTime);

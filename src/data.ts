@@ -3,6 +3,12 @@ import { CoWShedFactoryAbi } from "../abis/CoWShedFactoryAbi";
 import { GPv2SettlementAbi } from "../abis/GPv2SettlementAbi";
 import { HANDLER_ADDRESS_TO_TYPE } from "./utils/order-types";
 
+/**
+ * Supported chain IDs — update this type when adding a new chain.
+ * All per-chain Record<> maps below use this type to enforce completeness.
+ */
+export type SupportedChainId = 1 | 100;
+
 // CREATE2-deployed contracts share the same address across chains
 const COMPOSABLE_COW_ADDRESS =
   "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74" as const;
@@ -147,7 +153,7 @@ export const ORDERBOOK_POLL_INTERVAL = 20;
  * Approximate block time in seconds per chain ID.
  * Used by the block handler to estimate block numbers from epoch timestamps (PollTryAtEpoch).
  */
-export const BLOCK_TIME_SECONDS: Record<number, number> = {
+export const BLOCK_TIME_SECONDS: Record<SupportedChainId, number> = {
   1: 12,    // mainnet
   100: 5,   // gnosis
 };
@@ -156,7 +162,7 @@ export const BLOCK_TIME_SECONDS: Record<number, number> = {
  * ComposableCoW address keyed by numeric chain ID.
  * Derived from COMPOSABLE_COW_DEPLOYMENTS — update that map to add new chains.
  */
-export const COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID: Record<number, `0x${string}`> = {
+export const COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID: Record<SupportedChainId, `0x${string}`> = {
   1: COMPOSABLE_COW_DEPLOYMENTS.mainnet.address,
   100: COMPOSABLE_COW_DEPLOYMENTS.gnosis.address,
 };
