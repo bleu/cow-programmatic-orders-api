@@ -90,7 +90,7 @@ export const discreteOrder = onchainTable(
     chainId: t.integer().notNull(),
     conditionalOrderGeneratorId: t.text().notNull(),  // references eventId
     status: discreteOrderStatusEnum("status").notNull(),
-    partIndex: t.bigint(),                            // TWAP only: (validTo - startTime) / t - 1
+    partIndex: t.bigint(),                            // TWAP only: (validTo + 1 - startTime) / t - 1
     sellAmount: t.text().notNull(),                   // uint256 as decimal string
     buyAmount: t.text().notNull(),
     feeAmount: t.text().notNull(),
