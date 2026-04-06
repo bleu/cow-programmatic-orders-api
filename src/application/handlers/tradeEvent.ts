@@ -15,7 +15,6 @@
  * The trade event is the most authoritative signal for fill status. Gate 3 handles
  * the race where a Trade fires before the orderbook poller has seen the order.
  *
- * Source: COW-736 | Reference: thoughts/reference_docs/m3-orderbook-api-research.md
  */
 
 import { ponder } from "ponder:registry";
@@ -26,7 +25,10 @@ import {
 } from "ponder:schema";
 import { and, eq } from "ponder";
 import { encodeAbiParameters, keccak256, type Hex } from "viem";
-import { COMPOSABLE_COW_HANDLER_ADDRESSES, ORDERBOOK_API_URLS } from "../../data";
+import {
+  COMPOSABLE_COW_HANDLER_ADDRESSES,
+  ORDERBOOK_API_URLS,
+} from "../../data";
 import { decodeEip1271Signature } from "../decoders/erc1271Signature";
 
 // ─── API response shape (single order) ───────────────────────────────────────
@@ -54,7 +56,7 @@ ponder.on("GPv2SettlementTrade:Trade", async ({ event, context }) => {
   const orderUid = (event.args.orderUid as string).toLowerCase();
 
   // ── Gate 1: skip if owner is not a known composable cow participant ──────────
-  const knownInGenerators = await context.db.sql
+  const knownInGenerators = (await context.db.sql
     .select({ owner: conditionalOrderGenerator.owner })
     .from(conditionalOrderGenerator)
     .where(
@@ -63,26 +65,23 @@ ponder.on("GPv2SettlementTrade:Trade", async ({ event, context }) => {
         eq(conditionalOrderGenerator.owner, owner),
       ),
     )
-    .limit(1) as { owner: string }[];
+    .limit(1)) as { owner: string }[];
 
   if (knownInGenerators.length === 0) {
     // Also check owner_mapping (CoWShed proxies, flash loan adapters)
-    const knownInMappings = await context.db.sql
+    const knownInMappings = (await context.db.sql
       .select({ address: ownerMapping.address })
       .from(ownerMapping)
       .where(
-        and(
-          eq(ownerMapping.chainId, chainId),
-          eq(ownerMapping.address, owner),
-        ),
+        and(eq(ownerMapping.chainId, chainId), eq(ownerMapping.address, owner)),
       )
-      .limit(1) as { address: string }[];
+      .limit(1)) as { address: string }[];
 
     if (knownInMappings.length === 0) return;
   }
 
   // ── Gate 2: if discrete_order already exists, just mark it fulfilled ─────────
-  const existing = await context.db.sql
+  const existing = (await context.db.sql
     .select({ orderUid: discreteOrder.orderUid })
     .from(discreteOrder)
     .where(
@@ -91,7 +90,7 @@ ponder.on("GPv2SettlementTrade:Trade", async ({ event, context }) => {
         eq(discreteOrder.orderUid, orderUid),
       ),
     )
-    .limit(1) as { orderUid: string }[];
+    .limit(1)) as { orderUid: string }[];
 
   if (existing.length > 0) {
     await context.db.sql
@@ -156,11 +155,17 @@ ponder.on("GPv2SettlementTrade:Trade", async ({ event, context }) => {
           ],
         },
       ],
-      [{ handler: decoded.handler, salt: decoded.salt, staticInput: decoded.staticInput }],
+      [
+        {
+          handler: decoded.handler,
+          salt: decoded.salt,
+          staticInput: decoded.staticInput,
+        },
+      ],
     ),
   );
 
-  const generators = await context.db.sql
+  const generators = (await context.db.sql
     .select({
       eventId: conditionalOrderGenerator.eventId,
       orderType: conditionalOrderGenerator.orderType,
@@ -173,11 +178,11 @@ ponder.on("GPv2SettlementTrade:Trade", async ({ event, context }) => {
         eq(conditionalOrderGenerator.hash, paramHash),
       ),
     )
-    .limit(1) as {
-      eventId: string;
-      orderType: string;
-      decodedParams: Record<string, string> | null;
-    }[];
+    .limit(1)) as {
+    eventId: string;
+    orderType: string;
+    decodedParams: Record<string, string> | null;
+  }[];
 
   if (generators.length === 0) {
     // Generator not yet indexed — should be rare; the composableCow handler
