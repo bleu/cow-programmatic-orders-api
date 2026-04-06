@@ -17,6 +17,3 @@ export const LIVE_LAG_THRESHOLD_SECONDS = 10 * 60; // 10 minutes
  * Note: spelled "eip1271" in the API response — NOT "erc1271".
  */
 export const SIGNING_SCHEME_EIP1271 = "eip1271";
-
-/** Far-future expiry for terminal orders: effectively permanent (multiple years). */
-export const TERMINAL_CACHE_EXPIRY_SECONDS = MAX_ORDER_LIFETIME_SECONDS * 365;

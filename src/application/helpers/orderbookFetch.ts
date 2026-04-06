@@ -10,7 +10,8 @@
  *
  * Cache: per-owner API responses are stored in cow_cache.orderbook_cache.
  * Terminal-status owners (all orders fulfilled/expired/cancelled) are cached
- * permanently. Owners with open orders are not cached — always re-fetched.
+ * indefinitely (terminal states cannot change). Owners with open orders are
+ * not cached — always re-fetched.
  *
  * Limitation: orders cancelled off-chain via the CoW API DELETE endpoint (not
  * on-chain) will not be detected after the initial fetch if the owner's
@@ -31,7 +32,6 @@ import { COMPOSABLE_COW_HANDLER_ADDRESSES } from "../../data";
 import {
   MAX_ORDER_LIFETIME_SECONDS,
   SIGNING_SCHEME_EIP1271,
-  TERMINAL_CACHE_EXPIRY_SECONDS,
 } from "../../constants";
 import { decodeEip1271Signature } from "../decoders/erc1271Signature";
 
@@ -71,7 +71,7 @@ export async function fetchAndMatchOwnerOrders(
   const cutoffTimestamp = blockTimestamp - MAX_ORDER_LIFETIME_SECONDS;
 
   // Try cache first
-  const cached = await getCached(context, cacheKey, blockTimestamp);
+  const cached = await getCached(context, cacheKey);
   let orders: OrderbookOrder[];
 
   if (cached !== null) {
@@ -95,11 +95,10 @@ export async function fetchAndMatchOwnerOrders(
       return 0;
     }
 
-    // Cache terminal-only owners permanently; skip caching if any orders are still open
+    // Cache terminal-only owners indefinitely; skip caching if any orders are still open
     const allTerminal = orders.length > 0 && orders.every((o) => TERMINAL_STATUSES.has(o.status));
     if (allTerminal) {
-      const expiresAt = blockTimestamp + TERMINAL_CACHE_EXPIRY_SECONDS;
-      await setCached(context, cacheKey, JSON.stringify(orders), blockTimestamp, expiresAt);
+      await setCached(context, cacheKey, JSON.stringify(orders), blockTimestamp);
     }
   }
 
@@ -236,11 +235,10 @@ async function getCached(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   context: any,
   cacheKey: string,
-  nowSeconds: number,
 ): Promise<string | null> {
   const rows = await context.db.sql.execute(
     sql`SELECT response_json FROM cow_cache.orderbook_cache
-        WHERE cache_key = ${cacheKey} AND expires_at > ${nowSeconds}`,
+        WHERE cache_key = ${cacheKey}`,
   ) as { response_json: string }[];
   return rows.length > 0 ? rows[0]!.response_json : null;
 }
@@ -251,14 +249,12 @@ async function setCached(
   cacheKey: string,
   responseJson: string,
   fetchedAt: number,
-  expiresAt: number,
 ): Promise<void> {
   await context.db.sql.execute(
-    sql`INSERT INTO cow_cache.orderbook_cache (cache_key, response_json, fetched_at, expires_at)
-        VALUES (${cacheKey}, ${responseJson}, ${fetchedAt}, ${expiresAt})
+    sql`INSERT INTO cow_cache.orderbook_cache (cache_key, response_json, fetched_at)
+        VALUES (${cacheKey}, ${responseJson}, ${fetchedAt})
         ON CONFLICT (cache_key) DO UPDATE SET
           response_json = EXCLUDED.response_json,
-          fetched_at    = EXCLUDED.fetched_at,
-          expires_at    = EXCLUDED.expires_at`,
+          fetched_at    = EXCLUDED.fetched_at`,
   );
 }
