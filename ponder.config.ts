@@ -39,17 +39,13 @@ export default createConfig({
     },
   },
   blocks: {
-    // One PollResultPoller entry per chain — fires every block to check due orders via
-    // getTradeableOrderWithSignature. Replaces the old RemovalPoller (singleOrders check).
-    // To add a new chain: copy this pattern and register a handler in blockHandler.ts.
-    PollResultPollerMainnet: {
-      chain: "mainnet",
-      startBlock: COMPOSABLE_COW_DEPLOYMENTS.mainnet.startBlock,
-      interval: ORDERBOOK_POLL_INTERVAL,
-    },
-    PollResultPollerGnosis: {
-      chain: "gnosis",
-      startBlock: COMPOSABLE_COW_DEPLOYMENTS.gnosis.startBlock,
+    // Fires every ORDERBOOK_POLL_INTERVAL blocks on each chain to check due orders
+    // via getTradeableOrderWithSignature. To add a new chain: add it here and in src/data.ts.
+    PollResultPoller: {
+      chain: {
+        mainnet: { startBlock: COMPOSABLE_COW_DEPLOYMENTS.mainnet.startBlock },
+        gnosis: { startBlock: COMPOSABLE_COW_DEPLOYMENTS.gnosis.startBlock },
+      },
       interval: ORDERBOOK_POLL_INTERVAL,
     },
   },

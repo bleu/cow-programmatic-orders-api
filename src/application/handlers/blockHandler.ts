@@ -33,16 +33,11 @@ import {
 } from "../helpers/pollResultErrors";
 import { computeOrderUid, type GPv2OrderData } from "../helpers/orderUid";
 
-// ─── Handler registrations ────────────────────────────────────────────────────
-// One entry per chain. Both call the shared implementation.
-// To add a new chain: add a PollResultPoller<Chain> entry in ponder.config.ts
-// and register a handler here.
+// ─── Handler registration ────────────────────────────────────────────────────
+// Single multi-chain block handler. To add a new chain: update PollResultPoller
+// in ponder.config.ts and add the chain's config to src/data.ts.
 
-ponder.on("PollResultPollerMainnet:block", async ({ event, context }) => {
-  await runPollResultCheck(event, context);
-});
-
-ponder.on("PollResultPollerGnosis:block", async ({ event, context }) => {
+ponder.on("PollResultPoller:block", async ({ event, context }) => {
   await runPollResultCheck(event, context);
 });
 
