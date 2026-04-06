@@ -12,6 +12,12 @@
  * Terminal-status owners (all orders fulfilled/expired/cancelled) are cached
  * permanently. Owners with open orders are not cached — always re-fetched.
  *
+ * Limitation: orders cancelled off-chain via the CoW API DELETE endpoint (not
+ * on-chain) will not be detected after the initial fetch if the owner's
+ * response was already cached as terminal. This is rare for EIP-1271 composable
+ * orders, which follow the on-chain cancellation path via ComposableCoW.remove().
+ * See: thoughts/plan-orderbook-cache-refactor.md § E3
+ *
  * Source: COW-737 (refactored from orderbookPoller.ts)
  */
 
@@ -44,7 +50,7 @@ interface OrderbookOrder {
 }
 
 /** Statuses that cannot transition — safe to cache indefinitely. */
-const TERMINAL_STATUSES = new Set(["fulfilled", "expired", "cancelled", "unfilled"]);
+const TERMINAL_STATUSES = new Set(["fulfilled", "expired", "cancelled"]);
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 

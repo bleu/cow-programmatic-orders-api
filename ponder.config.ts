@@ -34,8 +34,7 @@ export default createConfig({
       chain: "mainnet",
       startBlock: COMPOSABLE_COW_DEPLOYMENTS.mainnet.startBlock,
       // Ponder uses a single interval for both sync (backfill) and live — no separate "sync interval" vs "live interval".
-      // 100 blocks ≈ ~20 min at 12s/block on mainnet. Use 500 for faster sync and ~10 min live if preferred.
-      // interval: 1000,
+      // 1000 blocks ≈ ~3.3 hours at 12s/block on mainnet.
       interval: 1000,
     },
   },
