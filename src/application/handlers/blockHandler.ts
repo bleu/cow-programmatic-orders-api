@@ -25,9 +25,11 @@ import type { Hex } from "viem";
 import {
   BLOCK_TIME_SECONDS,
   COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID,
+  ORDERBOOK_API_URLS,
   type SupportedChainId,
 } from "../../data";
 import { LIVE_LAG_THRESHOLD_SECONDS, RECHECK_INTERVAL } from "../../constants";
+import { fetchAndMatchOwnerOrders } from "../helpers/orderbookFetch";
 import {
   GET_TRADEABLE_ORDER_WITH_ERRORS_ABI,
   parsePollError,
@@ -127,6 +129,7 @@ async function runPollResultCheck(
 
   let neverCount = 0;
   let successCount = 0;
+  const ownersWithTradeableOrders = new Set<Hex>();
 
   for (let i = 0; i < dueOrders.length; i++) {
     const result = results[i];
@@ -170,6 +173,8 @@ async function runPollResultCheck(
           creationDate: BigInt(Number(event.block.timestamp)),
         })
         .onConflictDoNothing();
+
+      ownersWithTradeableOrders.add(order.owner);
 
       // Schedule recheck after RECHECK_INTERVAL blocks
       await updatePollState(context, chainId, order.generatorId, currentBlock, {
@@ -255,6 +260,21 @@ async function runPollResultCheck(
           neverCount++;
           break;
       }
+    }
+  }
+
+  // Fetch from API for owners with tradeable orders — ensures discrete orders
+  // are populated even if the watch-tower hasn't posted them to the API yet.
+  const apiBaseUrl = ORDERBOOK_API_URLS[chainId];
+  if (apiBaseUrl && ownersWithTradeableOrders.size > 0) {
+    for (const owner of ownersWithTradeableOrders) {
+      await fetchAndMatchOwnerOrders(
+        context,
+        chainId,
+        apiBaseUrl,
+        owner,
+        Number(currentTimestamp),
+      );
     }
   }
 
