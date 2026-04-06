@@ -10,7 +10,6 @@
  *   - Owner resolution through owner_mapping (EOA → CoWShed proxy)
  *   - Computed aggregates (execution summary: filled/open/expired parts)
  *
- * Reference: COW-739
  */
 
 import { db } from "ponder:api";

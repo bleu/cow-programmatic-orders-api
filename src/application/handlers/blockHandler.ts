@@ -15,7 +15,7 @@
  *   Unknown revert   → treated as TryNextBlock (never crash handler)
  *
  * Replaces the old RemovalPoller (singleOrders check) from M1.
- * Source: COW-738 | Reference: agent_docs/decoder-reference.md#PollResultErrors
+ * Reference: composable-cow/src/interfaces/IConditionalOrder.sol
  */
 
 import { ponder } from "ponder:registry";

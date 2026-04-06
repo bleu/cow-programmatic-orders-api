@@ -178,7 +178,7 @@ export const COMPOSABLE_COW_HANDLER_ADDRESSES = new Set(
 
 /**
  * CoW Protocol Orderbook API base URLs per chain ID.
- * Used by the M3 orderbook API client (COW-735).
+ * Used by the orderbook fetch utility and trade event handler.
  * No authentication required. Append /api/v1/<endpoint> for all calls.
  */
 export const ORDERBOOK_API_URLS: Record<number, string> = {

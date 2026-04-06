@@ -18,8 +18,7 @@
  *
  * Detection: presence of the 0x5fd7e97d function selector at bytes 0–3.
  *
- * Source: COW-731 | Reference: thoughts/reference_docs/m3-orderbook-api-research.md
- * Validated against: tmp/contracts/cow-shed/src/ERC1271Forwarder.sol
+ * Reference: composable-cow/src/ERC1271Forwarder.sol
  */
 
 import { decodeAbiParameters, type Hex } from "viem";

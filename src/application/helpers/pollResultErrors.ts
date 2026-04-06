@@ -4,7 +4,7 @@
  * ABI definitions have moved to abis/PollResultErrorsAbi.ts (re-exported from here for
  * backward compatibility with blockHandler.ts imports).
  *
- * Source: COW-738 | composable-cow/src/interfaces/IConditionalOrder.sol
+ * Reference: composable-cow/src/interfaces/IConditionalOrder.sol
  */
 
 export { GetTradeableOrderWithSignatureAbi as GET_TRADEABLE_ORDER_WITH_ERRORS_ABI } from "../../../abis/PollResultErrorsAbi";

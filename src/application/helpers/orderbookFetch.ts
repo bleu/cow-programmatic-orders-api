@@ -17,9 +17,6 @@
  * on-chain) will not be detected after the initial fetch if the owner's
  * response was already cached as terminal. This is rare for EIP-1271 composable
  * orders, which follow the on-chain cancellation path via ComposableCoW.remove().
- * See: thoughts/plan-orderbook-cache-refactor.md § E3
- *
- * Source: COW-737 (refactored from orderbookPoller.ts)
  */
 
 import {

@@ -17,7 +17,6 @@
  *   If this gap proves significant in production, a lightweight periodic check
  *   can be added for owners with open orders. Track via Linear if needed.
  *
- * See: thoughts/plan-orderbook-cache-refactor.md § E3
  */
 
 import { ponder } from "ponder:registry";
