@@ -94,21 +94,21 @@ export const GPv2SettlementContract = {
  * GPv2Settlement — Trade event indexing.
  *
  * Separate contract entry from GPv2SettlementContract so we can use a different
- * start block (ComposableCoW genesis, not AaveV3 genesis) and a different filter.
- * The Settlement handler (M2) must stay tied to its late start block and
- * FlashLoanRouter filter; Trade indexing (M3) needs the full history from when
- * composable orders first appeared.
+ * filter. Starts at "latest" because Trade events are only needed at live sync —
+ * historical fulfillment status is obtained from the Orderbook API via
+ * fetchAndMatchOwnerOrders (called by composableCow.ts on each ConditionalOrderCreated).
+ * This avoids indexing millions of non-composable Trade events during backfill.
  */
 export const GPv2SettlementTradeContract = {
   abi: GPv2SettlementAbi,
   chain: {
     mainnet: {
       address: GPV2_SETTLEMENT_ADDRESS,
-      startBlock: COMPOSABLE_COW_DEPLOYMENTS.mainnet.startBlock,
+      startBlock: "latest" as const,
     },
     gnosis: {
       address: GPV2_SETTLEMENT_ADDRESS,
-      startBlock: COMPOSABLE_COW_DEPLOYMENTS.gnosis.startBlock,
+      startBlock: "latest" as const,
     },
   },
 } as const;
