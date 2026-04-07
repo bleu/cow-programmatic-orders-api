@@ -1,10 +1,12 @@
 ---
-status: draft
-linear_synced: false
+status: todo
+linear_synced: true
 created: 2026-03-06
 milestone: M3
-estimate: 3
+estimate: 2
 labels: [handler, feature]
+linear_url: https://linear.app/bleu-builders/issue/COW-736/trade-event-handler-discrete-order-matching-and-status-tracking
+git_branch: jefferson/cow-736-trade-event-handler-discrete-order-matching-and-status
 ---
 
 # Trade event handler: discrete order matching and status tracking
