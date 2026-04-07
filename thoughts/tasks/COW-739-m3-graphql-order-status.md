@@ -1,10 +1,12 @@
 ---
-status: draft
-linear_synced: false
+status: todo
+linear_synced: true
 created: 2026-03-06
 milestone: M3
-estimate: 2
+estimate: 1
 labels: [api, feature]
+linear_url: https://linear.app/bleu-builders/issue/COW-739/graphql-api-expose-discrete-order-status-and-execution
+git_branch: jefferson/cow-739-graphql-api-expose-discrete-order-status-and-execution
 ---
 
 # GraphQL API: expose discrete order status and execution summary

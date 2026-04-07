@@ -1,10 +1,11 @@
 import { createConfig } from "ponder";
 import {
   ComposableCowContract,
-  COMPOSABLE_COW_DEPLOYMENTS,
   CoWShedFactoryContract,
   FLASH_LOAN_ROUTER_ADDRESSES,
   GPv2SettlementContract,
+  GPv2SettlementTradeContract,
+  ORDERBOOK_POLL_INTERVAL,
 } from "./src/data";
 
 export default createConfig({
@@ -28,12 +29,25 @@ export default createConfig({
         args: { solver: FLASH_LOAN_ROUTER_ADDRESSES.mainnet },
       },
     },
+    // Separate entry for Trade events — starts at "latest" (live sync only).
+    // Historical fulfillment status comes from the Orderbook API.
+    // The handler gates on owner membership to skip non-composable trades.
+    GPv2SettlementTrade: {
+      ...GPv2SettlementTradeContract,
+      filter: { event: "Trade", args: {} },
+    },
   },
   blocks: {
-    RemovalPoller: {
-      chain: "mainnet",
-      startBlock: COMPOSABLE_COW_DEPLOYMENTS.mainnet.startBlock,
-      interval: 100, // every ~20 min at 12s/block
+    // Fires every ORDERBOOK_POLL_INTERVAL blocks on each chain to check due orders
+    // via getTradeableOrderWithSignature. Starts at "latest" because the block handler
+    // only runs at live sync (backfill is skipped via LIVE_LAG_THRESHOLD_SECONDS).
+    // To add a new chain: add it here and in src/data.ts.
+    PollResultPoller: {
+      chain: {
+        mainnet: { startBlock: "latest" },
+        gnosis: { startBlock: "latest" },
+      },
+      interval: ORDERBOOK_POLL_INTERVAL,
     },
   },
 });

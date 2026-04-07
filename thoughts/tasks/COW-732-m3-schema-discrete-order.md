@@ -1,10 +1,12 @@
 ---
-status: draft
-linear_synced: false
+status: todo
+linear_synced: true
 created: 2026-03-06
 milestone: M3
 estimate: 1
 labels: [schema, feature]
+linear_url: https://linear.app/bleu-builders/issue/COW-732/schema-fill-in-discreteorder-table
+git_branch: jefferson/cow-732-schema-fill-in-discreteorder-table
 ---
 
 # Schema: fill in discreteOrder table
