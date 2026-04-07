@@ -1,7 +1,29 @@
+/**
+ * ConditionalOrderCreated event handler — indexes generators and triggers
+ * initial order discovery.
+ *
+ * KNOWN LIMITATION — Off-chain cancellation gap:
+ *   Orders cancelled via the CoW Orderbook API's DELETE endpoint (off-chain
+ *   soft cancel) are NOT detected after the initial fetch. There is no on-chain
+ *   event for API-only cancellations, and without periodic polling the indexer
+ *   has no mechanism to discover them.
+ *
+ *   This affects only EIP-1271 composable orders where the user cancels through
+ *   the API rather than calling ComposableCoW.remove() on-chain. In practice
+ *   this is rare — the standard cancellation path for composable orders is
+ *   on-chain, which emits ConditionalOrderCancelled (handled elsewhere) or
+ *   triggers PollNever in the block handler.
+ *
+ *   If this gap proves significant in production, a lightweight periodic check
+ *   can be added for owners with open orders. Track via Linear if needed.
+ *
+ */
+
 import { ponder } from "ponder:registry";
 import { and, eq, replaceBigInts } from "ponder";
 import {
   conditionalOrderGenerator,
+  orderPollState,
   ownerMapping,
   transaction,
 } from "ponder:schema";
@@ -9,7 +31,6 @@ import { encodeAbiParameters, keccak256 } from "viem";
 import { getOrderTypeFromHandler } from "../../utils/order-types";
 import { decodeStaticInput } from "../../decoders/index";
 import { ORDERBOOK_API_URLS } from "../../data";
-import { LIVE_LAG_THRESHOLD_SECONDS } from "../../constants";
 import { fetchAndMatchOwnerOrders } from "../helpers/orderbookFetch";
 
 ponder.on(
@@ -112,21 +133,29 @@ ponder.on(
       })
       .onConflictDoNothing();
 
-    // Fetch owner's orders from the API (live only — skip during backfill).
-    // The API only has current state, so fetching during historical sync is useless.
-    const nowSeconds = Math.floor(Date.now() / 1000);
-    const lagSeconds = nowSeconds - Number(event.block.timestamp);
-    if (lagSeconds <= LIVE_LAG_THRESHOLD_SECONDS) {
-      const apiBaseUrl = ORDERBOOK_API_URLS[chainId];
-      if (apiBaseUrl) {
-        await fetchAndMatchOwnerOrders(
-          context,
-          chainId,
-          apiBaseUrl,
-          ownerAddress,
-          Number(event.block.timestamp),
-        );
-      }
+    // Create initial poll state so the block handler starts checking this order
+    await context.db
+      .insert(orderPollState)
+      .values({
+        chainId,
+        conditionalOrderGeneratorId: event.id,
+        nextCheckBlock: event.block.number,
+        isActive: true,
+      })
+      .onConflictDoNothing();
+
+    // Fetch owner's orders from the Orderbook API to discover discrete orders.
+    // Runs during both backfill and live sync — the API returns current fulfillment
+    // status, which compensates for Trade events only being indexed at live sync.
+    const apiBaseUrl = ORDERBOOK_API_URLS[chainId];
+    if (apiBaseUrl) {
+      await fetchAndMatchOwnerOrders(
+        context,
+        chainId,
+        apiBaseUrl,
+        ownerAddress,
+        Number(event.block.timestamp),
+      );
     }
   },
 );
