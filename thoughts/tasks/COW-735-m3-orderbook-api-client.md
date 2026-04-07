@@ -1,10 +1,12 @@
 ---
-status: draft
-linear_synced: false
+status: backlog
+linear_synced: true
 created: 2026-03-06
 milestone: M3
-estimate: 3
+estimate: 2
 labels: [service, feature]
+linear_url: https://linear.app/bleu-builders/issue/COW-735/implement-orderbook-api-client-service-with-caching
+git_branch: jefferson/cow-735-implement-orderbook-api-client-service-with-caching
 ---
 
 # Implement orderbook API client service with caching
@@ -26,8 +28,9 @@ Multiple M3 components need to query the CoW orderbook API: trade event handler 
 - Error handling: exponential backoff on 5xx; return null on 404; no auth required
 
 **API base URL:**
-- Mainnet: `https://api.cow.fi/mainnet/api/v1`
-- Read from env var `COW_API_BASE_URL` (default to mainnet URL)
+- Use `ORDERBOOK_API_URLS[chainId]` from `src/data.ts` — already defined for all supported chains
+- No env var needed; URLs are hardcoded constants keyed by chain ID
+- Append `/api/v1/<endpoint>` to the base URL for all calls
 
 **Filtering composable cow orders** (after fetching):
 1. `order.signingScheme === "eip1271"` — **exact string, NOT "erc1271"**

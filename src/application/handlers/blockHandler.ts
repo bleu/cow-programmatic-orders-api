@@ -15,7 +15,7 @@
  *   Unknown revert   → treated as TryNextBlock (never crash handler)
  *
  * Replaces the old RemovalPoller (singleOrders check) from M1.
- * Source: COW-738 | Reference: agent_docs/decoder-reference.md#PollResultErrors
+ * Reference: composable-cow/src/interfaces/IConditionalOrder.sol
  */
 
 import { ponder } from "ponder:registry";
@@ -25,24 +25,22 @@ import type { Hex } from "viem";
 import {
   BLOCK_TIME_SECONDS,
   COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID,
+  ORDERBOOK_API_URLS,
+  type SupportedChainId,
 } from "../../data";
-import { LIVE_LAG_THRESHOLD_SECONDS, RECHECK_INTERVAL } from "../../constants";
+import { RECHECK_INTERVAL } from "../../constants";
+import { fetchAndMatchOwnerOrders } from "../helpers/orderbookFetch";
 import {
   GET_TRADEABLE_ORDER_WITH_ERRORS_ABI,
   parsePollError,
 } from "../helpers/pollResultErrors";
 import { computeOrderUid, type GPv2OrderData } from "../helpers/orderUid";
 
-// ─── Handler registrations ────────────────────────────────────────────────────
-// One entry per chain. Both call the shared implementation.
-// To add a new chain: add a PollResultPoller<Chain> entry in ponder.config.ts
-// and register a handler here.
+// ─── Handler registration ────────────────────────────────────────────────────
+// Single multi-chain block handler. To add a new chain: update PollResultPoller
+// in ponder.config.ts and add the chain's config to src/data.ts.
 
-ponder.on("PollResultPollerMainnet:block", async ({ event, context }) => {
-  await runPollResultCheck(event, context);
-});
-
-ponder.on("PollResultPollerGnosis:block", async ({ event, context }) => {
+ponder.on("PollResultPoller:block", async ({ event, context }) => {
   await runPollResultCheck(event, context);
 });
 
@@ -57,7 +55,7 @@ async function runPollResultCheck(
     return;
   }
 
-  const chainId: number = context.chain.id;
+  const chainId = context.chain.id as SupportedChainId;
   const composableCowAddress = COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID[chainId];
   if (!composableCowAddress) {
     console.warn(`[COW:POLL:RESULT] No address for chainId=${chainId}`);
@@ -67,10 +65,8 @@ async function runPollResultCheck(
   const currentBlock: bigint = event.block.number;
   const currentTimestamp: bigint = event.block.timestamp;
 
-  // Skip expensive RPC multicall during backfill — historical results don't change
-  // terminal state (orders are re-evaluated at live sync and correctly resolved then).
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  if (nowSeconds - Number(currentTimestamp) > LIVE_LAG_THRESHOLD_SECONDS) return;
+  // No backfill skip needed — PollResultPoller starts at "latest" in ponder.config.ts,
+  // so this handler only fires at live sync.
 
   // Query due orders — uses checkBlockActiveIdx for O(1) lookup
   const dueOrders = await context.db.sql
@@ -131,6 +127,7 @@ async function runPollResultCheck(
 
   let neverCount = 0;
   let successCount = 0;
+  const ownersWithTradeableOrders = new Set<Hex>();
 
   for (let i = 0; i < dueOrders.length; i++) {
     const result = results[i];
@@ -174,6 +171,8 @@ async function runPollResultCheck(
           creationDate: BigInt(Number(event.block.timestamp)),
         })
         .onConflictDoNothing();
+
+      ownersWithTradeableOrders.add(order.owner);
 
       // Schedule recheck after RECHECK_INTERVAL blocks
       await updatePollState(context, chainId, order.generatorId, currentBlock, {
@@ -262,17 +261,22 @@ async function runPollResultCheck(
     }
   }
 
-  // Mark open discrete orders as expired if their validTo has passed
-  await context.db.sql
-    .update(discreteOrder)
-    .set({ status: "expired" })
-    .where(
-      and(
-        eq(discreteOrder.chainId, chainId),
-        eq(discreteOrder.status, "open"),
-        lte(discreteOrder.validTo, Number(currentTimestamp)),
-      ),
-    );
+  // Fetch from API for owners with tradeable orders — ensures discrete orders
+  // are populated even if the watch-tower hasn't posted them to the API yet.
+  const apiBaseUrl = ORDERBOOK_API_URLS[chainId];
+  if (apiBaseUrl && ownersWithTradeableOrders.size > 0) {
+    for (const owner of ownersWithTradeableOrders) {
+      await fetchAndMatchOwnerOrders(
+        context,
+        chainId,
+        apiBaseUrl,
+        owner,
+        Number(currentTimestamp),
+      );
+    }
+  }
+
+  await expireOpenOrders(context, chainId, currentTimestamp);
 
   console.log(
     `[COW:POLL:RESULT] DONE block=${currentBlock} chain=${chainId} due=${dueOrders.length} success=${successCount} never=${neverCount}`,
@@ -304,13 +308,35 @@ async function updatePollState(
     );
 }
 
+/**
+ * Mark all open discrete orders as expired if their validTo has passed.
+ * Runs once per block handler invocation, across all generators on this chain.
+ */
+async function expireOpenOrders(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  context: any,
+  chainId: SupportedChainId,
+  currentTimestamp: bigint,
+): Promise<void> {
+  await context.db.sql
+    .update(discreteOrder)
+    .set({ status: "expired" })
+    .where(
+      and(
+        eq(discreteOrder.chainId, chainId),
+        eq(discreteOrder.status, "open"),
+        lte(discreteOrder.validTo, Number(currentTimestamp)),
+      ),
+    );
+}
+
 function estimateBlockForEpoch(
   targetTimestamp: bigint,
   currentBlock: bigint,
   currentTimestamp: bigint,
-  chainId: number,
+  chainId: SupportedChainId,
 ): bigint {
-  const blockTime = BLOCK_TIME_SECONDS[chainId] ?? 12;
+  const blockTime = BLOCK_TIME_SECONDS[chainId];
   const secondsUntil = Number(targetTimestamp) - Number(currentTimestamp);
   if (secondsUntil <= 0) return currentBlock + 1n;
   const blocksUntil = Math.ceil(secondsUntil / blockTime);

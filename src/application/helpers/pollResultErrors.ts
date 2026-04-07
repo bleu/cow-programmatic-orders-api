@@ -1,69 +1,13 @@
 /**
- * PollResultErrors — ABI definitions and parser for ComposableCoW order lifecycle errors.
+ * PollResultErrors parser — converts viem multicall failures into typed PollResult values.
  *
- * These custom errors are thrown by handler contracts (TWAP, StopLoss, etc.) and bubble
- * up through ComposableCoW.getTradeableOrderWithSignature. They drive the watch-tower
- * scheduling loop implemented in blockHandler.ts.
+ * ABI definitions have moved to abis/PollResultErrorsAbi.ts (re-exported from here for
+ * backward compatibility with blockHandler.ts imports).
  *
- * Source: composable-cow/src/interfaces/IConditionalOrder.sol
- * Reference: agent_docs/decoder-reference.md#PollResultErrors
+ * Reference: composable-cow/src/interfaces/IConditionalOrder.sol
  */
 
-// ─── ABI ─────────────────────────────────────────────────────────────────────
-
-/**
- * Minimal ABI for getTradeableOrderWithSignature + all PollResultErrors.
- * Used in multicall so viem auto-decodes the revert reasons.
- */
-export const GET_TRADEABLE_ORDER_WITH_ERRORS_ABI = [
-  {
-    type: "function",
-    name: "getTradeableOrderWithSignature",
-    inputs: [
-      { name: "owner", type: "address" },
-      {
-        type: "tuple",
-        name: "params",
-        components: [
-          { name: "handler", type: "address" },
-          { name: "salt", type: "bytes32" },
-          { name: "staticInput", type: "bytes" },
-        ],
-      },
-      { name: "offchainInput", type: "bytes" },
-      { name: "proof", type: "bytes32[]" },
-    ],
-    outputs: [
-      {
-        type: "tuple",
-        name: "order",
-        components: [
-          { name: "sellToken", type: "address" },
-          { name: "buyToken", type: "address" },
-          { name: "receiver", type: "address" },
-          { name: "sellAmount", type: "uint256" },
-          { name: "buyAmount", type: "uint256" },
-          { name: "validTo", type: "uint32" },
-          { name: "appData", type: "bytes32" },
-          { name: "feeAmount", type: "uint256" },
-          { name: "kind", type: "bytes32" },
-          { name: "partiallyFillable", type: "bool" },
-          { name: "sellTokenBalance", type: "bytes32" },
-          { name: "buyTokenBalance", type: "bytes32" },
-        ],
-      },
-      { name: "signature", type: "bytes" },
-    ],
-    stateMutability: "view",
-  },
-  // PollResultErrors — thrown by handler contracts, surface through getTradeableOrderWithSignature
-  { type: "error", name: "PollTryNextBlock", inputs: [{ name: "reason", type: "string" }] },
-  { type: "error", name: "PollTryAtBlock",   inputs: [{ name: "blockNumber", type: "uint256" }, { name: "reason", type: "string" }] },
-  { type: "error", name: "PollTryAtEpoch",   inputs: [{ name: "timestamp", type: "uint256" }, { name: "reason", type: "string" }] },
-  { type: "error", name: "PollNever",        inputs: [{ name: "reason", type: "string" }] },
-  // OrderNotValid: order exists but conditions not met yet (treat as TryNextBlock for scheduling)
-  { type: "error", name: "OrderNotValid",    inputs: [{ name: "reason", type: "string" }] },
-] as const;
+export { GetTradeableOrderWithSignatureAbi as GET_TRADEABLE_ORDER_WITH_ERRORS_ABI } from "../../../abis/PollResultErrorsAbi";
 
 // ─── Typed result ─────────────────────────────────────────────────────────────
 
@@ -85,7 +29,8 @@ export type PollResult =
  *       .data.errorName  (set when error ABI is known)
  *       .data.args
  *
- * Falls back to TryNextBlock for any error we can't classify.
+ * Falls back to TryNextBlock for any error we can't classify — the handler
+ * never crashes on unknown reverts.
  */
 export function parsePollError(error: unknown): PollResult {
   const decoded = walkCauseChain(error);
@@ -117,6 +62,7 @@ export function parsePollError(error: unknown): PollResult {
       return { type: "tryNextBlock" };
 
     default:
+      // Unknown revert: retry next block rather than marking the order permanently invalid
       return { type: "tryNextBlock" };
   }
 }

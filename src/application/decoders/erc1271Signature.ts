@@ -18,8 +18,7 @@
  *
  * Detection: presence of the 0x5fd7e97d function selector at bytes 0–3.
  *
- * Source: COW-731 | Reference: thoughts/reference_docs/m3-orderbook-api-research.md
- * Validated against: tmp/contracts/cow-shed/src/ERC1271Forwarder.sol
+ * Reference: composable-cow/src/ERC1271Forwarder.sol
  */
 
 import { decodeAbiParameters, type Hex } from "viem";
@@ -103,7 +102,7 @@ function decodeIsafeSignatureVerifierFormat(
   signature: Hex
 ): DecodedEip1271Signature | null {
   // PayloadStruct starts at byte offset 548 (length word) + 32 (length itself)
-  const PAYLOAD_LEN_OFFSET = 4 + 32 + 32 + 64 + GPV2_ORDER_BYTES; // = 548
+  const PAYLOAD_LEN_OFFSET = 4 + 32 + 32 + 64 + 32 + GPV2_ORDER_BYTES; // = 548
 
   const payloadLenHex = signature.slice(
     2 + PAYLOAD_LEN_OFFSET * 2,
