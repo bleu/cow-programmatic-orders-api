@@ -2,7 +2,7 @@
 
 Ponder-based indexer and GraphQL API for [CoW Protocol](https://cow.fi) Composable CoW programmatic orders. Indexes on-chain events from the ComposableCoW contract, decodes order types, and exposes queryable data via GraphQL and SQL endpoints.
 
-Built by [@bleu](https://github.com/bleu) as part of the [CoW Grants Program](https://forum.cow.fi/t/grant-application-programmatic-orders-api/3346).
+Built by [@bleu](https://github.com/bleu) for the [CoW Protocol](https://cow.fi) ecosystem.
 
 ## Tech Stack
 
@@ -131,11 +131,10 @@ This project is developed across four milestones:
 
 ## Links
 
-- [Grant Application (CoW Forum)](https://forum.cow.fi/t/grant-application-programmatic-orders-api/3346)
 - [Composable CoW Repository](https://github.com/cowprotocol/composable-cow)
 - [CoW Protocol Programmatic Orders Docs](https://docs.cow.fi/cow-protocol/concepts/order-types/programmatic-orders)
 - [Ponder Documentation](https://ponder.sh/docs)
 
 ## License
 
-Open source. All code is open-source from day 0 and will be handed off to the CoW Protocol team after grant completion.
+Open source.

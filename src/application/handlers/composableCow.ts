@@ -15,7 +15,7 @@
  *   triggers PollNever in the block handler.
  *
  *   If this gap proves significant in production, a lightweight periodic check
- *   can be added for owners with open orders. Track via Linear if needed.
+ *   can be added for owners with open orders. Track via issue tracker if needed.
  *
  */
 

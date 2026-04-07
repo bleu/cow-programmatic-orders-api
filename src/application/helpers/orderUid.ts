@@ -5,7 +5,7 @@
  * where orderDigest = EIP-712 typed hash of the GPv2Order struct.
  *
  * Reference: GPv2Order.sol (tmp/contracts/gpv2-contracts/src/contracts/libraries/GPv2Order.sol)
- * Source: COW-731 / Phase 2 of orderbook cache refactor
+ * Added during orderbook cache refactor (Phase 2)
  */
 
 import { encodePacked, hashTypedData, type Hex } from "viem";
