@@ -171,7 +171,7 @@ During backfill, the orderbook poller is silently skipped (no log line). To conf
 grep -n "\[COW:OB:POLL\] DONE" ponder.log | head -5
 ```
 
-The `block=` values should be close to the current chain head. If you see poll DONE lines during historical blocks, `LIVE_LAG_THRESHOLD_SECONDS` may be misconfigured.
+The `block=` values should be close to the current chain head. If you see poll DONE lines during historical blocks, the `PollResultPoller` start block may not be set to `"latest"`.
 
 ---
 

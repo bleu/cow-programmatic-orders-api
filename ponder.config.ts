@@ -4,7 +4,6 @@ import {
   CoWShedFactoryContract,
   FLASH_LOAN_ROUTER_ADDRESSES,
   GPv2SettlementContract,
-  GPv2SettlementTradeContract,
   ORDERBOOK_POLL_INTERVAL,
 } from "./src/data";
 
@@ -29,19 +28,10 @@ export default createConfig({
         args: { solver: FLASH_LOAN_ROUTER_ADDRESSES.mainnet },
       },
     },
-    // Separate entry for Trade events — starts at "latest" (live sync only).
-    // Historical fulfillment status comes from the Orderbook API.
-    // The handler gates on owner membership to skip non-composable trades.
-    GPv2SettlementTrade: {
-      ...GPv2SettlementTradeContract,
-      filter: { event: "Trade", args: {} },
-    },
   },
   blocks: {
     // Fires every ORDERBOOK_POLL_INTERVAL blocks on each chain to check due orders
-    // via getTradeableOrderWithSignature. Starts at "latest" because the block handler
-    // only runs at live sync (backfill is skipped via LIVE_LAG_THRESHOLD_SECONDS).
-    // To add a new chain: add it here and in src/data.ts.
+    // via getTradeableOrderWithSignature. Starts at "latest" — only runs at live sync.
     PollResultPoller: {
       chain: {
         mainnet: { startBlock: "latest" },

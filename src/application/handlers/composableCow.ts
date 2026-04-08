@@ -31,7 +31,7 @@ import { encodeAbiParameters, keccak256 } from "viem";
 import { getOrderTypeFromHandler } from "../../utils/order-types";
 import { decodeStaticInput } from "../../decoders/index";
 import { ORDERBOOK_API_URLS } from "../../data";
-import { fetchAndMatchOwnerOrders } from "../helpers/orderbookFetch";
+import { fetchComposableOrders, invalidateOwnerCache, upsertDiscreteOrders } from "../helpers/orderbookClient";
 
 ponder.on(
   "ComposableCow:ConditionalOrderCreated",
@@ -144,18 +144,17 @@ ponder.on(
       })
       .onConflictDoNothing();
 
-    // Fetch owner's orders from the Orderbook API to discover discrete orders.
-    // Runs during both backfill and live sync — the API returns current fulfillment
-    // status, which compensates for Trade events only being indexed at live sync.
-    const apiBaseUrl = ORDERBOOK_API_URLS[chainId];
-    if (apiBaseUrl) {
-      await fetchAndMatchOwnerOrders(
-        context,
-        chainId,
-        apiBaseUrl,
-        ownerAddress,
-        Number(event.block.timestamp),
-      );
+    // Fetch owner's orders from the Orderbook API (live sync only).
+    // During backfill, discrete orders will be discovered at live sync
+    // by the block handler + API fetch.
+    const isLive = Math.floor(Date.now() / 1000) - Number(event.block.timestamp) < 600;
+    if (isLive) {
+      await invalidateOwnerCache(context, chainId, ownerAddress);
+      const apiBaseUrl = ORDERBOOK_API_URLS[chainId];
+      if (apiBaseUrl) {
+        const orders = await fetchComposableOrders(context, chainId, apiBaseUrl, ownerAddress);
+        await upsertDiscreteOrders(context, chainId, orders);
+      }
     }
   },
 );

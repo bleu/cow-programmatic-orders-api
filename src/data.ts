@@ -98,29 +98,6 @@ export const GPv2SettlementContract = {
 } as const;
 
 /**
- * GPv2Settlement — Trade event indexing.
- *
- * Separate contract entry from GPv2SettlementContract so we can use a different
- * filter. Starts at "latest" because Trade events are only needed at live sync —
- * historical fulfillment status is obtained from the Orderbook API via
- * fetchAndMatchOwnerOrders (called by composableCow.ts on each ConditionalOrderCreated).
- * This avoids indexing millions of non-composable Trade events during backfill.
- */
-export const GPv2SettlementTradeContract = {
-  abi: GPv2SettlementAbi,
-  chain: {
-    mainnet: {
-      address: GPV2_SETTLEMENT_ADDRESS,
-      startBlock: "latest" as const,
-    },
-    gnosis: {
-      address: GPV2_SETTLEMENT_ADDRESS,
-      startBlock: "latest" as const,
-    },
-  },
-} as const;
-
-/**
  * AaveV3AdapterFactory — deploys per-user flash loan adapter proxies.
  * Detection: call FACTORY() on a contract; if it returns this address, it is an Aave adapter.
  * Not a Ponder-indexed contract — used for view calls only.

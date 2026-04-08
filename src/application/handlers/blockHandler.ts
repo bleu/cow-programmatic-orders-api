@@ -29,7 +29,7 @@ import {
   type SupportedChainId,
 } from "../../data";
 import { RECHECK_INTERVAL } from "../../constants";
-import { fetchAndMatchOwnerOrders } from "../helpers/orderbookFetch";
+import { fetchComposableOrders, upsertDiscreteOrders } from "../helpers/orderbookClient";
 import {
   GET_TRADEABLE_ORDER_WITH_ERRORS_ABI,
   parsePollError,
@@ -165,7 +165,6 @@ async function runPollResultCheck(
           sellAmount: orderData.sellAmount.toString(),
           buyAmount: orderData.buyAmount.toString(),
           feeAmount: orderData.feeAmount.toString(),
-          filledAtBlock: null,
           validTo: orderData.validTo,
           detectedBy: "block_handler" as const,
           creationDate: BigInt(Number(event.block.timestamp)),
@@ -261,18 +260,13 @@ async function runPollResultCheck(
     }
   }
 
-  // Fetch from API for owners with tradeable orders — ensures discrete orders
-  // are populated even if the watch-tower hasn't posted them to the API yet.
+  // Fetch from API for owners with tradeable orders — updates discrete order
+  // status from the authoritative API (may already be fulfilled/expired).
   const apiBaseUrl = ORDERBOOK_API_URLS[chainId];
   if (apiBaseUrl && ownersWithTradeableOrders.size > 0) {
     for (const owner of ownersWithTradeableOrders) {
-      await fetchAndMatchOwnerOrders(
-        context,
-        chainId,
-        apiBaseUrl,
-        owner,
-        Number(currentTimestamp),
-      );
+      const orders = await fetchComposableOrders(context, chainId, apiBaseUrl, owner);
+      await upsertDiscreteOrders(context, chainId, orders);
     }
   }
 
