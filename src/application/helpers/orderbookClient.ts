@@ -180,7 +180,6 @@ export async function upsertDiscreteOrders(
         buyAmount: order.buyAmount,
         feeAmount: order.feeAmount,
         validTo: order.validTo,
-        detectedBy: "orderbook_api" as const,
         creationDate: BigInt(order.creationDate),
       })
       .onConflictDoUpdate({

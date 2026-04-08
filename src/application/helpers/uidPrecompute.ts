@@ -110,7 +110,6 @@ export async function precomputeAndDiscover(
         buyAmount: order.buyAmount,
         feeAmount: order.feeAmount,
         validTo: order.validTo,
-        detectedBy: "block_handler" as const,
         creationDate: blockTimestamp,
       })
       .onConflictDoUpdate({

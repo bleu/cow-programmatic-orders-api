@@ -35,12 +35,6 @@ export const discreteOrderStatusEnum = onchainEnum("discrete_order_status", [
   "cancelled",
 ]);
 
-export const detectedByEnum = onchainEnum("detected_by", [
-  "trade_event",
-  "orderbook_api",
-  "block_handler",
-]);
-
 // ── Tables ───────────────────────────────────────────────────────────────────
 
 export const transaction = onchainTable(
@@ -102,7 +96,6 @@ export const discreteOrder = onchainTable(
     buyAmount: t.text().notNull(),
     feeAmount: t.text().notNull(),
     validTo: t.integer(),                             // uint32 Unix timestamp — from API or getTradeableOrderWithSignature
-    detectedBy: detectedByEnum("detected_by").notNull(),
     creationDate: t.bigint().notNull(),               // block timestamp (seconds)
   }),
   (table) => ({
