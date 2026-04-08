@@ -1,11 +1,13 @@
 import { createConfig } from "ponder";
 import {
   ComposableCowContract,
+  COMPOSABLE_COW_DEPLOYMENTS,
   CoWShedFactoryContract,
   FLASH_LOAN_ROUTER_ADDRESSES,
   GPv2SettlementContract,
   ORDERBOOK_POLL_INTERVAL,
 } from "./src/data";
+import { ComposableCowAbi } from "./abis/ComposableCowAbi";
 
 export default createConfig({
   chains: {
@@ -20,6 +22,13 @@ export default createConfig({
   },
   contracts: {
     ComposableCow: ComposableCowContract,
+    ComposableCowLive: {
+      abi: ComposableCowAbi,
+      chain: {
+        mainnet: { ...COMPOSABLE_COW_DEPLOYMENTS.mainnet, startBlock: "latest" },
+        gnosis: { ...COMPOSABLE_COW_DEPLOYMENTS.gnosis, startBlock: "latest" },
+      },
+    },
     CoWShedFactory: CoWShedFactoryContract,
     GPv2Settlement: {
       ...GPv2SettlementContract,

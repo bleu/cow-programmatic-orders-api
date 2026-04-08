@@ -1,31 +1,29 @@
 /**
  * Block handler — polls ComposableCoW.getTradeableOrderWithSignature for due orders.
  *
- * Fires every block on each configured chain. Uses `order_poll_state` to decide
- * which orders are due for a check (`nextCheckBlock <= currentBlock`). For each due
- * order, multicalls `getTradeableOrderWithSignature` on ComposableCoW and updates
- * the poll state based on the PollResultError revert reason:
+ * Fires every block on each configured chain. Uses poll state columns on
+ * conditionalOrderGenerator to decide which orders are due for a check
+ * (`nextCheckBlock <= currentBlock` or `nextCheckTimestamp <= currentTimestamp`).
+ * For each due order, multicalls `getTradeableOrderWithSignature` on ComposableCoW
+ * and updates the generator based on the PollResultError revert reason:
  *
  *   Success          → nextCheckBlock += RECHECK_INTERVAL
  *   PollTryNextBlock → nextCheckBlock = currentBlock + 1
  *   PollTryAtBlock   → nextCheckBlock = blockNumber (from error)
- *   PollTryAtEpoch   → nextCheckBlock = estimated block for timestamp
- *   PollNever        → isActive = false; conditionalOrderGenerator.status = "Invalid"
+ *   PollTryAtEpoch   → nextCheckTimestamp = epoch (stored directly)
+ *   PollNever        → status = "Invalid"
  *   OrderNotValid    → treated as TryNextBlock (transient)
  *   Unknown revert   → treated as TryNextBlock (never crash handler)
  *
- * Replaces the old RemovalPoller (singleOrders check) from M1.
  * Reference: composable-cow/src/interfaces/IConditionalOrder.sol
  */
 
 import { ponder } from "ponder:registry";
-import { conditionalOrderGenerator, discreteOrder, orderPollState } from "ponder:schema";
-import { and, eq, lte } from "ponder";
+import { candidateDiscreteOrder, conditionalOrderGenerator, discreteOrder } from "ponder:schema";
+import { and, eq, lte, or, sql } from "ponder";
 import type { Hex } from "viem";
 import {
-  BLOCK_TIME_SECONDS,
   COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID,
-  ORDERBOOK_API_URLS,
   type SupportedChainId,
 } from "../../data";
 import { RECHECK_INTERVAL } from "../../constants";
@@ -68,7 +66,8 @@ async function runPollResultCheck(
   // No backfill skip needed — PollResultPoller starts at "latest" in ponder.config.ts,
   // so this handler only fires at live sync.
 
-  // Query due orders — uses checkBlockActiveIdx for O(1) lookup
+  // Query due orders — generators with nextCheckBlock <= currentBlock OR
+  // nextCheckTimestamp <= currentTimestamp
   const dueOrders = await context.db.sql
     .select({
       generatorId: conditionalOrderGenerator.eventId,
@@ -79,19 +78,18 @@ async function runPollResultCheck(
       orderType: conditionalOrderGenerator.orderType,
       decodedParams: conditionalOrderGenerator.decodedParams,
     })
-    .from(orderPollState)
-    .innerJoin(
-      conditionalOrderGenerator,
-      and(
-        eq(orderPollState.chainId, conditionalOrderGenerator.chainId),
-        eq(orderPollState.conditionalOrderGeneratorId, conditionalOrderGenerator.eventId),
-      ),
-    )
+    .from(conditionalOrderGenerator)
     .where(
       and(
-        eq(orderPollState.chainId, chainId),
-        eq(orderPollState.isActive, true),
-        lte(orderPollState.nextCheckBlock, currentBlock),
+        eq(conditionalOrderGenerator.chainId, chainId),
+        eq(conditionalOrderGenerator.status, "Active"),
+        or(
+          lte(conditionalOrderGenerator.nextCheckBlock, currentBlock),
+          and(
+            sql`${conditionalOrderGenerator.nextCheckTimestamp} IS NOT NULL`,
+            lte(conditionalOrderGenerator.nextCheckTimestamp, currentTimestamp),
+          ),
+        ),
       ),
     ) as {
       generatorId: string;
@@ -152,10 +150,10 @@ async function runPollResultCheck(
         }
       }
 
-      // Upsert discrete order — onConflictDoNothing so we don't overwrite
+      // Upsert candidate discrete order — onConflictDoNothing so we don't overwrite
       // fulfilled/expired status set by trade events or expiry detection
       await context.db.sql
-        .insert(discreteOrder)
+        .insert(candidateDiscreteOrder)
         .values({
           orderUid: orderUid.toLowerCase(),
           chainId,
@@ -166,7 +164,6 @@ async function runPollResultCheck(
           buyAmount: orderData.buyAmount.toString(),
           feeAmount: orderData.feeAmount.toString(),
           validTo: orderData.validTo,
-          detectedBy: "block_handler" as const,
           creationDate: BigInt(Number(event.block.timestamp)),
         })
         .onConflictDoNothing();
@@ -174,9 +171,10 @@ async function runPollResultCheck(
       ownersWithTradeableOrders.add(order.owner);
 
       // Schedule recheck after RECHECK_INTERVAL blocks
-      await updatePollState(context, chainId, order.generatorId, currentBlock, {
+      await updateGeneratorPollState(context, chainId, order.generatorId, currentBlock, {
         nextCheckBlock: currentBlock + RECHECK_INTERVAL,
         lastPollResult: "success",
+        nextCheckTimestamp: null,
       });
       successCount++;
     } else {
@@ -184,70 +182,46 @@ async function runPollResultCheck(
 
       switch (pollResult.type) {
         case "tryNextBlock":
-          await updatePollState(context, chainId, order.generatorId, currentBlock, {
+          await updateGeneratorPollState(context, chainId, order.generatorId, currentBlock, {
             nextCheckBlock: currentBlock + 1n,
             lastPollResult: "tryNextBlock",
+            nextCheckTimestamp: null,
           });
           break;
 
         case "tryAtBlock":
-          await updatePollState(context, chainId, order.generatorId, currentBlock, {
+          await updateGeneratorPollState(context, chainId, order.generatorId, currentBlock, {
             nextCheckBlock: pollResult.blockNumber > currentBlock
               ? pollResult.blockNumber
               : currentBlock + 1n,
             lastPollResult: "tryAtBlock",
+            nextCheckTimestamp: null,
           });
           break;
 
-        case "tryAtEpoch": {
-          const estimated = estimateBlockForEpoch(
-            pollResult.timestamp,
-            currentBlock,
-            currentTimestamp,
-            chainId,
-          );
-          await updatePollState(context, chainId, order.generatorId, currentBlock, {
-            nextCheckBlock: estimated,
+        case "tryAtEpoch":
+          // Store the target timestamp directly — the due-order query checks
+          // nextCheckTimestamp <= currentTimestamp, no block estimation needed
+          await updateGeneratorPollState(context, chainId, order.generatorId, currentBlock, {
+            nextCheckBlock: null,
             lastPollResult: "tryAtEpoch",
+            nextCheckTimestamp: pollResult.timestamp,
           });
           break;
-        }
 
         case "never":
-          // Order is permanently done — deactivate poll state and mark generator Invalid
+          // Order is permanently done — deactivate generator
           await context.db.sql
-            .update(orderPollState)
+            .update(conditionalOrderGenerator)
             .set({
-              isActive: false,
+              status: "Invalid",
               lastCheckBlock: currentBlock,
               lastPollResult: `pollNever:${pollResult.reason}`,
             })
             .where(
               and(
-                eq(orderPollState.chainId, chainId),
-                eq(orderPollState.conditionalOrderGeneratorId, order.generatorId),
-              ),
-            );
-
-          await context.db.sql
-            .update(conditionalOrderGenerator)
-            .set({ status: "Invalid" })
-            .where(
-              and(
                 eq(conditionalOrderGenerator.chainId, chainId),
                 eq(conditionalOrderGenerator.eventId, order.generatorId),
-              ),
-            );
-
-          // Also expire any open discrete orders for this generator
-          await context.db.sql
-            .update(discreteOrder)
-            .set({ status: "expired" })
-            .where(
-              and(
-                eq(discreteOrder.chainId, chainId),
-                eq(discreteOrder.conditionalOrderGeneratorId, order.generatorId),
-                eq(discreteOrder.status, "open"),
               ),
             );
 
@@ -262,10 +236,9 @@ async function runPollResultCheck(
 
   // Fetch from API for owners with tradeable orders — updates discrete order
   // status from the authoritative API (may already be fulfilled/expired).
-  const apiBaseUrl = ORDERBOOK_API_URLS[chainId];
-  if (apiBaseUrl && ownersWithTradeableOrders.size > 0) {
+  if (ownersWithTradeableOrders.size > 0) {
     for (const owner of ownersWithTradeableOrders) {
-      const orders = await fetchComposableOrders(context, chainId, apiBaseUrl, owner);
+      const orders = await fetchComposableOrders(context, chainId, owner);
       await upsertDiscreteOrders(context, chainId, orders);
     }
   }
@@ -279,25 +252,26 @@ async function runPollResultCheck(
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-async function updatePollState(
+async function updateGeneratorPollState(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   context: any,
   chainId: number,
   generatorId: string,
   currentBlock: bigint,
-  fields: { nextCheckBlock: bigint; lastPollResult: string },
+  fields: { nextCheckBlock: bigint | null; lastPollResult: string; nextCheckTimestamp: bigint | null },
 ): Promise<void> {
   await context.db.sql
-    .update(orderPollState)
+    .update(conditionalOrderGenerator)
     .set({
       nextCheckBlock: fields.nextCheckBlock,
+      nextCheckTimestamp: fields.nextCheckTimestamp,
       lastCheckBlock: currentBlock,
       lastPollResult: fields.lastPollResult,
     })
     .where(
       and(
-        eq(orderPollState.chainId, chainId),
-        eq(orderPollState.conditionalOrderGeneratorId, generatorId),
+        eq(conditionalOrderGenerator.chainId, chainId),
+        eq(conditionalOrderGenerator.eventId, generatorId),
       ),
     );
 }
@@ -322,17 +296,4 @@ async function expireOpenOrders(
         lte(discreteOrder.validTo, Number(currentTimestamp)),
       ),
     );
-}
-
-function estimateBlockForEpoch(
-  targetTimestamp: bigint,
-  currentBlock: bigint,
-  currentTimestamp: bigint,
-  chainId: SupportedChainId,
-): bigint {
-  const blockTime = BLOCK_TIME_SECONDS[chainId];
-  const secondsUntil = Number(targetTimestamp) - Number(currentTimestamp);
-  if (secondsUntil <= 0) return currentBlock + 1n;
-  const blocksUntil = Math.ceil(secondsUntil / blockTime);
-  return currentBlock + BigInt(blocksUntil);
 }

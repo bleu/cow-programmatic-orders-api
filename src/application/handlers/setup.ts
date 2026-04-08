@@ -18,6 +18,7 @@ ponder.on("ComposableCow:setup", async ({ context }) => {
   // Create a separate schema that Ponder's per-deployment schema management won't touch.
   await context.db.sql.execute(sql`CREATE SCHEMA IF NOT EXISTS cow_cache`);
 
+  // Legacy per-owner cache (kept for backward compat, no longer actively used)
   await context.db.sql.execute(sql`
     CREATE TABLE IF NOT EXISTS cow_cache.orderbook_cache (
       cache_key     TEXT PRIMARY KEY,
@@ -26,13 +27,24 @@ ponder.on("ComposableCow:setup", async ({ context }) => {
     )
   `);
 
+  // Per-UID cache for terminal order statuses
+  await context.db.sql.execute(sql`
+    CREATE TABLE IF NOT EXISTS cow_cache.order_uid_cache (
+      chain_id   INTEGER NOT NULL,
+      order_uid  TEXT NOT NULL,
+      status     TEXT NOT NULL,
+      fetched_at BIGINT NOT NULL,
+      PRIMARY KEY (chain_id, order_uid)
+    )
+  `);
+
   // Log surviving cache entries — non-zero means cache persisted across restart/resync
   const result = await context.db.sql.execute(
-    sql`SELECT COUNT(*)::int AS count FROM cow_cache.orderbook_cache`,
+    sql`SELECT COUNT(*)::int AS count FROM cow_cache.order_uid_cache`,
   ) as { count: number }[];
   const count = result[0]?.count ?? 0;
 
   console.log(
-    `[COW:SETUP] cow_cache.orderbook_cache ready — ${count} entr${count === 1 ? "y" : "ies"} from previous run`,
+    `[COW:SETUP] cow_cache.order_uid_cache ready — ${count} entr${count === 1 ? "y" : "ies"} from previous run`,
   );
 });
