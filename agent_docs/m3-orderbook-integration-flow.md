@@ -6,53 +6,98 @@ This document explains how the M3 discrete order system works, what each compone
 
 ## 1. Components
 
-The system is composed of five distinct components. Each has a clear responsibility and communicates with the others through the database or direct function calls.
+The system has seven components. Each has a single responsibility.
 
 ### Component A: Creation Handler (`composableCow.ts`)
 
-**Responsibility**: Reacts to `ConditionalOrderCreated` events from the ComposableCoW contract. Creates the parent generator entity and, for deterministic order types, discovers discrete orders immediately.
+**Responsibility**: Reacts to `ConditionalOrderCreated` events. Creates the generator entity. For deterministic order types, pre-computes all UIDs and fetches their status from the API immediately — at both backfill and live sync.
 
-**Runs during**: Backfill AND live sync (two separate Ponder contract entries — `ComposableCow` for historical, `ComposableCowLive` for live — both call into shared logic).
+**Runs during**: Backfill AND live sync (two Ponder contract entries: `ComposableCow` for historical, `ComposableCowLive` for live).
 
-**Writes to**: `conditionalOrderGenerator`, `discreteOrder` (via UID Pre-computation during backfill, or via Orderbook Client during live sync).
+**Key behavior difference by order type**:
+- **Deterministic (TWAP, StopLoss)**: Pre-computes UIDs → fetches status from API → upserts `discreteOrder` → if all terminal, marks generator `Invalid` (no further polling needed). This happens at both backfill and live sync.
+- **Non-deterministic (PerpetualSwap, GoodAfterTime, TradeAboveThreshold, Unknown)**: Inserts generator only. Discrete orders will be discovered by the block handlers at live sync.
+
+**Writes to**: `conditionalOrderGenerator`, `discreteOrder` (via UID Pre-computation).
 
 ### Component B: UID Pre-computation (`uidPrecompute.ts`)
 
-**Responsibility**: For deterministic order types (TWAP, StopLoss), computes the exact order UIDs that the on-chain handler will produce — without making any RPC calls. Then uses the Orderbook Client to fetch the status of those UIDs from the API.
+**Responsibility**: For deterministic order types, builds the exact `GPv2Order.Data` struct that the on-chain handler would produce, hashes it via EIP-712 to produce the order UID, then uses the Orderbook Client to fetch the status.
 
-**Runs during**: Backfill only (called by the backfill Creation Handler).
+**Why it works**: TWAP and StopLoss contracts produce order data that is fully determined by the `staticInput` params encoded at creation time. The oracle calls in StopLoss only gate whether the order is tradeable — they don't change the order data itself. For TWAP, each part has a deterministic `validTo` based on `t0`, `t`, and the part index.
 
-**How it works**: TWAP and StopLoss contracts produce order data that is fully determined by the `staticInput` params encoded at creation time. Given those params, this component builds the same `GPv2Order.Data` struct the Solidity contract would build, then hashes it using EIP-712 to produce the order UID — the same UID that appears on the CoW Protocol Orderbook API. It uses `computeOrderUid()` from `orderUid.ts` (the existing UID computation function).
+**Used by**: Creation Handler (both backfill and live). Also available to any future component that needs to know UIDs without RPC calls.
 
-**Why it exists**: During backfill, the block handler is not running (it starts at `"latest"`). Without this component, historical generators would arrive at live sync with no discrete orders — the block handler would poll, get `PollNever` for completed TWAPs, and the orders would be lost forever.
+**Writes to**: `discreteOrder`, updates `conditionalOrderGenerator.status` to `Invalid` if all orders are terminal.
 
-**Writes to**: `discreteOrder` (with status from API), updates `conditionalOrderGenerator.status` to `Invalid` if all orders are terminal.
+### Component C1: Contract Poller (`blockHandler.ts` — handler 1)
 
-### Component C: Block Handler (`blockHandler.ts`)
+**Responsibility**: Polls `getTradeableOrderWithSignature` on the ComposableCoW contract for **non-deterministic** active generators only. Creates candidate discrete orders when the contract returns success. Manages generator scheduling state (nextCheckBlock, nextCheckTimestamp, status).
 
-**Responsibility**: Periodically polls the ComposableCoW contract on-chain to check which generators have tradeable orders. Manages the scheduling state (when to next check each generator) and discovers orders that are currently tradeable.
+**When it runs**: Every block at live sync.
 
-**Runs during**: Live sync only (`startBlock: "latest"`, fires every 20 blocks).
+**What it polls**: Generators where:
+- `status = 'Active'`
+- `orderType` is non-deterministic (PerpetualSwap, GoodAfterTime, TradeAboveThreshold, Unknown)
+- `allCandidatesKnown = false`
+- Due: `nextCheckBlock <= currentBlock` OR `nextCheckTimestamp <= currentTimestamp`
 
-**How it works**: Queries all generators where `status = 'Active'` and `(nextCheckBlock <= currentBlock OR nextCheckTimestamp <= currentTimestamp)`. For each, calls `getTradeableOrderWithSignature` via batched multicall. The contract either returns success (order data) or reverts with a typed error (PollTryNextBlock, PollTryAtEpoch, PollNever, etc.).
+**Why only non-deterministic?** Deterministic orders (TWAP, StopLoss) have their UIDs pre-computed at creation time. There is no need to call the contract — we already know the UIDs and can poll the API directly. This saves RPC calls for the majority of orders.
 
-**Writes to**: `candidateDiscreteOrder` (on success — the order is tradeable but may not yet be on the API), updates `conditionalOrderGenerator` scheduling fields, and triggers the Orderbook Client to fetch confirmed orders.
+**Writes to**: `candidateDiscreteOrder`, updates `conditionalOrderGenerator` scheduling fields.
+
+### Component C2: Candidate Confirmer (`blockHandler.ts` — handler 2)
+
+**Responsibility**: Checks if candidate discrete orders exist on the Orderbook API. When confirmed, moves them to `discreteOrder`.
+
+**When it runs**: Every block at live sync.
+
+**How it works**: Queries `candidateDiscreteOrder` rows that don't yet have a corresponding `discreteOrder` row. Batch-fetches their UIDs from the API via `POST /orders/by_uids`. If the API has the order, upserts into `discreteOrder` with the API's authoritative status.
+
+**Why a separate handler?** The Contract Poller (C1) discovers orders on-chain, but the API may not have them yet (watch-tower submission delay). This handler polls the API repeatedly until the candidate is confirmed. Separation means C1 focuses on RPC, C2 focuses on API — different cost profiles, can be tuned independently.
+
+**Writes to**: `discreteOrder`.
+
+### Component C3: Status Updater (`blockHandler.ts` — handler 3)
+
+**Responsibility**: Polls the API for status updates on non-terminal discrete orders. Detects when open orders become fulfilled, expired, or cancelled.
+
+**When it runs**: Every block at live sync.
+
+**How it works**: Queries `discreteOrder` rows where `status = 'open'`. Batch-fetches their UIDs from the API. Updates status to the API's authoritative value. Also expires orders where `validTo <= currentTimestamp`.
+
+**Why a separate handler?** This is pure API work — no RPC calls. It runs for ALL open discrete orders regardless of how they were discovered (pre-computation, contract poller, or owner fetch).
+
+**Writes to**: `discreteOrder`, `cow_cache.order_uid_cache` (caches newly terminal).
+
+### Component C4: Historical Bootstrap (`blockHandler.ts` — handler 4)
+
+**Responsibility**: One-time discovery of historical discrete orders for non-deterministic generators that were created during backfill. Runs once at the start of live sync (`startBlock = endBlock = "latest"`).
+
+**How it works**: Finds all generators with `status = 'Active'` and no `discreteOrder` rows and non-deterministic `orderType`. For each unique owner, calls `fetchComposableOrders(owner)` from the Orderbook Client, which fetches all orders by owner, filters to composable, and upserts into `discreteOrder`.
+
+**Why it exists**: Non-deterministic generators created during backfill have no discrete orders because UID pre-computation doesn't work for them and the contract poller only runs at live sync. This one-time bootstrap fills the gap. After running once, it has no further work to do.
+
+**Writes to**: `discreteOrder`.
 
 ### Component D: Orderbook Client (`orderbookClient.ts`)
 
-**Responsibility**: The single interface to the CoW Protocol Orderbook API. Fetches orders for an owner, filters to composable (EIP-1271) orders, matches them to on-chain generators, and upserts them into `discreteOrder`. Manages the per-UID cache.
+**Responsibility**: The single interface to the CoW Protocol Orderbook API. All API calls go through this module. It handles fetching, filtering, EIP-1271 signature decoding, generator matching, and per-UID caching.
 
-**Runs during**: Both backfill (called by UID Pre-computation for batch UID lookups) and live sync (called by Creation Handler and Block Handler).
-
-**Why it's a separate module**: Multiple components need to talk to the Orderbook API (creation handler at live sync, block handler after discovering tradeable orders, UID pre-computation during backfill). This module centralizes the API calls, caching, signature decoding, and generator matching so that no other component needs to know about API details.
+**Public functions**:
+- `fetchComposableOrders(context, chainId, owner)` — full owner fetch, filter, decode, match, cache
+- `fetchOrderStatusByUids(context, chainId, uids)` — batch UID status lookup with cache
+- `upsertDiscreteOrders(context, chainId, orders)` — write to discreteOrder table
 
 **Writes to**: `discreteOrder`, `cow_cache.order_uid_cache`.
 
 ### Component E: API Endpoints (`api/index.ts`)
 
-**Responsibility**: Exposes the indexed data to consumers. GraphQL (auto-generated by Ponder) plus custom REST endpoints for owner-resolved queries and execution summaries.
+**Responsibility**: Exposes data to consumers. Read-only.
 
-**Read-only**: Queries `discreteOrder`, `conditionalOrderGenerator`, `ownerMapping`.
+- `/graphql` — auto-generated by Ponder, all tables with filtering and relations
+- `/api/orders/by-owner/:owner` — discrete orders resolved through ownerMapping (CoWShed proxies)
+- `/api/generator/:eventId/execution-summary` — count breakdown by status
 
 ---
 
@@ -60,342 +105,260 @@ The system is composed of five distinct components. Each has a clear responsibil
 
 ### `conditionalOrderGenerator`
 
-The parent entity. One row per `ConditionalOrderCreated` event. Represents a "recipe" for generating discrete orders.
+The parent entity. One row per `ConditionalOrderCreated` event.
 
 | Column | Purpose |
 |--------|---------|
 | `eventId` | Ponder event ID (PK with chainId) |
-| `owner` | Contract address that owns this order (may be a CoWShed proxy) |
-| `resolvedOwner` | The EOA behind the proxy (or same as owner if direct) |
-| `handler`, `salt`, `staticInput`, `hash` | The on-chain order parameters |
+| `owner` | Contract address (may be a CoWShed proxy) |
+| `resolvedOwner` | The EOA behind the proxy |
+| `handler`, `salt`, `staticInput`, `hash` | On-chain order parameters |
 | `orderType` | TWAP, StopLoss, PerpetualSwap, GoodAfterTime, TradeAboveThreshold, Unknown |
-| `status` | **Active** (polling), **Cancelled** (on-chain removal), **Invalid** (PollNever or all orders terminal) |
-| `decodedParams` | JSON with decoded staticInput (e.g., `{t0, t, n, sellToken, ...}` for TWAP) |
-| `nextCheckBlock` | Block number at which the block handler should next poll this generator |
-| `nextCheckTimestamp` | Unix timestamp for PollTryAtEpoch — stored directly, no block estimation |
-| `lastCheckBlock`, `lastPollResult` | Audit trail for the last poll |
+| `status` | **Active** (needs polling), **Cancelled** (on-chain removal), **Invalid** (completed or PollNever) |
+| `decodedParams` | JSON with decoded staticInput |
+| `nextCheckBlock` | When the contract poller should next check this generator |
+| `nextCheckTimestamp` | For PollTryAtEpoch — stored directly, no estimation |
+| `lastCheckBlock`, `lastPollResult` | Audit trail |
+| `allCandidatesKnown` | Boolean — when true, contract poller skips this generator (all UIDs discovered) |
 
 ### `discreteOrder`
 
-A confirmed order from the Orderbook API. One row per individual order part (e.g., each of 10 TWAP parts). This is what API consumers query.
+Confirmed orders. API-authoritative status. What consumers query.
 
 | Column | Purpose |
 |--------|---------|
-| `orderUid` | 56-byte CoW Protocol order UID (PK with chainId) |
+| `orderUid` | CoW Protocol order UID (PK with chainId) |
 | `conditionalOrderGeneratorId` | FK to parent generator |
 | `status` | **open**, **fulfilled**, **expired**, **cancelled**, **unfilled** |
-| `partIndex` | For TWAP: which part number (0-indexed). Null for non-TWAP. |
+| `partIndex` | TWAP part number (0-indexed). Null for non-TWAP. |
 | `sellAmount`, `buyAmount`, `feeAmount` | Order amounts |
 | `validTo` | Unix timestamp when this order expires |
-| `detectedBy` | Where first discovered: `orderbook_api` or `block_handler` |
+| `creationDate` | When the order was created |
 
 ### `candidateDiscreteOrder`
 
-An order discovered on-chain by the block handler that may not yet exist on the Orderbook API. Same columns as `discreteOrder` but without `detectedBy`. The block handler writes here; the Orderbook Client later confirms the order by upserting it into `discreteOrder`.
+Orders discovered on-chain by the Contract Poller but not yet confirmed on the Orderbook API. Same schema as `discreteOrder`. The Candidate Confirmer (C2) promotes them to `discreteOrder` once the API has them.
 
 ### `cow_cache.order_uid_cache`
 
-Per-UID status cache. A separate PostgreSQL schema (`cow_cache`) that survives Ponder resyncs.
+Per-UID terminal status cache. Survives Ponder resyncs (external `cow_cache` schema).
 
 | Column | Purpose |
 |--------|---------|
 | `chain_id`, `order_uid` | Primary key |
-| `status` | Terminal status only: fulfilled, expired, cancelled |
+| `status` | Terminal only: fulfilled, expired, cancelled |
 | `fetched_at` | When it was cached |
-
-**Only terminal statuses are cached.** An order marked `fulfilled` can never become `open` again — so the cache entry is permanent. Open orders are always re-fetched from the API.
 
 ---
 
 ## 3. Detailed Flows
 
-### 3.1 Order Creation — Backfill
+### 3.1 Order Creation — Deterministic Types (TWAP, StopLoss)
 
-**When**: Processing historical blocks (from genesis to near chain tip).
-**Ponder contract**: `ComposableCow` (the historical entry — processes all events from genesis).
+**Applies to both backfill and live sync.** The flow is the same because we can compute UIDs without RPC calls.
 
-**What happens step by step:**
+1. **Event arrives.** `ConditionalOrderCreated` from either `ComposableCow` (historical) or `ComposableCowLive` (live).
 
-1. **Event arrives.** Ponder delivers a `ConditionalOrderCreated` event from a historical block.
+2. **Generator insert.** Parse event, resolve owner, decode staticInput, insert `conditionalOrderGenerator` with `status = 'Active'`.
 
-2. **Generator insert.** The Creation Handler parses the event, resolves the owner (checking if it's a CoWShed proxy), decodes the `staticInput` into order-type-specific params, and inserts a `conditionalOrderGenerator` row with `status = 'Active'` and `nextCheckBlock = event.block.number`.
+3. **UID pre-computation.** Call `precomputeAndDiscover()`:
+   - **TWAP**: Build `GPv2Order.Data` for each of N parts. `validTo = t0 + (i+1)*t - 1` (span=0) or `t0 + i*t + span - 1` (span>0). When `t0=0`, use `event.block.timestamp`. Hash each via EIP-712 → N UIDs.
+   - **StopLoss**: Build single `GPv2Order.Data` from decoded params. All fields from staticInput. Hash via EIP-712 → 1 UID.
 
-3. **UID pre-computation.** The handler calls `precomputeAndDiscover()` from the UID Pre-computation component. This checks the `orderType`:
+4. **API status lookup.** Call `fetchOrderStatusByUids()`:
+   - Check `order_uid_cache` for each UID
+   - Cached terminal → use cached (no API call)
+   - Not cached → batch-fetch via `POST /orders/by_uids`
+   - Cache newly terminal results
 
-   - **TWAP**: Computes all N part UIDs. Each part's `GPv2Order.Data` is built from the decoded params — `sellAmount = partSellAmount`, `buyAmount = minPartLimit`, `validTo = t0 + (i+1) * t - 1`. When `t0 = 0` in the params, `event.block.timestamp` is used (matching the contract's `cabinet` behavior). The existing `computeOrderUid()` function hashes the order data via EIP-712 to produce the UID.
+5. **Upsert discrete orders.** For each UID, insert/update `discreteOrder` with API status. If not found on API, defaults to `open`.
 
-   - **StopLoss**: Computes a single UID. All order fields come directly from the decoded params — the oracle only gates execution, it doesn't change the order data.
+6. **Generator deactivation.** If ALL orders are terminal → set `status = 'Invalid'`, `allCandidatesKnown = true`, `lastPollResult = 'precompute:allTerminal'`. No further polling needed.
 
-   - **PerpetualSwap, GoodAfterTime, TradeAboveThreshold, Unknown**: Returns null (non-deterministic — depends on oracle prices or balances at execution time, or type is unrecognized).
+**Result**: Deterministic orders are fully discovered at creation time. They never need the Contract Poller (C1). The Status Updater (C3) handles any open orders that haven't settled yet.
 
-4. **API status lookup.** For the pre-computed UIDs, the UID Pre-computation component calls `fetchOrderStatusByUids()` from the Orderbook Client. This function:
-   - Checks `cow_cache.order_uid_cache` for each UID
-   - UIDs found as terminal in cache → use cached status (no API call)
-   - UIDs not in cache → batch-fetch via `POST /api/v1/orders/by_uids`
-   - Cache any newly-terminal results
+### 3.2 Order Creation — Non-Deterministic Types
 
-5. **Discrete order upsert.** For each pre-computed UID, a `discreteOrder` row is inserted with the status from the API. If the API returned `fulfilled`, that's stored. If the API didn't find the UID (order was never submitted to the API, or was too old), the status defaults to `open`.
+**Applies to both backfill and live sync.**
 
-6. **Generator deactivation.** If ALL pre-computed orders are terminal (fulfilled, expired, or cancelled), the generator is marked `status = 'Invalid'` with `lastPollResult = 'precompute:allTerminal'`. This means the block handler will never poll this generator at live sync — saving RPC calls for completed historical orders.
+1. **Generator insert.** Same as above.
 
-**For non-deterministic types (PerpetualSwap, etc.):** Step 3 returns null, steps 4-6 are skipped. The generator remains `Active` and will be polled by the block handler at live sync. See the open question in Section 6.
+2. **UID pre-computation returns null.** Can't compute UIDs for PerpetualSwap, GoodAfterTime, TradeAboveThreshold, or Unknown types.
 
-### 3.2 Order Creation — Live Sync
+3. **Generator stays Active.** The Contract Poller (C1) will pick it up at live sync.
 
-**When**: Processing blocks at the chain tip (real-time).
-**Ponder contract**: `ComposableCowLive` (starts at `"latest"` — only fires for new blocks).
+**During backfill**: No discrete orders created. The Historical Bootstrap (C4) fills this gap at the start of live sync.
 
-**What happens step by step:**
+**During live sync**: The Contract Poller discovers orders when `getTradeableOrderWithSignature` returns success.
 
-1. **Generator insert.** Same as backfill — insert `conditionalOrderGenerator` with `status = 'Active'`.
+### 3.3 Contract Poller (C1) — Non-Deterministic Orders
 
-2. **Cache invalidation.** The handler calls `invalidateOwnerCache()`. With the current per-UID cache, this is a no-op — new orders won't have cache entries, so they'll be fetched fresh. (Note: this may change if we add owner-level caching later.)
+**When**: Every block at live sync.
 
-3. **Full owner fetch via Orderbook Client.** The handler calls `fetchComposableOrders(context, chainId, owner)`. This does a full fetch (see Section 3.4 below) — the newly created order may or may not be on the API yet (depends on watch-tower latency), but any existing orders for this owner will be discovered and upserted into `discreteOrder`.
+1. **Find due generators.** Query where `status = 'Active'` AND `allCandidatesKnown = false` AND non-deterministic orderType AND (`nextCheckBlock <= currentBlock` OR `nextCheckTimestamp <= currentTimestamp`).
 
-**Why a full owner fetch instead of UID pre-computation at live sync?** At live sync, the order was just created — it may not be on the API yet. The full owner fetch catches any other orders this owner has, and the block handler will discover the new order when it becomes tradeable (within 20 blocks).
+2. **Batch multicall.** Call `getTradeableOrderWithSignature(owner, params, "0x", [])` on ComposableCoW.
 
-### 3.3 Block Handler — Live Polling
+3. **Process results:**
 
-**When**: Every 20 blocks at live sync (`PollResultPoller` with `startBlock: "latest"`).
+| Result | Action |
+|--------|--------|
+| **Success** | Compute `orderUid`, INSERT `candidateDiscreteOrder` (open), schedule recheck |
+| **PollTryNextBlock / OrderNotValid / Unknown** | `nextCheckBlock = currentBlock + 1` |
+| **PollTryAtBlock(N)** | `nextCheckBlock = N` |
+| **PollTryAtEpoch(T)** | `nextCheckTimestamp = T` |
+| **PollNever(reason)** | `status = 'Invalid'`. Do NOT expire discrete orders. |
 
-The block handler's job is to poll the ComposableCoW contract for each active generator to determine if the order is currently tradeable and to manage scheduling.
+4. **Note on `allCandidatesKnown`**: For non-deterministic single-part orders (StopLoss created at live, GoodAfterTime, TradeAboveThreshold), once the contract returns success once, set `allCandidatesKnown = true` — the order UID is now known and C2/C3 handle the rest. For repeating orders (PerpetualSwap), this flag stays false because new orders keep appearing.
 
-**Step 1 — Find due orders:**
+### 3.4 Candidate Confirmer (C2) — Promoting Candidates
 
-Query `conditionalOrderGenerator` where:
-- `status = 'Active'`
-- AND (`nextCheckBlock <= currentBlock` OR (`nextCheckTimestamp IS NOT NULL` AND `nextCheckTimestamp <= currentTimestamp`))
+**When**: Every block at live sync.
 
-This covers both block-based scheduling (most cases) and timestamp-based scheduling (PollTryAtEpoch for TWAP start times).
+1. **Find unconfirmed candidates.** Query `candidateDiscreteOrder` rows whose `orderUid` does NOT exist in `discreteOrder`.
 
-**Step 2 — Batch multicall:**
+2. **Batch-fetch from API.** Call `POST /orders/by_uids` for the unconfirmed UIDs.
 
-For all due orders, call `getTradeableOrderWithSignature(owner, params, "0x", [])` on the ComposableCoW contract. `allowFailure: true` so reverts come back as typed errors.
+3. **For each found on API:** Upsert into `discreteOrder` with the API's authoritative status.
 
-**Step 3 — Process results:**
+4. **For each NOT found:** Leave as candidate. Will be checked again next block. The watch-tower may not have submitted it yet.
 
-Each result is one of:
+### 3.5 Status Updater (C3) — Tracking Open Orders
 
-| Result | What it means | What the handler does |
-|--------|--------------|----------------------|
-| **Success** | The order is tradeable right now | Compute `orderUid` via EIP-712, insert into `candidateDiscreteOrder` as "open", track owner for API fetch, schedule recheck in 20 blocks |
-| **PollTryNextBlock** | Not ready yet, try next block | Set `nextCheckBlock = currentBlock + 1` |
-| **PollTryAtBlock(N)** | Try at a specific block | Set `nextCheckBlock = N` |
-| **PollTryAtEpoch(T)** | Try at a Unix timestamp | Set `nextCheckTimestamp = T` directly (no block estimation) |
-| **PollNever(reason)** | Generator is permanently done | Set `status = 'Invalid'`. Do NOT expire discrete orders — they keep their own lifecycle. |
-| **OrderNotValid** | Transient — not tradeable | Treated as TryNextBlock |
-| **Unknown revert** | Unexpected error | Treated as TryNextBlock (never crash) |
+**When**: Every block at live sync.
 
-**Step 4 — API fetch for tradeable owners:**
+1. **Find open discrete orders.** Query `discreteOrder` where `status = 'open'`.
 
-For each owner that had at least one success result, call `fetchComposableOrders()` from the Orderbook Client. This discovers/updates discrete orders from the API — the authoritative source for status. The `candidateDiscreteOrder` row from step 3 is a "best effort" early detection; the `discreteOrder` row from the API is the confirmed version.
+2. **Batch-fetch from API.** Call `POST /orders/by_uids`.
 
-**Step 5 — Expire open orders:**
+3. **Update statuses.** If the API says `fulfilled` → update. If `expired` or `cancelled` → update. Cache terminal UIDs in `order_uid_cache`.
 
-Update all `discreteOrder` rows where `status = 'open'` and `validTo <= currentTimestamp` to `status = 'expired'`.
+4. **Expire by validTo.** Any `discreteOrder` where `status = 'open'` and `validTo <= currentTimestamp` → set to `expired`.
 
-### 3.4 Orderbook Client — Fetch & Cache Logic
+### 3.6 Historical Bootstrap (C4) — One-Time Discovery
 
-The Orderbook Client is called by three callers: the live Creation Handler, the Block Handler, and the UID Pre-computation component. It handles all API communication, signature decoding, generator matching, and caching.
+**When**: Once, at `startBlock = endBlock = "latest"`.
 
-**`fetchComposableOrders(context, chainId, owner)` flow:**
+1. **Find generators with missing orders.** Query `conditionalOrderGenerator` where `status = 'Active'` AND no `discreteOrder` rows exist AND `orderType` is non-deterministic.
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  ORDERBOOK CLIENT (orderbookClient.ts)                          │
-│                                                                 │
-│  1. Resolve API URL from ORDERBOOK_API_URLS[chainId]            │
-│                                                                 │
-│  2. FETCH: GET /api/v1/account/{owner}/orders                   │
-│     (paginated, 1000/page, loop until last page)                │
-│     Returns ALL orders for this owner (all types, all schemes)  │
-│                                                                 │
-│  3. FILTER: Keep only signingScheme = "eip1271"                 │
-│     Skip "presignaturePending" status                           │
-│     (This removes non-composable orders — limit orders,         │
-│      presign orders, etc.)                                      │
-│                                                                 │
-│  4. CACHE CHECK: For each composable order,                     │
-│     look up cow_cache.order_uid_cache(chainId, uid)             │
-│     ┌─────────────────────────────────┐                         │
-│     │ Terminal HIT → use cached       │                         │
-│     │   status, skip this UID         │                         │
-│     │                                 │                         │
-│     │ MISS or OPEN → add to           │                         │
-│     │   "needs refresh" list          │                         │
-│     └─────────────────────────────────┘                         │
-│                                                                 │
-│  5. BATCH REFRESH: POST /api/v1/orders/by_uids                  │
-│     (only for UIDs in the "needs refresh" list)                 │
-│     Returns current status for each UID                         │
-│                                                                 │
-│  6. MERGE: Combine cached terminal statuses                     │
-│     with refreshed statuses                                     │
-│                                                                 │
-│  7. PROCESS each composable order:                              │
-│     - Decode EIP-1271 signature → handler, salt, staticInput    │
-│     - Compute paramHash → match to generator by hash            │
-│     - Derive TWAP partIndex if applicable                       │
-│     → Produce ComposableOrder[]                                 │
-│                                                                 │
-│  8. CACHE WRITE: Store newly-terminal UIDs                      │
-│     in cow_cache.order_uid_cache                                │
-│                                                                 │
-│  9. RETURN ComposableOrder[] to caller                          │
-└─────────────────────────────────────────────────────────────────┘
-```
+2. **Fetch by owner.** For each unique owner, call `fetchComposableOrders(owner)` from the Orderbook Client. This fetches all orders by owner, filters to composable, decodes signatures, matches to generators, and upserts into `discreteOrder`.
 
-The caller then calls `upsertDiscreteOrders()` to write the results into the `discreteOrder` table with `onConflictDoUpdate` — so the API's authoritative status always wins.
+3. **Done.** This handler fires once and has no further work. It fills the gap for PerpetualSwap/GoodAfterTime/TradeAboveThreshold generators created during backfill.
 
-**`fetchOrderStatusByUids(context, chainId, uids)` flow:**
+### 3.7 Orderbook Client — Fetch & Cache Logic
 
-A simpler path used by the UID Pre-computation component. Instead of fetching by owner and filtering, it directly:
-1. Checks the UID cache for each UID
-2. Batch-fetches non-cached UIDs via `POST /orders/by_uids`
-3. Caches terminal results
-4. Returns a `Map<uid, status>`
+The Orderbook Client is used by all other components. Two main entry points:
 
-This is more efficient when we already know the UIDs (pre-computed from decoded params) and just need their current status.
+**`fetchComposableOrders(context, chainId, owner)`** — Full owner fetch:
+
+1. Resolve API URL from `ORDERBOOK_API_URLS[chainId]`
+2. `GET /account/{owner}/orders` (paginated, 1000/page)
+3. Filter: keep `signingScheme = "eip1271"`, skip `presignaturePending`
+4. For each composable order: check `order_uid_cache`
+   - Terminal HIT → use cached status (no API call for this UID)
+   - MISS or OPEN → add to "needs refresh" list
+5. Batch refresh via `POST /orders/by_uids`
+6. Decode EIP-1271 signatures → match to generators by hash → derive partIndex
+7. Cache newly terminal UIDs
+8. Return `ComposableOrder[]`
+
+**`fetchOrderStatusByUids(context, chainId, uids)`** — Batch UID lookup:
+
+1. Check `order_uid_cache` for each UID
+2. Batch-fetch non-cached via `POST /orders/by_uids`
+3. Cache terminal results
+4. Return `Map<uid, status>`
 
 ---
 
 ## 4. Order Type Lifecycles
 
-Each order type has a different lifecycle depending on its trigger mechanism and determinism.
-
 ### TWAP — Deterministic, multi-part
 
-A TWAP order creates N discrete orders (parts), one at a time, each valid for a fixed window.
+**Backfill:** Generator created → all N part UIDs pre-computed → API status fetched → `discreteOrder` rows created → if all terminal, generator marked Invalid.
 
-**During backfill:**
-- Generator created → UID Pre-computation computes all N part UIDs → batch-fetches from API → upserts `discreteOrder` for each part with the API's status (likely `fulfilled` or `expired` for old TWAPs).
-- If all parts are terminal → generator marked `Invalid` → block handler will never poll it.
+**Live sync:** Same as backfill (UID pre-computation works at both). If some parts are still open, C3 (Status Updater) tracks them until fulfilled/expired.
 
-**During live sync:**
-- Generator created → Orderbook Client fetches owner's orders → discovers any existing parts.
-- Block handler polls → first poll may get `PollTryAtEpoch(t0)` if TWAP hasn't started yet → stores `nextCheckTimestamp = t0`.
-- When `t0` arrives → poll returns Success with part 0's order data → `candidateDiscreteOrder` created → API fetch confirms it → `discreteOrder` created.
-- Part 0 fills → API shows `fulfilled` → next poll returns Success with part 1 → repeat.
-- All parts done → `PollNever` → generator `status = 'Invalid'`.
-
-**Key characteristic:** Each part has an identical `sellAmount` and `buyAmount` (from `partSellAmount` and `minPartLimit`). Only `validTo` changes between parts.
+**The Contract Poller (C1) is NEVER involved for TWAP.** All discovery happens via UID pre-computation.
 
 ### StopLoss — Deterministic, single-part
 
-A StopLoss order creates exactly one discrete order, which triggers when an oracle price condition is met.
+**Backfill:** Generator created → single UID pre-computed → API status fetched → `discreteOrder` created → if terminal, generator marked Invalid.
 
-**During backfill:**
-- Generator created → UID Pre-computation computes the single UID → fetches status from API.
-- If `fulfilled` or `expired` → generator marked `Invalid`.
+**Live sync:** Same as backfill. If the order is still open (price hasn't triggered yet), C3 tracks it. The Contract Poller is not involved.
 
-**During live sync:**
-- Block handler polls → `OrderNotValid` (price not met yet) → retries every block.
-- Price condition met → Success → `candidateDiscreteOrder` created → API fetch confirms it.
-- The order data is always the same (amounts, tokens, `validTo` all from `staticInput`) — the oracle only gates whether the order becomes tradeable.
-
-**Key characteristic:** The oracle is a guard, not an input. The order UID is deterministic from the moment of creation.
+**Key insight:** We don't need to call `getTradeableOrderWithSignature` for StopLoss. We know the UID from creation. The API will show `fulfilled` once the watch-tower submits and the solver settles.
 
 ### PerpetualSwap — Non-deterministic, repeating
 
-Cannot pre-compute UIDs — order amounts depend on oracle prices at execution time. The block handler is the only discovery mechanism.
+**Backfill:** Generator created, no discrete orders. Historical Bootstrap (C4) discovers them at live sync start.
 
-**During backfill:** Generator created with `status = 'Active'`, no discrete orders.
-**During live sync:** Block handler polls → Success during active windows → `candidateDiscreteOrder` → API fetch → `discreteOrder`.
+**Live sync:** Contract Poller (C1) polls every block → success during active windows → candidate created → C2 confirms on API → C3 tracks until fulfilled.
 
 ### GoodAfterTime / TradeAboveThreshold — Non-deterministic, single-part
 
-Similar to StopLoss in structure, but the order amounts may depend on external state (balance for TradeAboveThreshold, price checker for GoodAfterTime). Cannot pre-compute UIDs.
+**Backfill:** Generator created, no discrete orders. Historical Bootstrap (C4) discovers them.
+
+**Live sync:** Contract Poller (C1) polls → success when condition met → candidate → C2 confirms → after first success, `allCandidatesKnown = true` → C1 stops polling this generator.
 
 ---
 
-## 5. End-to-End Lifecycle of an Order
+## 5. End-to-End Scenarios
 
-This section walks through the complete lifecycle of a TWAP order and a StopLoss order, explaining every status transition and which component is responsible.
+### Scenario A: TWAP with 5 parts, created 2 months ago (backfill)
 
-### Scenario A: A TWAP with 5 parts, created 2 months ago
+1. Block 18M: `ConditionalOrderCreated`. Generator inserted. UID Pre-computation computes 5 UIDs.
+2. API batch fetch: all 5 → `fulfilled`. Cached in `order_uid_cache`.
+3. 5 `discreteOrder` rows created (all fulfilled).
+4. Generator → `Invalid` (`allCandidatesKnown = true`).
+5. **At live sync**: Contract Poller skips this generator. Status Updater has nothing to update. Zero ongoing cost.
 
-The indexer starts syncing from genesis. This TWAP was created, executed all 5 parts, and completed months before we started indexing.
+### Scenario B: StopLoss, created at live sync, price triggers 3 hours later
 
-1. **Block 18,000,000 (backfill):** Ponder delivers `ConditionalOrderCreated`. The Creation Handler inserts the generator with `status = 'Active'` and decoded params: `{t0: 1695000000, t: 3600, n: 5, partSellAmount: "1000000000", ...}`.
+1. Live block: `ConditionalOrderCreated`. Generator inserted. UID Pre-computed = `0xabc...`.
+2. API fetch: `0xabc` not found (watch-tower hasn't submitted yet). `discreteOrder` inserted as `open`.
+3. **C3 (Status Updater) polls every block**: `0xabc` → API still not found or `open`.
+4. 3 hours later: price triggers, watch-tower submits, solver settles.
+5. **C3 polls**: `0xabc` → `fulfilled`. `discreteOrder` updated. Cached as terminal.
+6. Generator stays Active until block handler checks and gets `PollNever` → `Invalid`.
 
-2. **UID Pre-computation runs immediately.** It sees `orderType = "TWAP"` and computes 5 UIDs:
-   - Part 0: `validTo = 1695000000 + 1*3600 - 1 = 1695003599` → UID = `0xabc...`
-   - Part 1: `validTo = 1695007199` → UID = `0xdef...`
-   - ...and so on for parts 2-4.
+**Note:** The Contract Poller (C1) is NOT involved. The UID was known from creation. Status tracking is pure API work.
 
-3. **API status lookup.** Calls `fetchOrderStatusByUids()` with the 5 UIDs.
-   - First time: all 5 are fetched from `POST /orders/by_uids`.
-   - API returns: all 5 are `fulfilled`.
-   - All 5 are cached in `cow_cache.order_uid_cache` as terminal.
+### Scenario C: PerpetualSwap, created 3 months ago (non-deterministic)
 
-4. **Discrete order upsert.** 5 `discreteOrder` rows are created with `status = 'fulfilled'`.
+1. Backfill: Generator created, `status = 'Active'`. UID Pre-computation returns null.
+2. **C4 (Historical Bootstrap) at live sync start**: Finds this generator has no `discreteOrder` rows. Fetches by owner from API. Discovers 15 historical orders. Upserts all into `discreteOrder`.
+3. **C1 (Contract Poller) at live sync**: Polls `getTradeableOrderWithSignature`. Gets `Success` during active window → candidate created.
+4. **C2 (Candidate Confirmer)**: Checks API → confirms → `discreteOrder`.
+5. **C3 (Status Updater)**: Tracks open orders → `fulfilled` when settled.
+6. PerpetualSwap keeps producing new orders → C1 keeps discovering them.
 
-5. **Generator deactivation.** All 5 are terminal → generator `status = 'Invalid'`, `lastPollResult = 'precompute:allTerminal'`.
+### Scenario D: Unknown order type, created during backfill
 
-6. **At live sync:** The block handler queries for `Active` generators — this one is `Invalid`, so it's skipped. Zero RPC cost.
-
-**Result:** The user's completed TWAP is fully indexed during backfill. All 5 parts visible in the API with correct statuses. No wasted RPC calls at live sync.
-
-### Scenario B: A StopLoss, created during live sync, price triggers later
-
-1. **Live block:** `ConditionalOrderCreated` fires. The live Creation Handler inserts the generator and calls `fetchComposableOrders()` for this owner. The StopLoss order may not be on the API yet (just created), but any other orders from this owner are discovered.
-
-2. **Block handler (20 blocks later):** Polls `getTradeableOrderWithSignature` → gets `OrderNotValid` (oracle price hasn't hit the strike). Sets `nextCheckBlock = currentBlock + 1`.
-
-3. **Block handler (next block, and the next, and the next...):** Keeps getting `OrderNotValid`. Retries each block.
-
-4. **Price drops to strike level.** Block handler polls → **Success!** The contract returns the order data. The handler:
-   - Computes `orderUid` via EIP-712
-   - Inserts into `candidateDiscreteOrder` with `status = 'open'`
-   - Triggers API fetch for this owner
-
-5. **API fetch.** The watch-tower may have already submitted the order to the API. Two outcomes:
-   - **API has it:** `discreteOrder` is upserted with status from API (likely `open`, soon to be `fulfilled`).
-   - **API doesn't have it yet:** No match. The `candidateDiscreteOrder` is the only record. Next poll cycle, the API will likely have it.
-
-6. **Order fills.** The solver settles the trade on-chain. The API updates the order status to `fulfilled`.
-
-7. **Next block handler cycle.** API fetch finds the order as `fulfilled` → `discreteOrder` upserted with `status = 'fulfilled'`.
-
-8. **Block handler polls again.** `getTradeableOrderWithSignature` returns `PollNever` (order was a one-shot, now done). Generator `status = 'Invalid'`.
-
-**Result:** The StopLoss order was discovered when it became tradeable, confirmed via the API, and marked fulfilled when settled. The `candidateDiscreteOrder` served as a "heads up" that the order existed before the API confirmed it.
-
-### Scenario C: A PerpetualSwap, created 3 months ago (non-deterministic)
-
-1. **Backfill:** Generator created with `status = 'Active'`. UID Pre-computation returns `null` (non-deterministic). No discrete orders created.
-
-2. **Live sync:** Block handler polls → Success (if the swap is currently in an active window) → `candidateDiscreteOrder` created → API fetch → `discreteOrder` upserted.
-
-3. **Between windows:** Block handler polls → `OrderNotValid` → retries next block.
-
-4. **Ongoing:** PerpetualSwap keeps producing new orders periodically. Each new active window generates a new `candidateDiscreteOrder` and a new `discreteOrder` via API.
-
-**Gap:** Discrete orders from the 3 months before we started indexing are NOT captured. The API may have them, but we don't fetch by owner during backfill for non-deterministic types. See Section 6.
+1. Backfill: Generator created with `orderType = 'Unknown'`. UID Pre-computation returns null.
+2. **C4 (Bootstrap)**: Fetches by owner. If the API has composable orders for this owner, they're upserted into `discreteOrder`.
+3. **C1 (Contract Poller)**: May poll if generator is still Active. Gets `Success` or error responses.
+4. Normal lifecycle from there.
 
 ---
 
-## 6. Open Question: Non-Deterministic Historical Orders
+## 6. Open Questions
 
-**What's solved:** TWAP and StopLoss orders from before the indexer started are fully captured via UID pre-computation during backfill.
+### `allCandidatesKnown` — Exact semantics
 
-**What's not solved:** PerpetualSwap, GoodAfterTime, and TradeAboveThreshold orders from before the indexer started. These types cannot have UIDs pre-computed, so their historical discrete orders are not discovered during backfill.
+**For deterministic types**: Set to `true` at creation time (all UIDs known immediately).
 
-**Impact:** These order types are rare compared to TWAP. The generator is created and visible, but its historical discrete orders are missing.
+**For non-deterministic single-part types**: Set to `true` after the first success from the Contract Poller (the UID is now known).
 
-### Options:
+**For PerpetualSwap (repeating)**: Never set to `true` — new orders keep appearing. The Contract Poller must keep polling.
 
-**Option A — Fetch from API by owner for non-deterministic types during backfill.**
-During backfill, when we encounter a non-deterministic generator, call `fetchComposableOrders(owner)` to discover all orders from the API. This adds API calls but only for the handful of non-TWAP/non-StopLoss owners.
+**Question**: Should `allCandidatesKnown` be a boolean, or should we store the count of expected parts? For TWAP, we know `n` parts. For StopLoss, we know 1 part. For PerpetualSwap, it's unbounded.
 
-**Option B — Accept the gap.**
-PerpetualSwap and TradeAboveThreshold are rare. The generator is indexed correctly, and if the order is still active at live sync, it will be discovered by the block handler. Only historical (completed) discrete orders are missing.
+### Historical Bootstrap — Completeness
 
-**Option C — One-time bootstrap at the start of live sync.**
-When the indexer transitions from backfill to live, find all `Active` generators with no `discreteOrder` rows, fetch from API for their owners. Runs once, fills the gap.
+The bootstrap discovers orders via `fetchComposableOrders(owner)`, which relies on the Orderbook API having the orders. If an order was created and expired without ever being submitted to the API (e.g., the watch-tower was down), it won't be discovered.
 
-**Recommendation for team decision:** Option B is simplest. Option A adds minimal complexity if completeness is required. Option C is a middle ground.
+**Likely acceptable**: The watch-tower is operated by the CoW Protocol team and is highly available.
 
 ---
 
@@ -408,64 +371,57 @@ flowchart TB
     subgraph OnChain["On-Chain Events (Ponder)"]
         CC["ComposableCow<br/><i>backfill: genesis → latest</i>"]
         CCL["ComposableCowLive<br/><i>live: latest → ∞</i>"]
-        PRP["PollResultPoller<br/><i>live: every 20 blocks</i>"]
+        BH1["Block Handler 1<br/><i>Contract Poller — every block</i>"]
+        BH2["Block Handler 2<br/><i>Candidate Confirmer — every block</i>"]
+        BH3["Block Handler 3<br/><i>Status Updater — every block</i>"]
+        BH4["Block Handler 4<br/><i>Historical Bootstrap — once at latest</i>"]
         GPV["GPv2Settlement<br/><i>flash loans only</i>"]
         CSF["CoWShedFactory"]
     end
 
-    subgraph CompA["Component A: Creation Handler<br/>(composableCow.ts)"]
-        ABack["Backfill Handler<br/>Insert generator only"]
-        ALive["Live Handler<br/>Insert generator + API fetch"]
+    subgraph CompA["Component A: Creation Handler"]
+        AH["Insert generator"]
+        AB["UID Pre-computation<br/>(TWAP, StopLoss)"]
+        AH --> AB
     end
 
-    subgraph CompB["Component B: UID Pre-computation<br/>(uidPrecompute.ts)"]
-        BPre["Compute UIDs<br/>TWAP: all N parts<br/>StopLoss: single UID"]
+    subgraph CompD["Component D: Orderbook Client"]
+        DFetch["Fetch / filter / decode / match"]
+        DCache["cow_cache.order_uid_cache"]
+        DFetch --> DCache
     end
 
-    subgraph CompC["Component C: Block Handler<br/>(blockHandler.ts)"]
-        CPoll["Poll getTradeableOrderWithSignature<br/>via batched multicall"]
+    subgraph DB["Database"]
+        Gen["conditionalOrderGenerator"]
+        Cand["candidateDiscreteOrder"]
+        Disc["discreteOrder"]
+        OMap["ownerMapping"]
     end
 
-    subgraph CompD["Component D: Orderbook Client<br/>(orderbookClient.ts)"]
-        DFetch["Fetch & filter API orders"]
-        DCache["cow_cache.order_uid_cache<br/><i>Per-UID terminal status cache</i>"]
-        DMatch["Decode signatures<br/>Match to generators"]
-    end
-
-    subgraph DB["Database Tables"]
-        Gen["conditionalOrderGenerator<br/><i>Parent entity + poll scheduling</i>"]
-        Disc["discreteOrder<br/><i>Confirmed orders (API authoritative)</i>"]
-        Cand["candidateDiscreteOrder<br/><i>On-chain discoveries, unconfirmed</i>"]
-        OMap["ownerMapping<br/><i>Proxy → EOA</i>"]
-    end
-
-    subgraph CompE["Component E: API Endpoints<br/>(api/index.ts)"]
+    subgraph CompE["API Endpoints"]
         EGql["/graphql"]
         EOwner["/api/orders/by-owner/:owner"]
         ESum["/api/generator/:id/summary"]
     end
 
-    CC --> ABack
-    CCL --> ALive
-    PRP --> CPoll
+    CC & CCL --> CompA
     GPV & CSF --> OMap
 
-    ABack --> Gen
-    ABack --> BPre
-    ALive --> Gen
-    ALive --> CompD
+    CompA -->|insert| Gen
+    AB -->|upsert| Disc
+    AB -.->|all terminal → Invalid| Gen
 
-    BPre --> CompD
-    BPre --> Disc
-    BPre -.->|all terminal| Gen
+    BH1 -->|"RPC multicall<br/>(non-deterministic only)"| Cand
+    BH1 -->|update scheduling| Gen
+    BH2 -->|"confirm via API<br/>(POST /orders/by_uids)"| Disc
+    BH3 -->|"update status via API<br/>(POST /orders/by_uids)"| Disc
+    BH4 -->|"one-time owner fetch<br/>(GET /account/{owner}/orders)"| Disc
 
-    CPoll --> Cand
-    CPoll --> Gen
-    CPoll --> CompD
-
-    DFetch --> DCache
-    DCache --> DMatch
-    DMatch --> Disc
+    CompD --> Disc
+    AB --> CompD
+    BH2 --> CompD
+    BH3 --> CompD
+    BH4 --> CompD
 
     Disc --> CompE
     Gen --> CompE
@@ -473,283 +429,202 @@ flowchart TB
 
 ---
 
-### Diagram 2: Backfill Flow — Deterministic (TWAP / StopLoss)
+### Diagram 2: Creation Flow — Deterministic vs Non-Deterministic
 
 ```mermaid
 flowchart TD
-    E["ConditionalOrderCreated<br/><i>(historical block)</i>"] --> A
+    E["ConditionalOrderCreated"] --> Insert["Insert generator<br/>status=Active"]
 
-    subgraph A["Component A: Creation Handler"]
-        A1["Parse event: owner, handler, salt, staticInput"]
-        A2["Compute hash = keccak256(abi.encode(params))"]
-        A3["Resolve owner via ownerMapping"]
-        A4["Decode staticInput → order params"]
-        A5["INSERT generator<br/>status=Active, nextCheckBlock=block.number"]
-        A1 --> A2 --> A3 --> A4 --> A5
-    end
+    Insert --> Check{"Order type?"}
 
-    A5 --> B
+    Check -->|"TWAP / StopLoss<br/>(deterministic)"| Pre["UID Pre-computation<br/>Compute all UIDs from decoded params"]
+    Check -->|"PerpetualSwap / GoodAfterTime<br/>TradeAboveThreshold / Unknown<br/>(non-deterministic)"| Skip["No pre-computation<br/>Generator stays Active"]
 
-    subgraph B["Component B: UID Pre-computation"]
-        B1{"Order type<br/>deterministic?"}
-        B2["TWAP: build GPv2Order.Data for each part<br/>validTo = t0 + (i+1)*t - 1<br/>Compute UID via EIP-712"]
-        B3["StopLoss: build GPv2Order.Data from staticInput<br/>Compute single UID via EIP-712"]
-        B4["Return UIDs:<br/>[uid_0, uid_1, ..., uid_N-1]"]
-        B1 -->|TWAP| B2 --> B4
-        B1 -->|StopLoss| B3 --> B4
-        B1 -->|PerpetualSwap<br/>GoodAfterTime<br/>TradeAboveThreshold| BNull["Return null<br/><i>Non-deterministic</i>"]
-    end
+    Pre --> API["Orderbook Client:<br/>fetchOrderStatusByUids()"]
+    API --> Upsert["Upsert discreteOrder<br/>for each UID"]
+    Upsert --> Term{"All terminal?"}
+    Term -->|Yes| Deactivate["Generator → Invalid<br/>allCandidatesKnown = true<br/>No further polling"]
+    Term -->|No| Active["Generator stays Active<br/>C3 tracks open orders"]
 
-    B4 --> D
+    Skip --> BackfillQ{"Backfill or<br/>Live sync?"}
+    BackfillQ -->|Backfill| Wait["Wait for C4 bootstrap<br/>at live sync start"]
+    BackfillQ -->|Live| Poll["C1 Contract Poller<br/>discovers when tradeable"]
 
-    subgraph D["Component D: Orderbook Client"]
-        D1["Check cow_cache.order_uid_cache<br/>for each UID"]
-        D2{"All cached<br/>as terminal?"}
-        D3["Batch fetch non-cached via<br/>POST /orders/by_uids"]
-        D4["Cache newly terminal UIDs"]
-        D5["Return status map:<br/>uid → fulfilled/expired/open"]
-        D1 --> D2
-        D2 -->|Yes| D5
-        D2 -->|No| D3 --> D4 --> D5
-    end
-
-    D5 --> BU
-
-    subgraph BU["Component B: Upsert + Deactivate"]
-        BU1["UPSERT discreteOrder for each UID<br/>status from API or 'open' if not found"]
-        BU2{"All orders<br/>terminal?"}
-        BU3["UPDATE generator:<br/>status=Invalid<br/>lastPollResult=precompute:allTerminal"]
-        BU4["Generator stays Active<br/>Block handler will poll at live sync"]
-        BU1 --> BU2
-        BU2 -->|Yes| BU3
-        BU2 -->|No| BU4
-    end
-
-    BNull --> Skip["Generator stays Active<br/>No discrete orders during backfill<br/><i>See Section 6: Open Question</i>"]
-
-    style BNull fill:#fff3cd
+    style Deactivate fill:#d4edda
     style Skip fill:#fff3cd
-    style BU3 fill:#d4edda
+    style Wait fill:#fff3cd
 ```
 
 ---
 
-### Diagram 3: Live Sync Flow — New Order Created
-
-```mermaid
-flowchart TD
-    E["ComposableCowLive:ConditionalOrderCreated<br/><i>(live block)</i>"] --> A
-
-    subgraph A["Component A: Creation Handler (live)"]
-        A1["INSERT generator<br/>status=Active, nextCheckBlock=block.number"]
-        A2["invalidateOwnerCache()<br/><i>no-op with per-UID cache</i>"]
-        A1 --> A2
-    end
-
-    A2 --> D
-
-    subgraph D["Component D: Orderbook Client"]
-        D1["GET /account/{owner}/orders<br/><i>paginated, all orders</i>"]
-        D2["Filter: keep eip1271 only"]
-        D3["Check UID cache per order"]
-        D4["Batch refresh non-cached/open UIDs<br/>POST /orders/by_uids"]
-        D5["Decode signatures → match to generators"]
-        D6["Cache terminal UIDs"]
-        D7["Return ComposableOrder[]"]
-        D1 --> D2 --> D3 --> D4 --> D5 --> D6 --> D7
-    end
-
-    D7 --> U["upsertDiscreteOrders()<br/>INSERT/UPDATE discreteOrder<br/><i>API status is authoritative</i>"]
-
-    U --> Note["The new order may not be on the API yet.<br/>Block handler discovers it within ~20 blocks."]
-
-    style Note fill:#e8f4f8,stroke:#b8daff
-```
-
----
-
-### Diagram 4: Block Handler — Live Polling Cycle
-
-```mermaid
-flowchart TD
-    E["PollResultPoller:block<br/><i>every 20 blocks</i>"] --> Q
-
-    Q["Query generators WHERE<br/>status=Active AND<br/>(nextCheckBlock ≤ currentBlock<br/>OR nextCheckTimestamp ≤ currentTimestamp)"]
-
-    Q --> MC["Batch multicall:<br/>getTradeableOrderWithSignature<br/>for each due generator"]
-
-    MC --> R{Result?}
-
-    R -->|SUCCESS| S1["Compute orderUid (EIP-712)"]
-    S1 --> S2["INSERT candidateDiscreteOrder<br/>status: open"]
-    S2 --> S3["Track owner for API fetch"]
-    S3 --> S4["Update generator:<br/>nextCheckBlock += RECHECK_INTERVAL"]
-
-    R -->|PollTryNextBlock<br/>OrderNotValid<br/>Unknown revert| T1["Update generator:<br/>nextCheckBlock = current + 1"]
-
-    R -->|PollTryAtBlock| T2["Update generator:<br/>nextCheckBlock = target block"]
-
-    R -->|PollTryAtEpoch| T3["Update generator:<br/>nextCheckTimestamp = target epoch<br/><i>stored directly, no estimation</i>"]
-
-    R -->|PollNever| T4["Update generator:<br/>status = Invalid"]
-    T4 --> T4Note["DO NOT expire discrete orders.<br/>They keep their own lifecycle."]
-
-    S3 --> API
-
-    subgraph API["Component D: Orderbook Client"]
-        API1["fetchComposableOrders(owner)"]
-        API2["upsertDiscreteOrders()"]
-        API1 --> API2
-    end
-
-    API2 --> EXP["Expire open discrete orders<br/>WHERE validTo ≤ currentTimestamp"]
-
-    style T4Note fill:#fff3cd
-    style T4 fill:#f8d7da
-    style S2 fill:#d4edda
-```
-
----
-
-### Diagram 5: Orderbook Client — Cache Decision Flow
-
-```mermaid
-flowchart TD
-    Start["fetchComposableOrders(context, chainId, owner)"] --> Resolve
-
-    Resolve["Resolve API URL from<br/>ORDERBOOK_API_URLS[chainId]"]
-
-    Resolve --> Fetch["FETCH: GET /account/{owner}/orders<br/><i>paginated, 1000/page</i><br/>Returns ALL orders (all types)"]
-
-    Fetch --> Filter["FILTER: keep signingScheme = eip1271<br/>Remove presignaturePending<br/>→ composable orders only"]
-
-    Filter --> Cache{"CACHE CHECK<br/>per UID"}
-
-    Cache -->|"uid=0xabc<br/>TERMINAL HIT<br/>(fulfilled)"| Cached["Use cached status"]
-    Cache -->|"uid=0x123<br/>MISS"| NeedsRefresh["Add to refresh list"]
-    Cache -->|"uid=0x456<br/>MISS"| NeedsRefresh
-
-    NeedsRefresh --> Batch["BATCH REFRESH<br/>POST /orders/by_uids<br/>Body: [0x123, 0x456]"]
-
-    Batch --> Merge["MERGE: cached terminal<br/>+ refreshed statuses"]
-    Cached --> Merge
-
-    Merge --> Process["PROCESS each order:<br/>Decode EIP-1271 signature<br/>Compute paramHash<br/>Match to generator by hash<br/>Derive partIndex (TWAP)"]
-
-    Process --> Write{"New terminal<br/>statuses?"}
-    Write -->|Yes| CacheWrite["CACHE WRITE<br/>Store in order_uid_cache"]
-    Write -->|No| Return
-
-    CacheWrite --> Return["Return ComposableOrder[]<br/>Caller calls upsertDiscreteOrders()"]
-
-    style Cached fill:#d4edda
-    style NeedsRefresh fill:#fff3cd
-    style CacheWrite fill:#d4edda
-```
-
----
-
-### Diagram 6: Complete TWAP Lifecycle — Historical (backfill + live)
+### Diagram 3: Block Handlers — Four Responsibilities
 
 ```mermaid
 flowchart LR
-    subgraph Backfill["BACKFILL (processing block 18M)"]
+    subgraph C1["C1: Contract Poller"]
         direction TB
-        B1["ConditionalOrderCreated<br/>TWAP: 5 parts, t0=1695000000"]
-        B2["INSERT generator<br/>status=Active"]
-        B3["UID Pre-compute:<br/>part0=0xabc<br/>part1=0xdef<br/>part2=0x111<br/>part3=0x222<br/>part4=0x333"]
-        B4["API batch fetch:<br/>all 5 → fulfilled"]
-        B5["UPSERT 5 discreteOrders<br/>all fulfilled"]
-        B6["All terminal →<br/>generator status=Invalid"]
-        B1 --> B2 --> B3 --> B4 --> B5 --> B6
+        C1Q["Query: Active generators<br/>non-deterministic<br/>allCandidatesKnown=false<br/>due for check"]
+        C1M["RPC multicall:<br/>getTradeableOrderWithSignature"]
+        C1R["On success → candidate<br/>On PollNever → Invalid"]
+        C1Q --> C1M --> C1R
     end
 
-    subgraph Live["LIVE SYNC (at chain tip)"]
+    subgraph C2["C2: Candidate Confirmer"]
         direction TB
-        L1["Block handler queries:<br/>Active generators due?"]
-        L2["This generator is Invalid"]
-        L3["SKIPPED<br/>zero RPC cost"]
+        C2Q["Query: candidateDiscreteOrder<br/>not yet in discreteOrder"]
+        C2F["API: POST /orders/by_uids"]
+        C2U["Found → upsert discreteOrder<br/>Not found → retry next block"]
+        C2Q --> C2F --> C2U
+    end
+
+    subgraph C3["C3: Status Updater"]
+        direction TB
+        C3Q["Query: discreteOrder<br/>status = open"]
+        C3F["API: POST /orders/by_uids"]
+        C3U["Update status<br/>Expire past validTo<br/>Cache terminal UIDs"]
+        C3Q --> C3F --> C3U
+    end
+
+    subgraph C4["C4: Historical Bootstrap"]
+        direction TB
+        C4Q["Query: Active generators<br/>non-deterministic<br/>no discreteOrder rows"]
+        C4F["API: GET /account/{owner}/orders<br/>per unique owner"]
+        C4U["Upsert discreteOrder<br/>for discovered orders"]
+        C4Q --> C4F --> C4U
+    end
+
+    style C1 fill:#ffe0e0
+    style C2 fill:#e0f0ff
+    style C3 fill:#e0ffe0
+    style C4 fill:#f0e0ff
+```
+
+---
+
+### Diagram 4: Complete TWAP Lifecycle
+
+```mermaid
+flowchart LR
+    subgraph Creation["Creation (backfill or live)"]
+        direction TB
+        E1["ConditionalOrderCreated<br/>TWAP: 5 parts"]
+        E2["Insert generator"]
+        E3["Pre-compute 5 UIDs"]
+        E4["Fetch API status"]
+        E5{"All terminal?"}
+        E6["Generator → Invalid"]
+        E7["Some open"]
+        E1 --> E2 --> E3 --> E4 --> E5
+        E5 -->|Yes| E6
+        E5 -->|No| E7
+    end
+
+    subgraph Live["Live sync (C3 only)"]
+        direction TB
+        L1["C3: poll open UIDs"]
+        L2["API returns fulfilled"]
+        L3["Update discreteOrder"]
         L1 --> L2 --> L3
     end
 
-    Backfill --> Live
+    E7 --> Live
+    E6 --> Done["Done. Zero ongoing cost."]
+    L3 --> Done2["All fulfilled. Done."]
 
-    Result["RESULT: 5/5 parts indexed during backfill.<br/>No RPC calls at live sync."]
-    Live --> Result
-
-    style B6 fill:#d4edda
-    style L3 fill:#d4edda
-    style Result fill:#d4edda
+    style E6 fill:#d4edda
+    style Done fill:#d4edda
+    style Done2 fill:#d4edda
 ```
 
 ---
 
-### Diagram 7: Complete StopLoss Lifecycle — Live Sync
+### Diagram 5: Complete StopLoss Lifecycle (live)
 
 ```mermaid
 flowchart TD
-    E["ConditionalOrderCreated<br/>(StopLoss)"] --> G["INSERT generator<br/>status=Active"]
-    G --> F["fetchComposableOrders(owner)<br/><i>may not find this order yet</i>"]
+    E["ConditionalOrderCreated<br/>(StopLoss, live)"] --> G["Insert generator"]
+    G --> Pre["Pre-compute UID = 0xabc"]
+    Pre --> API["API fetch: 0xabc not found yet"]
+    API --> Open["discreteOrder: open"]
 
-    F --> P1["Block handler poll #1<br/>OrderNotValid (price not met)<br/>nextCheckBlock = current + 1"]
-    P1 --> PN["...polls every block...<br/>OrderNotValid repeatedly"]
-
-    PN --> Trigger{"Price drops<br/>to strike level!"}
-
-    Trigger --> Success["Block handler poll:<br/>SUCCESS!"]
-    Success --> Compute["Compute UID = 0xabc"]
-    Compute --> Candidate["INSERT candidateDiscreteOrder<br/>status: open"]
-    Candidate --> Fetch["fetchComposableOrders(owner)"]
-
-    Fetch --> APICheck{"API has<br/>the order?"}
-    APICheck -->|Yes| Upsert["upsert discreteOrder"]
-    APICheck -->|No| NextCycle["Next cycle will catch it"]
-
-    Upsert --> Settle["Order gets settled by solver"]
-    NextCycle --> Settle
-
-    Settle --> Final["Next block handler cycle:<br/>API returns fulfilled<br/>→ upsert discreteOrder (fulfilled)"]
-
-    Final --> Never["Block handler polls:<br/>PollNever<br/>→ generator status=Invalid"]
+    Open --> C3["C3: polls API every block"]
+    C3 --> Wait["0xabc still open..."]
+    Wait --> Trigger["Price triggers →<br/>watch-tower submits →<br/>solver settles"]
+    Trigger --> Fulfilled["C3: API returns fulfilled<br/>→ update discreteOrder"]
 
     style Trigger fill:#fff3cd
-    style Success fill:#d4edda
-    style Final fill:#d4edda
-    style Never fill:#f8d7da
+    style Fulfilled fill:#d4edda
 ```
 
 ---
 
-### Diagram 8: Data Flow Between Tables
+### Diagram 6: Non-Deterministic Order Lifecycle (PerpetualSwap)
+
+```mermaid
+flowchart TD
+    subgraph Backfill
+        B1["ConditionalOrderCreated"]
+        B2["Insert generator<br/>no UID pre-computation"]
+        B1 --> B2
+    end
+
+    subgraph Bootstrap["C4: Historical Bootstrap (once)"]
+        B3["Find generator with no discrete orders"]
+        B4["Fetch by owner from API"]
+        B5["Upsert historical discrete orders"]
+        B3 --> B4 --> B5
+    end
+
+    subgraph LiveLoop["Live sync (repeating)"]
+        C1["C1: Contract Poller<br/>getTradeableOrderWithSignature"]
+        C1S["Success → candidateDiscreteOrder"]
+        C2["C2: Candidate Confirmer<br/>API confirms → discreteOrder"]
+        C3["C3: Status Updater<br/>open → fulfilled"]
+        C1 --> C1S --> C2 --> C3
+    end
+
+    Backfill --> Bootstrap --> LiveLoop
+
+    style B2 fill:#fff3cd
+    style B5 fill:#d4edda
+```
+
+---
+
+### Diagram 7: Data Flow — Who Writes What
 
 ```mermaid
 flowchart LR
-    subgraph Writers["Who writes what"]
+    subgraph Writers
         direction TB
-        W1["Creation Handler<br/>(backfill + live)"]
-        W2["UID Pre-computation<br/>(backfill only)"]
-        W3["Block Handler<br/>(live only)"]
-        W4["Orderbook Client<br/>(backfill + live)"]
+        A["Creation Handler<br/>(backfill + live)"]
+        B["UID Pre-computation<br/>(backfill + live)"]
+        C1["C1: Contract Poller<br/>(live)"]
+        C2["C2: Candidate Confirmer<br/>(live)"]
+        C3["C3: Status Updater<br/>(live)"]
+        C4["C4: Bootstrap<br/>(once)"]
     end
 
-    subgraph Tables["Database Tables"]
+    subgraph Tables
         direction TB
-        Gen["conditionalOrderGenerator<br/>status, nextCheckBlock,<br/>nextCheckTimestamp, lastPollResult"]
-        Cand["candidateDiscreteOrder<br/>Unconfirmed on-chain discoveries"]
-        Disc["discreteOrder<br/>API-confirmed, authoritative status"]
-        Cache["cow_cache.order_uid_cache<br/>Terminal UID status cache"]
+        Gen["conditionalOrderGenerator"]
+        Cand["candidateDiscreteOrder"]
+        Disc["discreteOrder"]
+        Cache["order_uid_cache"]
     end
 
-    W1 -->|"INSERT<br/>status=Active"| Gen
-    W2 -->|"UPDATE<br/>status=Invalid<br/>(if all terminal)"| Gen
-    W3 -->|"UPDATE<br/>nextCheckBlock,<br/>nextCheckTimestamp,<br/>status"| Gen
+    A -->|"INSERT (Active)"| Gen
+    B -->|"UPDATE (Invalid)"| Gen
+    C1 -->|"UPDATE (scheduling, status)"| Gen
 
-    W3 -->|"INSERT<br/>status=open"| Cand
+    C1 -->|"INSERT (open)"| Cand
 
-    W2 -->|"UPSERT<br/>status from API"| Disc
-    W4 -->|"UPSERT<br/>status from API"| Disc
+    B -->|"UPSERT"| Disc
+    C2 -->|"UPSERT"| Disc
+    C3 -->|"UPDATE status"| Disc
+    C4 -->|"UPSERT"| Disc
 
-    W4 -->|"INSERT<br/>terminal only"| Cache
+    C3 -->|"INSERT terminal"| Cache
 
     style Gen fill:#e8f4f8
     style Disc fill:#d4edda
