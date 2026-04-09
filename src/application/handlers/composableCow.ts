@@ -1,10 +1,15 @@
 /**
  * ConditionalOrderCreated event handlers — indexes generators and triggers
- * initial order discovery.
+ * UID pre-computation for deterministic order types.
  *
- * Two contract entries handle the same event:
- *   - ComposableCow (historical backfill): inserts generator with nextCheckBlock only
- *   - ComposableCowLive (startBlock: "latest"): inserts generator + fetches API + upserts discrete orders
+ * Two contract entries handle the same event with identical logic:
+ *   - ComposableCow (historical backfill): inserts generator + pre-computes UIDs
+ *   - ComposableCowLive (startBlock: "latest"): inserts generator + pre-computes UIDs
+ *
+ * For deterministic types (TWAP, StopLoss), precomputeAndDiscover computes all
+ * UIDs, fetches their status from the API, upserts discrete orders, and marks
+ * allCandidatesKnown=true. Non-deterministic types are left for the C1-C4
+ * block handlers to discover at live sync.
  *
  * KNOWN LIMITATION — Off-chain cancellation gap:
  *   Orders cancelled via the CoW Orderbook API's DELETE endpoint (off-chain
@@ -33,7 +38,6 @@ import {
 import { encodeAbiParameters, keccak256, type Hex } from "viem";
 import { getOrderTypeFromHandler } from "../../utils/order-types";
 import { decodeStaticInput } from "../../decoders/index";
-import { fetchComposableOrders, invalidateOwnerCache, upsertDiscreteOrders } from "../helpers/orderbookClient";
 import { precomputeAndDiscover } from "../helpers/uidPrecompute";
 
 // ─── Shared helper — generator insert logic ─────────────────────────────────
@@ -171,15 +175,21 @@ ponder.on(
 );
 
 // ─── Live handler (ComposableCowLive — startBlock: "latest") ────────────────
+// Same as backfill: pre-compute covers deterministic types.
+// Non-deterministic types are discovered by C1-C4 block handlers at live sync.
 
 ponder.on(
   "ComposableCowLive:ConditionalOrderCreated",
   async ({ event, context }) => {
-    // Live: insert generator + immediately fetch from API
     const { ownerAddress, chainId } = await insertGenerator(event, context);
 
-    await invalidateOwnerCache(context, chainId, ownerAddress);
-    const orders = await fetchComposableOrders(context, chainId, ownerAddress);
-    await upsertDiscreteOrders(context, chainId, orders);
+    const { handler, staticInput } = event.args.params;
+    const orderType = getOrderTypeFromHandler(handler, chainId);
+    const decoded = decodeStaticInput(orderType, staticInput);
+    const decodedParams = decoded ? replaceBigInts(decoded, String) as Record<string, string> : null;
+
+    await precomputeAndDiscover(
+      context, chainId, event.id, ownerAddress, orderType, decodedParams, event.block.timestamp,
+    );
   },
 );

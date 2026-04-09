@@ -118,7 +118,6 @@ export async function precomputeAndDiscover(
       });
   }
 
-  // If all orders are terminal, deactivate generator — no need to poll at live sync
   const allTerminal = precomputed.every((o) => {
     const s = statuses.get(o.orderUid);
     return s === "fulfilled" || s === "expired" || s === "cancelled";
@@ -127,7 +126,11 @@ export async function precomputeAndDiscover(
   if (allTerminal) {
     await context.db.sql
       .update(conditionalOrderGenerator)
-      .set({ status: "Invalid", lastPollResult: "precompute:allTerminal" })
+      .set({
+        status: "Invalid",
+        allCandidatesKnown: true,
+        lastPollResult: "precompute:allTerminal",
+      })
       .where(
         and(
           eq(conditionalOrderGenerator.chainId, chainId),
@@ -139,6 +142,18 @@ export async function precomputeAndDiscover(
     );
     return true;
   }
+
+  // UIDs are fully known even though some orders are still open —
+  // C1 (Contract Poller) can skip this generator, C3 (Status Updater) tracks the open orders.
+  await context.db.sql
+    .update(conditionalOrderGenerator)
+    .set({ allCandidatesKnown: true })
+    .where(
+      and(
+        eq(conditionalOrderGenerator.chainId, chainId),
+        eq(conditionalOrderGenerator.eventId, generatorEventId),
+      ),
+    );
 
   return false;
 }

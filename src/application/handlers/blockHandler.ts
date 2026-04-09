@@ -1,73 +1,48 @@
 /**
- * Block handler — polls ComposableCoW.getTradeableOrderWithSignature for due orders.
+ * Block handlers — four responsibilities split into separate Ponder block entries.
  *
- * Fires every block on each configured chain. Uses poll state columns on
- * conditionalOrderGenerator to decide which orders are due for a check
- * (`nextCheckBlock <= currentBlock` or `nextCheckTimestamp <= currentTimestamp`).
- * For each due order, multicalls `getTradeableOrderWithSignature` on ComposableCoW
- * and updates the generator based on the PollResultError revert reason:
+ * C1 (ContractPoller):      RPC multicall for non-deterministic generators. Every block.
+ * C2 (CandidateConfirmer):  API batch check for unconfirmed candidates. Every block.
+ * C3 (StatusUpdater):       API batch check for open discrete orders + expiry. Every block.
+ * C4 (HistoricalBootstrap): One-time owner fetch for non-deterministic backfill orders.
  *
- *   Success          → nextCheckBlock += RECHECK_INTERVAL
- *   PollTryNextBlock → nextCheckBlock = currentBlock + 1
- *   PollTryAtBlock   → nextCheckBlock = blockNumber (from error)
- *   PollTryAtEpoch   → nextCheckTimestamp = epoch (stored directly)
- *   PollNever        → status = "Invalid"
- *   OrderNotValid    → treated as TryNextBlock (transient)
- *   Unknown revert   → treated as TryNextBlock (never crash handler)
- *
- * Reference: composable-cow/src/interfaces/IConditionalOrder.sol
+ * All handlers start at "latest" — only run during live sync.
+ * C4 additionally has endBlock: "latest", so it fires exactly once.
  */
 
 import { ponder } from "ponder:registry";
 import { candidateDiscreteOrder, conditionalOrderGenerator, discreteOrder } from "ponder:schema";
-import { and, eq, lte, or, sql } from "ponder";
+import { and, eq, inArray, lte, or, sql } from "ponder";
 import type { Hex } from "viem";
 import {
   COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID,
   type SupportedChainId,
 } from "../../data";
 import { RECHECK_INTERVAL } from "../../constants";
-import { fetchComposableOrders, upsertDiscreteOrders } from "../helpers/orderbookClient";
+import { fetchComposableOrders, fetchOrderStatusByUids, upsertDiscreteOrders } from "../helpers/orderbookClient";
 import {
   GET_TRADEABLE_ORDER_WITH_ERRORS_ABI,
   parsePollError,
 } from "../helpers/pollResultErrors";
 import { computeOrderUid, type GPv2OrderData } from "../helpers/orderUid";
 
-// ─── Handler registration ────────────────────────────────────────────────────
-// Single multi-chain block handler. To add a new chain: update PollResultPoller
-// in ponder.config.ts and add the chain's config to src/data.ts.
+const NON_DETERMINISTIC_TYPES = ["PerpetualSwap", "GoodAfterTime", "TradeAboveThreshold", "Unknown"] as const;
 
-ponder.on("PollResultPoller:block", async ({ event, context }) => {
-  await runPollResultCheck(event, context);
-});
+// ─── C1: Contract Poller ─────────────────────────────────────────────────────
+// Polls getTradeableOrderWithSignature for non-deterministic active generators.
+// Deterministic types (TWAP, StopLoss) are handled by UID pre-computation at
+// creation and never reach this handler.
 
-// ─── Shared implementation ────────────────────────────────────────────────────
-
-async function runPollResultCheck(
-  event: { block: { number: bigint; timestamp: bigint } },
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
-): Promise<void> {
-  if (process.env.DISABLE_POLL_RESULT_CHECK) {
-    return;
-  }
+ponder.on("ContractPoller:block", async ({ event, context }) => {
+  if (process.env.DISABLE_POLL_RESULT_CHECK) return;
 
   const chainId = context.chain.id as SupportedChainId;
   const composableCowAddress = COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID[chainId];
-  if (!composableCowAddress) {
-    console.warn(`[COW:POLL:RESULT] No address for chainId=${chainId}`);
-    return;
-  }
+  if (!composableCowAddress) return;
 
-  const currentBlock: bigint = event.block.number;
-  const currentTimestamp: bigint = event.block.timestamp;
+  const currentBlock = event.block.number;
+  const currentTimestamp = event.block.timestamp;
 
-  // No backfill skip needed — PollResultPoller starts at "latest" in ponder.config.ts,
-  // so this handler only fires at live sync.
-
-  // Query due orders — generators with nextCheckBlock <= currentBlock OR
-  // nextCheckTimestamp <= currentTimestamp
   const dueOrders = await context.db.sql
     .select({
       generatorId: conditionalOrderGenerator.eventId,
@@ -83,6 +58,8 @@ async function runPollResultCheck(
       and(
         eq(conditionalOrderGenerator.chainId, chainId),
         eq(conditionalOrderGenerator.status, "Active"),
+        eq(conditionalOrderGenerator.allCandidatesKnown, false),
+        inArray(conditionalOrderGenerator.orderType, [...NON_DETERMINISTIC_TYPES]),
         or(
           lte(conditionalOrderGenerator.nextCheckBlock, currentBlock),
           and(
@@ -92,22 +69,21 @@ async function runPollResultCheck(
         ),
       ),
     ) as {
-      generatorId: string;
-      owner: Hex;
-      handler: Hex;
-      salt: Hex;
-      staticInput: Hex;
-      orderType: string;
-      decodedParams: Record<string, string> | null;
-    }[];
+    generatorId: string;
+    owner: Hex;
+    handler: Hex;
+    salt: Hex;
+    staticInput: Hex;
+    orderType: string;
+    decodedParams: Record<string, string> | null;
+  }[];
 
   if (dueOrders.length === 0) return;
 
   console.log(
-    `[COW:POLL:RESULT] ENTER block=${currentBlock} chain=${chainId} due=${dueOrders.length}`,
+    `[COW:C1] ENTER block=${currentBlock} chain=${chainId} due=${dueOrders.length}`,
   );
 
-  // Batch multicall — allowFailure:true so PollResultErrors come back as failures
   const results = await context.client.multicall({
     contracts: dueOrders.map((order) => ({
       address: composableCowAddress,
@@ -125,7 +101,6 @@ async function runPollResultCheck(
 
   let neverCount = 0;
   let successCount = 0;
-  const ownersWithTradeableOrders = new Set<Hex>();
 
   for (let i = 0; i < dueOrders.length; i++) {
     const result = results[i];
@@ -134,13 +109,9 @@ async function runPollResultCheck(
     if (result === undefined) continue;
 
     if (result.status === "success") {
-      // Extract order data from multicall result
       const [orderData] = result.result as [GPv2OrderData, Hex];
-
-      // Compute orderUid for this order
       const orderUid = computeOrderUid(chainId, orderData, order.owner);
 
-      // Derive TWAP partIndex when t0 is known
       let partIndex: bigint | null = null;
       if (order.orderType === "TWAP" && order.decodedParams) {
         const t0 = BigInt(order.decodedParams["t0"] ?? "0");
@@ -150,8 +121,6 @@ async function runPollResultCheck(
         }
       }
 
-      // Upsert candidate discrete order — onConflictDoNothing so we don't overwrite
-      // fulfilled/expired status set by trade events or expiry detection
       await context.db.sql
         .insert(candidateDiscreteOrder)
         .values({
@@ -168,13 +137,13 @@ async function runPollResultCheck(
         })
         .onConflictDoNothing();
 
-      ownersWithTradeableOrders.add(order.owner);
-
-      // Schedule recheck after RECHECK_INTERVAL blocks
+      // For single-part non-deterministic types, first success means the UID is known
+      const isSinglePart = order.orderType !== "PerpetualSwap";
       await updateGeneratorPollState(context, chainId, order.generatorId, currentBlock, {
         nextCheckBlock: currentBlock + RECHECK_INTERVAL,
         lastPollResult: "success",
         nextCheckTimestamp: null,
+        allCandidatesKnown: isSinglePart ? true : undefined,
       });
       successCount++;
     } else {
@@ -200,8 +169,6 @@ async function runPollResultCheck(
           break;
 
         case "tryAtEpoch":
-          // Store the target timestamp directly — the due-order query checks
-          // nextCheckTimestamp <= currentTimestamp, no block estimation needed
           await updateGeneratorPollState(context, chainId, order.generatorId, currentBlock, {
             nextCheckBlock: null,
             lastPollResult: "tryAtEpoch",
@@ -210,7 +177,6 @@ async function runPollResultCheck(
           break;
 
         case "never":
-          // Order is permanently done — deactivate generator
           await context.db.sql
             .update(conditionalOrderGenerator)
             .set({
@@ -224,9 +190,8 @@ async function runPollResultCheck(
                 eq(conditionalOrderGenerator.eventId, order.generatorId),
               ),
             );
-
           console.log(
-            `[COW:POLL:RESULT] NEVER generatorId=${order.generatorId} reason=${pollResult.reason} block=${currentBlock} chain=${chainId}`,
+            `[COW:C1] NEVER generatorId=${order.generatorId} reason=${pollResult.reason} block=${currentBlock} chain=${chainId}`,
           );
           neverCount++;
           break;
@@ -234,58 +199,163 @@ async function runPollResultCheck(
     }
   }
 
-  // Fetch from API for owners with tradeable orders — updates discrete order
-  // status from the authoritative API (may already be fulfilled/expired).
-  if (ownersWithTradeableOrders.size > 0) {
-    for (const owner of ownersWithTradeableOrders) {
-      const orders = await fetchComposableOrders(context, chainId, owner);
-      await upsertDiscreteOrders(context, chainId, orders);
+  console.log(
+    `[COW:C1] DONE block=${currentBlock} chain=${chainId} due=${dueOrders.length} success=${successCount} never=${neverCount}`,
+  );
+});
+
+// ─── C2: Candidate Confirmer ─────────────────────────────────────────────────
+// Checks if candidate discrete orders exist on the Orderbook API.
+// When confirmed, promotes them to discreteOrder.
+
+ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
+  const chainId = context.chain.id as SupportedChainId;
+
+  const unconfirmed = await context.db.sql
+    .select({
+      orderUid: candidateDiscreteOrder.orderUid,
+      generatorId: candidateDiscreteOrder.conditionalOrderGeneratorId,
+      partIndex: candidateDiscreteOrder.partIndex,
+      sellAmount: candidateDiscreteOrder.sellAmount,
+      buyAmount: candidateDiscreteOrder.buyAmount,
+      feeAmount: candidateDiscreteOrder.feeAmount,
+      validTo: candidateDiscreteOrder.validTo,
+      creationDate: candidateDiscreteOrder.creationDate,
+    })
+    .from(candidateDiscreteOrder)
+    .leftJoin(
+      discreteOrder,
+      and(
+        eq(candidateDiscreteOrder.chainId, discreteOrder.chainId),
+        eq(candidateDiscreteOrder.orderUid, discreteOrder.orderUid),
+      ),
+    )
+    .where(
+      and(
+        eq(candidateDiscreteOrder.chainId, chainId),
+        sql`${discreteOrder.orderUid} IS NULL`,
+      ),
+    ) as {
+    orderUid: string;
+    generatorId: string;
+    partIndex: bigint | null;
+    sellAmount: string;
+    buyAmount: string;
+    feeAmount: string;
+    validTo: number | null;
+    creationDate: bigint;
+  }[];
+
+  if (unconfirmed.length === 0) return;
+
+  const uids = unconfirmed.map((c) => c.orderUid);
+  const statuses = await fetchOrderStatusByUids(context, chainId, uids);
+
+  let confirmed = 0;
+  const confirmedUids: string[] = [];
+
+  for (const candidate of unconfirmed) {
+    const apiStatus = statuses.get(candidate.orderUid);
+    if (!apiStatus) continue; // not on API yet — retry next block
+
+    await context.db.sql
+      .insert(discreteOrder)
+      .values({
+        orderUid: candidate.orderUid,
+        chainId,
+        conditionalOrderGeneratorId: candidate.generatorId,
+        status: apiStatus as "open" | "fulfilled" | "unfilled" | "expired" | "cancelled",
+        partIndex: candidate.partIndex,
+        sellAmount: candidate.sellAmount,
+        buyAmount: candidate.buyAmount,
+        feeAmount: candidate.feeAmount,
+        validTo: candidate.validTo,
+        creationDate: candidate.creationDate,
+      })
+      .onConflictDoUpdate({
+        target: [discreteOrder.chainId, discreteOrder.orderUid],
+        set: { status: apiStatus as "open" | "fulfilled" | "unfilled" | "expired" | "cancelled" },
+      });
+    confirmedUids.push(candidate.orderUid);
+    confirmed++;
+  }
+
+  // Clean up promoted candidates
+  if (confirmedUids.length > 0) {
+    await context.db.sql
+      .delete(candidateDiscreteOrder)
+      .where(
+        and(
+          eq(candidateDiscreteOrder.chainId, chainId),
+          inArray(candidateDiscreteOrder.orderUid, confirmedUids),
+        ),
+      );
+  }
+
+  // Clean up stale candidates past their validTo — watch-tower likely never submitted them
+  await context.db.sql
+    .delete(candidateDiscreteOrder)
+    .where(
+      and(
+        eq(candidateDiscreteOrder.chainId, chainId),
+        lte(candidateDiscreteOrder.validTo, Number(event.block.timestamp)),
+      ),
+    );
+
+  if (confirmed > 0) {
+    console.log(
+      `[COW:C2] block=${event.block.number} chain=${chainId} candidates=${unconfirmed.length} confirmed=${confirmed}`,
+    );
+  }
+});
+
+// ─── C3: Status Updater ──────────────────────────────────────────────────────
+// Polls the API for status updates on open discrete orders. Expires past validTo.
+
+ponder.on("StatusUpdater:block", async ({ event, context }) => {
+  const chainId = context.chain.id as SupportedChainId;
+  const currentTimestamp = event.block.timestamp;
+
+  const openOrders = await context.db.sql
+    .select({
+      orderUid: discreteOrder.orderUid,
+    })
+    .from(discreteOrder)
+    .where(
+      and(
+        eq(discreteOrder.chainId, chainId),
+        eq(discreteOrder.status, "open"),
+      ),
+    ) as { orderUid: string }[];
+
+  if (openOrders.length > 0) {
+    const uids = openOrders.map((o) => o.orderUid);
+    const statuses = await fetchOrderStatusByUids(context, chainId, uids);
+
+    let updated = 0;
+    for (const [uid, status] of statuses) {
+      if (status !== "open") {
+        await context.db.sql
+          .update(discreteOrder)
+          .set({ status: status as "fulfilled" | "unfilled" | "expired" | "cancelled" })
+          .where(
+            and(
+              eq(discreteOrder.chainId, chainId),
+              eq(discreteOrder.orderUid, uid),
+            ),
+          );
+        updated++;
+      }
+    }
+
+    if (updated > 0) {
+      console.log(
+        `[COW:C3] block=${event.block.number} chain=${chainId} open=${openOrders.length} updated=${updated}`,
+      );
     }
   }
 
-  await expireOpenOrders(context, chainId, currentTimestamp);
-
-  console.log(
-    `[COW:POLL:RESULT] DONE block=${currentBlock} chain=${chainId} due=${dueOrders.length} success=${successCount} never=${neverCount}`,
-  );
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-async function updateGeneratorPollState(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
-  chainId: number,
-  generatorId: string,
-  currentBlock: bigint,
-  fields: { nextCheckBlock: bigint | null; lastPollResult: string; nextCheckTimestamp: bigint | null },
-): Promise<void> {
-  await context.db.sql
-    .update(conditionalOrderGenerator)
-    .set({
-      nextCheckBlock: fields.nextCheckBlock,
-      nextCheckTimestamp: fields.nextCheckTimestamp,
-      lastCheckBlock: currentBlock,
-      lastPollResult: fields.lastPollResult,
-    })
-    .where(
-      and(
-        eq(conditionalOrderGenerator.chainId, chainId),
-        eq(conditionalOrderGenerator.eventId, generatorId),
-      ),
-    );
-}
-
-/**
- * Mark all open discrete orders as expired if their validTo has passed.
- * Runs once per block handler invocation, across all generators on this chain.
- */
-async function expireOpenOrders(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
-  chainId: SupportedChainId,
-  currentTimestamp: bigint,
-): Promise<void> {
+  // Expire orders past validTo
   await context.db.sql
     .update(discreteOrder)
     .set({ status: "expired" })
@@ -294,6 +364,100 @@ async function expireOpenOrders(
         eq(discreteOrder.chainId, chainId),
         eq(discreteOrder.status, "open"),
         lte(discreteOrder.validTo, Number(currentTimestamp)),
+      ),
+    );
+});
+
+// ─── C4: Historical Bootstrap ────────────────────────────────────────────────
+// One-time discovery of historical discrete orders for non-deterministic
+// generators created during backfill. Fires once at startBlock=endBlock="latest".
+
+ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
+  const chainId = context.chain.id as SupportedChainId;
+
+  // Find Active non-deterministic generators with no discrete orders
+  const generators = await context.db.sql
+    .select({
+      generatorId: conditionalOrderGenerator.eventId,
+      owner: conditionalOrderGenerator.owner,
+      orderType: conditionalOrderGenerator.orderType,
+    })
+    .from(conditionalOrderGenerator)
+    .leftJoin(
+      discreteOrder,
+      and(
+        eq(conditionalOrderGenerator.chainId, discreteOrder.chainId),
+        eq(conditionalOrderGenerator.eventId, discreteOrder.conditionalOrderGeneratorId),
+      ),
+    )
+    .where(
+      and(
+        eq(conditionalOrderGenerator.chainId, chainId),
+        eq(conditionalOrderGenerator.status, "Active"),
+        inArray(conditionalOrderGenerator.orderType, [...NON_DETERMINISTIC_TYPES]),
+        sql`${discreteOrder.orderUid} IS NULL`,
+      ),
+    ) as {
+    generatorId: string;
+    owner: Hex;
+    orderType: string;
+  }[];
+
+  if (generators.length === 0) {
+    console.log(`[COW:C4] block=${event.block.number} chain=${chainId} no generators need bootstrap`);
+    return;
+  }
+
+  const owners = new Set(generators.map((g) => g.owner));
+  console.log(
+    `[COW:C4] block=${event.block.number} chain=${chainId} generators=${generators.length} owners=${owners.size}`,
+  );
+
+  let totalDiscovered = 0;
+  for (const owner of owners) {
+    const orders = await fetchComposableOrders(context, chainId, owner);
+    const count = await upsertDiscreteOrders(context, chainId, orders);
+    totalDiscovered += count;
+  }
+
+  console.log(
+    `[COW:C4] DONE block=${event.block.number} chain=${chainId} discovered=${totalDiscovered}`,
+  );
+});
+
+// ─── Shared helpers ──────────────────────────────────────────────────────────
+
+async function updateGeneratorPollState(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  context: any,
+  chainId: number,
+  generatorId: string,
+  currentBlock: bigint,
+  fields: {
+    nextCheckBlock: bigint | null;
+    lastPollResult: string;
+    nextCheckTimestamp: bigint | null;
+    allCandidatesKnown?: boolean;
+  },
+): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const setFields: Record<string, any> = {
+    nextCheckBlock: fields.nextCheckBlock,
+    nextCheckTimestamp: fields.nextCheckTimestamp,
+    lastCheckBlock: currentBlock,
+    lastPollResult: fields.lastPollResult,
+  };
+  if (fields.allCandidatesKnown !== undefined) {
+    setFields.allCandidatesKnown = fields.allCandidatesKnown;
+  }
+
+  await context.db.sql
+    .update(conditionalOrderGenerator)
+    .set(setFields)
+    .where(
+      and(
+        eq(conditionalOrderGenerator.chainId, chainId),
+        eq(conditionalOrderGenerator.eventId, generatorId),
       ),
     );
 }

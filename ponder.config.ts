@@ -5,7 +5,6 @@ import {
   CoWShedFactoryContract,
   FLASH_LOAN_ROUTER_ADDRESSES,
   GPv2SettlementContract,
-  ORDERBOOK_POLL_INTERVAL,
 } from "./src/data";
 import { ComposableCowAbi } from "./abis/ComposableCowAbi";
 
@@ -39,14 +38,37 @@ export default createConfig({
     },
   },
   blocks: {
-    // Fires every ORDERBOOK_POLL_INTERVAL blocks on each chain to check due orders
-    // via getTradeableOrderWithSignature. Starts at "latest" — only runs at live sync.
-    PollResultPoller: {
+    // C1: Contract Poller — RPC multicall for non-deterministic generators
+    ContractPoller: {
       chain: {
         mainnet: { startBlock: "latest" },
         gnosis: { startBlock: "latest" },
       },
-      interval: ORDERBOOK_POLL_INTERVAL,
+      interval: 1,
+    },
+    // C2: Candidate Confirmer — checks API for unconfirmed candidates
+    CandidateConfirmer: {
+      chain: {
+        mainnet: { startBlock: "latest" },
+        gnosis: { startBlock: "latest" },
+      },
+      interval: 1,
+    },
+    // C3: Status Updater — polls API for open discrete order status
+    StatusUpdater: {
+      chain: {
+        mainnet: { startBlock: "latest" },
+        gnosis: { startBlock: "latest" },
+      },
+      interval: 1,
+    },
+    // C4: Historical Bootstrap — one-time owner fetch for non-deterministic backfill orders
+    HistoricalBootstrap: {
+      chain: {
+        mainnet: { startBlock: "latest", endBlock: "latest" },
+        gnosis: { startBlock: "latest", endBlock: "latest" },
+      },
+      interval: 1,
     },
   },
 });
