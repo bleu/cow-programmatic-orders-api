@@ -39,11 +39,6 @@ interface OrderbookOrder {
   signature: string;
 }
 
-/** Batch endpoint wraps each order in { order: ... }. */
-interface BatchOrderResponse {
-  order: OrderbookOrder;
-}
-
 /** Processed composable order stored in cache and returned to callers. */
 export interface ComposableOrder {
   uid: string;
@@ -303,8 +298,7 @@ async function fetchOrdersByUids(
       console.warn(`[COW:OB] Batch fetch ${response.status} uids=${uids.length}`);
       return [];
     }
-    const results = (await response.json()) as BatchOrderResponse[];
-    return results.map((r) => r.order);
+    return (await response.json()) as OrderbookOrder[];
   } catch (err) {
     console.warn(`[COW:OB] Batch fetch failed err=${err}`);
     return [];
