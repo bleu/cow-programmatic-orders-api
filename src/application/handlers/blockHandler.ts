@@ -27,11 +27,14 @@ import {
 import { computeOrderUid, type GPv2OrderData } from "../helpers/orderUid";
 
 const NON_DETERMINISTIC_TYPES = ["PerpetualSwap", "GoodAfterTime", "TradeAboveThreshold", "Unknown"] as const;
+const SINGLE_SHOT_NON_DETERMINISTIC = ["GoodAfterTime", "TradeAboveThreshold"] as const;
+const BLOCK_NEVER = 2n ** 63n - 1n; // sentinel for epoch-scheduled generators (PollTryAtEpoch)
+
 
 // ─── C1: Contract Poller ─────────────────────────────────────────────────────
-// Polls getTradeableOrderWithSignature for non-deterministic active generators.
-// Deterministic types (TWAP, StopLoss) are handled by UID pre-computation at
-// creation and never reach this handler.
+// Polls getTradeableOrderWithSignature for any active generator where
+// allCandidatesKnown=false. Normally only non-deterministic types, but also
+// serves as fallback for deterministic types whose precompute failed.
 
 ponder.on("ContractPoller:block", async ({ event, context }) => {
   if (process.env.DISABLE_POLL_RESULT_CHECK) return;
@@ -59,13 +62,9 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
         eq(conditionalOrderGenerator.chainId, chainId),
         eq(conditionalOrderGenerator.status, "Active"),
         eq(conditionalOrderGenerator.allCandidatesKnown, false),
-        inArray(conditionalOrderGenerator.orderType, [...NON_DETERMINISTIC_TYPES]),
         or(
           lte(conditionalOrderGenerator.nextCheckBlock, currentBlock),
-          and(
-            sql`${conditionalOrderGenerator.nextCheckTimestamp} IS NOT NULL`,
-            lte(conditionalOrderGenerator.nextCheckTimestamp, currentTimestamp),
-          ),
+          lte(conditionalOrderGenerator.nextCheckTimestamp, currentTimestamp),
         ),
       ),
     ) as {
@@ -127,7 +126,6 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
           orderUid: orderUid.toLowerCase(),
           chainId,
           conditionalOrderGeneratorId: order.generatorId,
-          status: "open",
           partIndex,
           sellAmount: orderData.sellAmount.toString(),
           buyAmount: orderData.buyAmount.toString(),
@@ -137,13 +135,12 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
         })
         .onConflictDoNothing();
 
-      // For single-part non-deterministic types, first success means the UID is known
-      const isSinglePart = order.orderType !== "PerpetualSwap";
+      const isSingleShot = (SINGLE_SHOT_NON_DETERMINISTIC as readonly string[]).includes(order.orderType);
       await updateGeneratorPollState(context, chainId, order.generatorId, currentBlock, {
         nextCheckBlock: currentBlock + RECHECK_INTERVAL,
         lastPollResult: "success",
         nextCheckTimestamp: null,
-        allCandidatesKnown: isSinglePart ? true : undefined,
+        allCandidatesKnown: isSingleShot ? true : undefined,
       });
       successCount++;
     } else {
@@ -170,7 +167,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
 
         case "tryAtEpoch":
           await updateGeneratorPollState(context, chainId, order.generatorId, currentBlock, {
-            nextCheckBlock: null,
+            nextCheckBlock: BLOCK_NEVER,
             lastPollResult: "tryAtEpoch",
             nextCheckTimestamp: pollResult.timestamp,
           });
@@ -180,7 +177,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
           await context.db.sql
             .update(conditionalOrderGenerator)
             .set({
-              status: "Invalid",
+              status: "Completed",
               lastCheckBlock: currentBlock,
               lastPollResult: `pollNever:${pollResult.reason}`,
             })

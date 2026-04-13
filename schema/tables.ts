@@ -14,7 +14,7 @@ export const orderTypeEnum = onchainEnum("order_type", [
 export const orderStatusEnum = onchainEnum("order_status", [
   "Active",
   "Cancelled",
-  "Invalid",
+  "Completed",
 ]);
 
 export const addressTypeEnum = onchainEnum("address_type", [
@@ -113,7 +113,6 @@ export const candidateDiscreteOrder = onchainTable(
     orderUid: t.text().notNull(),
     chainId: t.integer().notNull(),
     conditionalOrderGeneratorId: t.text().notNull(),
-    status: discreteOrderStatusEnum("status").notNull(),
     partIndex: t.bigint(),
     sellAmount: t.text().notNull(),
     buyAmount: t.text().notNull(),

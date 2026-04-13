@@ -15,10 +15,10 @@ The system has seven components. Each has a single responsibility.
 **Runs during**: Backfill AND live sync (two Ponder contract entries: `ComposableCow` for historical, `ComposableCowLive` for live).
 
 **Key behavior difference by order type**:
-- **Deterministic (TWAP, StopLoss)**: Pre-computes UIDs → fetches status from API → upserts `discreteOrder` → if all terminal, marks generator `Invalid` (no further polling needed). This happens at both backfill and live sync.
+- **Deterministic (TWAP, StopLoss)**: Pre-computes UIDs → fetches status from API → UIDs found on API go into `discreteOrder`, UIDs not found go into `candidateDiscreteOrder` → if all are terminal on API, marks generator `Completed` (no further polling needed). This happens at both backfill and live sync.
 - **Non-deterministic (PerpetualSwap, GoodAfterTime, TradeAboveThreshold, Unknown)**: Inserts generator only. Discrete orders will be discovered by the block handlers at live sync.
 
-**Writes to**: `conditionalOrderGenerator`, `discreteOrder` (via UID Pre-computation).
+**Writes to**: `conditionalOrderGenerator`, `discreteOrder` and `candidateDiscreteOrder` (via UID Pre-computation).
 
 ### Component B: UID Pre-computation (`uidPrecompute.ts`)
 
@@ -28,7 +28,7 @@ The system has seven components. Each has a single responsibility.
 
 **Used by**: Creation Handler (both backfill and live). Also available to any future component that needs to know UIDs without RPC calls.
 
-**Writes to**: `discreteOrder`, updates `conditionalOrderGenerator.status` to `Invalid` if all orders are terminal.
+**Writes to**: `discreteOrder` (for UIDs found on API), `candidateDiscreteOrder` (for UIDs not yet on API). Updates `conditionalOrderGenerator.status` to `Completed` if all orders are terminal on API.
 
 ### Component C1: Contract Poller (`blockHandler.ts` — handler 1)
 
@@ -48,15 +48,17 @@ The system has seven components. Each has a single responsibility.
 
 ### Component C2: Candidate Confirmer (`blockHandler.ts` — handler 2)
 
-**Responsibility**: Checks if candidate discrete orders exist on the Orderbook API. When confirmed, moves them to `discreteOrder`.
+**Responsibility**: Checks if candidate discrete orders exist on the Orderbook API. When confirmed, promotes them to `discreteOrder` and deletes the candidate row.
 
 **When it runs**: Every block at live sync.
 
-**How it works**: Queries `candidateDiscreteOrder` rows that don't yet have a corresponding `discreteOrder` row. Batch-fetches their UIDs from the API via `POST /orders/by_uids`. If the API has the order, upserts into `discreteOrder` with the API's authoritative status.
+**How it works**: Queries `candidateDiscreteOrder` rows that don't yet have a corresponding `discreteOrder` row. Batch-fetches their UIDs from the API via `POST /orders/by_uids`. If the API has the order, upserts into `discreteOrder` with the API's authoritative status, then deletes the `candidateDiscreteOrder` row.
+
+**Cleanup**: After promotion, confirmed candidates are deleted from `candidateDiscreteOrder`. Stale candidates past their `validTo` are also cleaned up — if the watch-tower never submitted them, they're expired and won't appear on the API.
 
 **Why a separate handler?** The Contract Poller (C1) discovers orders on-chain, but the API may not have them yet (watch-tower submission delay). This handler polls the API repeatedly until the candidate is confirmed. Separation means C1 focuses on RPC, C2 focuses on API — different cost profiles, can be tuned independently.
 
-**Writes to**: `discreteOrder`.
+**Writes to**: `discreteOrder`. **Deletes from**: `candidateDiscreteOrder`.
 
 ### Component C3: Status Updater (`blockHandler.ts` — handler 3)
 
@@ -114,8 +116,10 @@ The parent entity. One row per `ConditionalOrderCreated` event.
 | `resolvedOwner` | The EOA behind the proxy |
 | `handler`, `salt`, `staticInput`, `hash` | On-chain order parameters |
 | `orderType` | TWAP, StopLoss, PerpetualSwap, GoodAfterTime, TradeAboveThreshold, Unknown |
-| `status` | **Active** (needs polling), **Cancelled** (on-chain removal), **Invalid** (completed or PollNever) |
+| `status` | **Active** (needs polling), **Cancelled** (on-chain removal), **Completed** (all orders terminal or PollNever) |
 | `decodedParams` | JSON with decoded staticInput |
+| `decodeError` | `"invalid_static_input"` or null |
+| `txHash` | FK → transaction.hash |
 | `nextCheckBlock` | When the contract poller should next check this generator |
 | `nextCheckTimestamp` | For PollTryAtEpoch — stored directly, no estimation |
 | `lastCheckBlock`, `lastPollResult` | Audit trail |
@@ -137,7 +141,7 @@ Confirmed orders. API-authoritative status. What consumers query.
 
 ### `candidateDiscreteOrder`
 
-Orders discovered on-chain by the Contract Poller but not yet confirmed on the Orderbook API. Same schema as `discreteOrder`. The Candidate Confirmer (C2) promotes them to `discreteOrder` once the API has them.
+Orders discovered on-chain (by C1 or UID pre-computation) but not yet confirmed on the Orderbook API. Same schema as `discreteOrder` minus the `status` column — candidates are pending by definition. The Candidate Confirmer (C2) promotes them to `discreteOrder` once the API has them.
 
 ### `cow_cache.order_uid_cache`
 
@@ -171,9 +175,11 @@ Per-UID terminal status cache. Survives Ponder resyncs (external `cow_cache` sch
    - Not cached → batch-fetch via `POST /orders/by_uids`
    - Cache newly terminal results
 
-5. **Upsert discrete orders.** For each UID, insert/update `discreteOrder` with API status. If not found on API, defaults to `open`.
+5. **Insert results.** For each UID:
+   - **Found on API** → upsert into `discreteOrder` with API-authoritative status.
+   - **Not found on API** → insert into `candidateDiscreteOrder`. C2 will promote to `discreteOrder` when the API has it.
 
-6. **Generator deactivation.** If ALL orders are terminal → set `status = 'Invalid'`, `allCandidatesKnown = true`, `lastPollResult = 'precompute:allTerminal'`. No further polling needed.
+6. **Generator deactivation.** If ALL orders are terminal on the API → set `status = 'Completed'`, `allCandidatesKnown = true`, `lastPollResult = 'precompute:allTerminal'`. No further polling needed. If some UIDs are candidates (not yet on API), the generator stays Active — `allCandidatesKnown` is still set to `true` so C1 skips it.
 
 **Result**: Deterministic orders are fully discovered at creation time. They never need the Contract Poller (C1). The Status Updater (C3) handles any open orders that haven't settled yet.
 
@@ -203,13 +209,13 @@ Per-UID terminal status cache. Survives Ponder resyncs (external `cow_cache` sch
 
 | Result | Action |
 |--------|--------|
-| **Success** | Compute `orderUid`, INSERT `candidateDiscreteOrder` (open), schedule recheck |
+| **Success** | Compute `orderUid`, INSERT `candidateDiscreteOrder`, schedule recheck |
 | **PollTryNextBlock / OrderNotValid / Unknown** | `nextCheckBlock = currentBlock + 1` |
 | **PollTryAtBlock(N)** | `nextCheckBlock = N` |
 | **PollTryAtEpoch(T)** | `nextCheckTimestamp = T` |
-| **PollNever(reason)** | `status = 'Invalid'`. Do NOT expire discrete orders. |
+| **PollNever(reason)** | `status = 'Completed'`. Do NOT expire discrete orders. |
 
-4. **Note on `allCandidatesKnown`**: For non-deterministic single-part orders (StopLoss created at live, GoodAfterTime, TradeAboveThreshold), once the contract returns success once, set `allCandidatesKnown = true` — the order UID is now known and C2/C3 handle the rest. For repeating orders (PerpetualSwap), this flag stays false because new orders keep appearing.
+4. **Note on `allCandidatesKnown`**: For confirmed single-shot non-deterministic types (**GoodAfterTime**, **TradeAboveThreshold**), once the contract returns success once, set `allCandidatesKnown = true` — the order UID is now known and C2/C3 handle the rest. For repeating orders (**PerpetualSwap**) and **Unknown** types (which may be multi-part), this flag stays `false`.
 
 ### 3.4 Candidate Confirmer (C2) — Promoting Candidates
 
@@ -222,6 +228,8 @@ Per-UID terminal status cache. Survives Ponder resyncs (external `cow_cache` sch
 3. **For each found on API:** Upsert into `discreteOrder` with the API's authoritative status.
 
 4. **For each NOT found:** Leave as candidate. Will be checked again next block. The watch-tower may not have submitted it yet.
+
+5. **Cleanup:** Delete promoted candidates from `candidateDiscreteOrder`. Also delete stale candidates past their `validTo` — the watch-tower likely never submitted them.
 
 ### 3.5 Status Updater (C3) — Tracking Open Orders
 
@@ -275,15 +283,15 @@ The Orderbook Client is used by all other components. Two main entry points:
 
 ### TWAP — Deterministic, multi-part
 
-**Backfill:** Generator created → all N part UIDs pre-computed → API status fetched → `discreteOrder` rows created → if all terminal, generator marked Invalid.
+**Backfill:** Generator created → all N part UIDs pre-computed → API status fetched → UIDs found on API go into `discreteOrder`, UIDs not found go into `candidateDiscreteOrder` → if all terminal on API, generator marked Completed.
 
-**Live sync:** Same as backfill (UID pre-computation works at both). If some parts are still open, C3 (Status Updater) tracks them until fulfilled/expired.
+**Live sync:** Same as backfill (UID pre-computation works at both). UIDs not yet on API are candidates; C2 promotes when API confirms. C3 tracks open `discreteOrder` rows.
 
 **The Contract Poller (C1) is NEVER involved for TWAP.** All discovery happens via UID pre-computation.
 
 ### StopLoss — Deterministic, single-part
 
-**Backfill:** Generator created → single UID pre-computed → API status fetched → `discreteOrder` created → if terminal, generator marked Invalid.
+**Backfill:** Generator created → single UID pre-computed → API status fetched → if found on API, `discreteOrder` created; if not, `candidateDiscreteOrder` → if terminal on API, generator marked Completed.
 
 **Live sync:** Same as backfill. If the order is still open (price hasn't triggered yet), C3 tracks it. The Contract Poller is not involved.
 
@@ -310,17 +318,18 @@ The Orderbook Client is used by all other components. Two main entry points:
 1. Block 18M: `ConditionalOrderCreated`. Generator inserted. UID Pre-computation computes 5 UIDs.
 2. API batch fetch: all 5 → `fulfilled`. Cached in `order_uid_cache`.
 3. 5 `discreteOrder` rows created (all fulfilled).
-4. Generator → `Invalid` (`allCandidatesKnown = true`).
+4. Generator → `Completed` (`allCandidatesKnown = true`).
 5. **At live sync**: Contract Poller skips this generator. Status Updater has nothing to update. Zero ongoing cost.
 
 ### Scenario B: StopLoss, created at live sync, price triggers 3 hours later
 
 1. Live block: `ConditionalOrderCreated`. Generator inserted. UID Pre-computed = `0xabc...`.
-2. API fetch: `0xabc` not found (watch-tower hasn't submitted yet). `discreteOrder` inserted as `open`.
-3. **C3 (Status Updater) polls every block**: `0xabc` → API still not found or `open`.
+2. API fetch: `0xabc` not found (watch-tower hasn't submitted yet). `candidateDiscreteOrder` inserted.
+3. **C2 (Candidate Confirmer) polls every block**: `0xabc` → API still not found. Retry next block.
 4. 3 hours later: price triggers, watch-tower submits, solver settles.
-5. **C3 polls**: `0xabc` → `fulfilled`. `discreteOrder` updated. Cached as terminal.
-6. Generator stays Active until block handler checks and gets `PollNever` → `Invalid`.
+5. **C2 polls**: `0xabc` → API returns order. Promoted to `discreteOrder`. Candidate deleted.
+6. **C3 polls**: `0xabc` → `fulfilled`. `discreteOrder` updated. Cached as terminal.
+7. Generator stays Active until block handler checks and gets `PollNever` → `Completed`.
 
 **Note:** The Contract Poller (C1) is NOT involved. The UID was known from creation. Status tracking is pure API work.
 
@@ -342,23 +351,25 @@ The Orderbook Client is used by all other components. Two main entry points:
 
 ---
 
-## 6. Open Questions
+## 6. Design Decisions (Resolved)
 
-### `allCandidatesKnown` — Exact semantics
+### `allCandidatesKnown` — Semantics (Resolved)
 
-**For deterministic types**: Set to `true` at creation time (all UIDs known immediately).
+A **boolean** is the correct type. It answers one question: "does C1 still need to poll this generator?"
 
-**For non-deterministic single-part types**: Set to `true` after the first success from the Contract Poller (the UID is now known).
+**For deterministic types (TWAP, StopLoss)**: Set to `true` at creation time. All UIDs are computed from `staticInput` — no RPC needed.
 
-**For PerpetualSwap (repeating)**: Never set to `true` — new orders keep appearing. The Contract Poller must keep polling.
+**For non-deterministic single-part types (GoodAfterTime, TradeAboveThreshold)**: Set to `true` after the first success from the Contract Poller. The UID is now known; C2/C3 handle confirmation and status.
 
-**Question**: Should `allCandidatesKnown` be a boolean, or should we store the count of expected parts? For TWAP, we know `n` parts. For StopLoss, we know 1 part. For PerpetualSwap, it's unbounded.
+**For PerpetualSwap (repeating)**: Stays `false` — new orders keep appearing. The Contract Poller must keep polling.
 
-### Historical Bootstrap — Completeness
+**Why not a part count?** Part count is TWAP-specific. The polling decision is binary: either C1 needs to discover more UIDs, or it doesn't. A part count would be unused for all order types except TWAP and adds no value over the boolean.
 
-The bootstrap discovers orders via `fetchComposableOrders(owner)`, which relies on the Orderbook API having the orders. If an order was created and expired without ever being submitted to the API (e.g., the watch-tower was down), it won't be discovered.
+### Historical Bootstrap — Completeness (Resolved)
 
-**Likely acceptable**: The watch-tower is operated by the CoW Protocol team and is highly available.
+The bootstrap discovers orders via `fetchComposableOrders(owner)`, which relies on the Orderbook API having the orders. If an order never reached the API, the bootstrap won't discover it.
+
+**This is correct behavior, not a gap.** All CoW Protocol orders go through the Orderbook API. An order that never reached the API is the same as an order that never existed from the protocol's perspective — it was never submitted to solvers and never had a chance to be settled. The watch-tower is the standard submission path and is operated by the CoW Protocol team.
 
 ---
 
@@ -401,7 +412,7 @@ flowchart TB
     subgraph CompE["API Endpoints"]
         EGql["/graphql"]
         EOwner["/api/orders/by-owner/:owner"]
-        ESum["/api/generator/:id/summary"]
+        ESum["/api/generator/:eventId/execution-summary"]
     end
 
     CC & CCL --> CompA
@@ -409,7 +420,7 @@ flowchart TB
 
     CompA -->|insert| Gen
     AB -->|upsert| Disc
-    AB -.->|all terminal → Invalid| Gen
+    AB -.->|all terminal → Completed| Gen
 
     BH1 -->|"RPC multicall<br/>(non-deterministic only)"| Cand
     BH1 -->|update scheduling| Gen
@@ -441,9 +452,9 @@ flowchart TD
     Check -->|"PerpetualSwap / GoodAfterTime<br/>TradeAboveThreshold / Unknown<br/>(non-deterministic)"| Skip["No pre-computation<br/>Generator stays Active"]
 
     Pre --> API["Orderbook Client:<br/>fetchOrderStatusByUids()"]
-    API --> Upsert["Upsert discreteOrder<br/>for each UID"]
+    API --> Upsert["API has UID → discreteOrder<br/>API missing UID → candidateDiscreteOrder"]
     Upsert --> Term{"All terminal?"}
-    Term -->|Yes| Deactivate["Generator → Invalid<br/>allCandidatesKnown = true<br/>No further polling"]
+    Term -->|Yes| Deactivate["Generator → Completed<br/>allCandidatesKnown = true<br/>No further polling"]
     Term -->|No| Active["Generator stays Active<br/>C3 tracks open orders"]
 
     Skip --> BackfillQ{"Backfill or<br/>Live sync?"}
@@ -465,7 +476,7 @@ flowchart LR
         direction TB
         C1Q["Query: Active generators<br/>non-deterministic<br/>allCandidatesKnown=false<br/>due for check"]
         C1M["RPC multicall:<br/>getTradeableOrderWithSignature"]
-        C1R["On success → candidate<br/>On PollNever → Invalid"]
+        C1R["On success → candidate<br/>On PollNever → Completed"]
         C1Q --> C1M --> C1R
     end
 
@@ -473,8 +484,9 @@ flowchart LR
         direction TB
         C2Q["Query: candidateDiscreteOrder<br/>not yet in discreteOrder"]
         C2F["API: POST /orders/by_uids"]
-        C2U["Found → upsert discreteOrder<br/>Not found → retry next block"]
-        C2Q --> C2F --> C2U
+        C2U["Found → upsert discreteOrder<br/>+ delete candidate<br/>Not found → retry next block"]
+        C2X["Delete stale candidates<br/>past validTo"]
+        C2Q --> C2F --> C2U --> C2X
     end
 
     subgraph C3["C3: Status Updater"]
@@ -512,7 +524,7 @@ flowchart LR
         E3["Pre-compute 5 UIDs"]
         E4["Fetch API status"]
         E5{"All terminal?"}
-        E6["Generator → Invalid"]
+        E6["Generator → Completed"]
         E7["Some open"]
         E1 --> E2 --> E3 --> E4 --> E5
         E5 -->|Yes| E6
@@ -545,12 +557,13 @@ flowchart TD
     E["ConditionalOrderCreated<br/>(StopLoss, live)"] --> G["Insert generator"]
     G --> Pre["Pre-compute UID = 0xabc"]
     Pre --> API["API fetch: 0xabc not found yet"]
-    API --> Open["discreteOrder: open"]
+    API --> Cand["candidateDiscreteOrder"]
 
-    Open --> C3["C3: polls API every block"]
-    C3 --> Wait["0xabc still open..."]
+    Cand --> C2["C2: polls API every block"]
+    C2 --> Wait["0xabc not on API yet..."]
     Wait --> Trigger["Price triggers →<br/>watch-tower submits →<br/>solver settles"]
-    Trigger --> Fulfilled["C3: API returns fulfilled<br/>→ update discreteOrder"]
+    Trigger --> Promoted["C2: API returns order<br/>→ promote to discreteOrder"]
+    Promoted --> Fulfilled["C3: API returns fulfilled<br/>→ update discreteOrder"]
 
     style Trigger fill:#fff3cd
     style Fulfilled fill:#d4edda
@@ -614,12 +627,14 @@ flowchart LR
     end
 
     A -->|"INSERT (Active)"| Gen
-    B -->|"UPDATE (Invalid)"| Gen
+    B -->|"UPDATE (Completed)"| Gen
     C1 -->|"UPDATE (scheduling, status)"| Gen
 
-    C1 -->|"INSERT (open)"| Cand
+    B -->|"INSERT (API missing)"| Cand
+    C1 -->|"INSERT"| Cand
+    C2 -->|"DELETE (promoted + stale)"| Cand
 
-    B -->|"UPSERT"| Disc
+    B -->|"UPSERT (API found)"| Disc
     C2 -->|"UPSERT"| Disc
     C3 -->|"UPDATE status"| Disc
     C4 -->|"UPSERT"| Disc

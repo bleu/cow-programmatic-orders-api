@@ -16,7 +16,7 @@
 
 import type { Hex } from "viem";
 import { and, eq } from "ponder";
-import { conditionalOrderGenerator, discreteOrder } from "ponder:schema";
+import { candidateDiscreteOrder, conditionalOrderGenerator, discreteOrder } from "ponder:schema";
 import { computeOrderUid, type GPv2OrderData } from "./orderUid";
 import { fetchOrderStatusByUids } from "./orderbookClient";
 
@@ -95,27 +95,44 @@ export async function precomputeAndDiscover(
   const statuses = await fetchOrderStatusByUids(context, chainId, uids);
 
   for (const order of precomputed) {
-    const apiStatus = (statuses.get(order.orderUid) ?? "open") as
-      "open" | "fulfilled" | "unfilled" | "expired" | "cancelled";
+    const apiStatus = statuses.get(order.orderUid) as
+      "open" | "fulfilled" | "unfilled" | "expired" | "cancelled" | undefined;
 
-    await context.db.sql
-      .insert(discreteOrder)
-      .values({
-        orderUid: order.orderUid,
-        chainId,
-        conditionalOrderGeneratorId: generatorEventId,
-        status: apiStatus,
-        partIndex: order.partIndex !== null ? BigInt(order.partIndex) : null,
-        sellAmount: order.sellAmount,
-        buyAmount: order.buyAmount,
-        feeAmount: order.feeAmount,
-        validTo: order.validTo,
-        creationDate: blockTimestamp,
-      })
-      .onConflictDoUpdate({
-        target: [discreteOrder.chainId, discreteOrder.orderUid],
-        set: { status: apiStatus, validTo: order.validTo },
-      });
+    if (apiStatus) {
+      await context.db.sql
+        .insert(discreteOrder)
+        .values({
+          orderUid: order.orderUid,
+          chainId,
+          conditionalOrderGeneratorId: generatorEventId,
+          status: apiStatus,
+          partIndex: order.partIndex !== null ? BigInt(order.partIndex) : null,
+          sellAmount: order.sellAmount,
+          buyAmount: order.buyAmount,
+          feeAmount: order.feeAmount,
+          validTo: order.validTo,
+          creationDate: blockTimestamp,
+        })
+        .onConflictDoUpdate({
+          target: [discreteOrder.chainId, discreteOrder.orderUid],
+          set: { status: apiStatus, validTo: order.validTo },
+        });
+    } else {
+      await context.db.sql
+        .insert(candidateDiscreteOrder)
+        .values({
+          orderUid: order.orderUid,
+          chainId,
+          conditionalOrderGeneratorId: generatorEventId,
+          partIndex: order.partIndex !== null ? BigInt(order.partIndex) : null,
+          sellAmount: order.sellAmount,
+          buyAmount: order.buyAmount,
+          feeAmount: order.feeAmount,
+          validTo: order.validTo,
+          creationDate: blockTimestamp,
+        })
+        .onConflictDoNothing();
+    }
   }
 
   const allTerminal = precomputed.every((o) => {
@@ -127,7 +144,7 @@ export async function precomputeAndDiscover(
     await context.db.sql
       .update(conditionalOrderGenerator)
       .set({
-        status: "Invalid",
+        status: "Completed",
         allCandidatesKnown: true,
         lastPollResult: "precompute:allTerminal",
       })
@@ -138,7 +155,7 @@ export async function precomputeAndDiscover(
         ),
       );
     console.log(
-      `[ComposableCow] All ${precomputed.length} pre-computed orders terminal — skipping poll for generator=${generatorEventId}`,
+      `[ComposableCow] All ${precomputed.length} pre-computed orders terminal on API — generator=${generatorEventId} marked Completed`,
     );
     return true;
   }

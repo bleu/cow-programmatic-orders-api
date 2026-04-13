@@ -163,6 +163,32 @@ Healthy output includes cache hit ratio and active owner count:
 
 High `cacheHits` relative to `owners` means the cache is working. High `apiFetches` with low `activeOwners` may indicate many owners are not yet cached.
 
+### C4 HistoricalBootstrap — one-shot (`endBlock: "latest"`) — PR #29 entrada 9
+
+`HistoricalBootstrap` in `ponder.config.ts` uses `startBlock: "latest"` and `endBlock: "latest"` so it should run **once per chain** when the indexer reaches live (not every block). Use logs to confirm.
+
+**Invocation counter (expect `#1` only per chain per process):**
+
+```bash
+grep -n "\[COW:C4\] HistoricalBootstrap invocation" ponder.log
+```
+
+Healthy output (one line per chain after live starts):
+
+```
+... [COW:C4] HistoricalBootstrap invocation=#1 chain=1 block=... (one-shot bootstrap; see .claude/commands/debug-ponder.md — C4 section)
+```
+
+If you see **`invocation=#2`** or a **`WARN`** line saying *invocation #2* / *repeats every block*, `endBlock: "latest"` is not behaving as a one-shot in your Ponder version — escalate or check Ponder release notes. A **full resync** resets the process: you will see `#1` again on the next run (expected).
+
+**Full C4 trace (bootstrap work or empty):**
+
+```bash
+grep -n "\[COW:C4\]" ponder.log
+```
+
+You should see `invocation=#1`, then either `no generators need bootstrap` or `generators=...` + `DONE`, then **no further `[COW:C4]` lines** for that chain until restart.
+
 ### Backfill skip — verify poller is not running during historical sync
 
 During backfill, the orderbook poller is silently skipped (no log line). To confirm live-only behavior, check that poll DONE lines only appear near the tip:
