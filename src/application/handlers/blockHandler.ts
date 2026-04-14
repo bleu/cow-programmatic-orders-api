@@ -332,7 +332,7 @@ ponder.on("StatusUpdater:block", async ({ event, context }) => {
 
     let updated = 0;
     for (const [uid, status] of statuses) {
-      if (status !== "open" && VALID_DISCRETE_STATUSES.has(status)) {
+      if (VALID_DISCRETE_STATUSES.has(status)) {
         await context.db.sql
           .update(discreteOrder)
           .set({ status: status as "fulfilled" | "unfilled" | "expired" | "cancelled" })
