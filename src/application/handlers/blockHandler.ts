@@ -192,6 +192,25 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
           );
           neverCount++;
           break;
+
+        case "cancelled":
+          await context.db.sql
+            .update(conditionalOrderGenerator)
+            .set({
+              status: "Cancelled",
+              lastCheckBlock: currentBlock,
+              lastPollResult: "cancelled:SingleOrderNotAuthed",
+            })
+            .where(
+              and(
+                eq(conditionalOrderGenerator.chainId, chainId),
+                eq(conditionalOrderGenerator.eventId, order.generatorId),
+              ),
+            );
+          console.log(
+            `[COW:C1] CANCELLED generatorId=${order.generatorId} block=${currentBlock} chain=${chainId}`,
+          );
+          break;
       }
     }
   }
