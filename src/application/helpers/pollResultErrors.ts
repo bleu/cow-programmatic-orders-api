@@ -16,6 +16,7 @@ export type PollResult =
   | { type: "tryAtBlock"; blockNumber: bigint }
   | { type: "tryAtEpoch"; timestamp: bigint }
   | { type: "never"; reason: string }
+  | { type: "cancelled" }
   | { type: "success" };
 
 // ─── Error extraction ─────────────────────────────────────────────────────────
@@ -60,6 +61,10 @@ export function parsePollError(error: unknown): PollResult {
     case "OrderNotValid":
       // Order not tradeable yet — retry next block (transient)
       return { type: "tryNextBlock" };
+
+    case "SingleOrderNotAuthed":
+      // Order was removed on-chain via ComposableCoW.remove() — mark generator as cancelled
+      return { type: "cancelled" };
 
     default:
       // Unknown revert: retry next block rather than marking the order permanently invalid
