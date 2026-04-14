@@ -18,7 +18,7 @@ You are tasked with generating a comprehensive pull request description followin
 ## Workflow Steps
 
 1. **Check for a PR description template:**
-   - Look for `thoughts/shared/pr_description.md` or similar template
+   - Look for a PR description template under `thoughts/shared/` (local) or similar
    - If no template exists, use the default format below
 
 2. **Identify the PR to describe:**

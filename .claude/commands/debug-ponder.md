@@ -105,6 +105,102 @@ After running all steps, output:
 
 ---
 
+## Orderbook Cache (M3)
+
+The `orderbook_cache` table persists across Ponder resyncs (it is NOT an `onchainTable`). These steps verify the cache is alive and working.
+
+### Cache startup — verify persistence across restarts
+
+Look for the setup log emitted once at startup:
+
+```bash
+grep -n "\[COW:SETUP\]" ponder.log | head -5
+```
+
+Healthy output:
+```
+[COW:SETUP] orderbook_cache ready — 42 entries from previous run
+```
+
+If you see `0 entries from previous run` on a restart (not a first run), the cache table was dropped — this indicates a schema migration or Docker volume wipe, not a bug.
+
+### Cache hits — verify terminal owners are served from cache
+
+```bash
+grep -n "\[COW:OB:CACHE\] HIT" ponder.log | tail -20
+```
+
+Each line confirms a terminal owner was served from cache instead of hitting the API:
+```
+[COW:OB:CACHE] HIT owner=0x1234... chain=1 orders=5
+```
+
+If you see zero hits after a warm restart, the cache was not populated in the previous run (all owners were non-terminal) or the table was reset.
+
+### Cache saves — verify terminal owners are being cached
+
+```bash
+grep -n "\[COW:OB:CACHE\] SAVED" ponder.log | tail -20
+```
+
+Healthy output:
+```
+[COW:OB:CACHE] SAVED owner=0x1234... chain=1 orders=3 (all terminal, cached permanently)
+```
+
+Active owners (with any `open` order) are intentionally NOT saved — they must be re-fetched on every poll cycle.
+
+### Orderbook poll cycle metrics
+
+```bash
+grep -n "\[COW:OB:POLL\] DONE" ponder.log | tail -10
+```
+
+Healthy output includes cache hit ratio and active owner count:
+```
+[COW:OB:POLL] DONE block=12345678 chain=1 owners=20 discovered=3 cacheHits=15 apiFetches=5 activeOwners=2 totalOrders=47
+```
+
+High `cacheHits` relative to `owners` means the cache is working. High `apiFetches` with low `activeOwners` may indicate many owners are not yet cached.
+
+### C4 HistoricalBootstrap — one-shot (`endBlock: "latest"`) — PR #29 entrada 9
+
+`HistoricalBootstrap` in `ponder.config.ts` uses `startBlock: "latest"` and `endBlock: "latest"` so it should run **once per chain** when the indexer reaches live (not every block). Use logs to confirm.
+
+**Invocation counter (expect `#1` only per chain per process):**
+
+```bash
+grep -n "\[COW:C4\] HistoricalBootstrap invocation" ponder.log
+```
+
+Healthy output (one line per chain after live starts):
+
+```
+... [COW:C4] HistoricalBootstrap invocation=#1 chain=1 block=... (one-shot bootstrap; see .claude/commands/debug-ponder.md — C4 section)
+```
+
+If you see **`invocation=#2`** or a **`WARN`** line saying *invocation #2* / *repeats every block*, `endBlock: "latest"` is not behaving as a one-shot in your Ponder version — escalate or check Ponder release notes. A **full resync** resets the process: you will see `#1` again on the next run (expected).
+
+**Full C4 trace (bootstrap work or empty):**
+
+```bash
+grep -n "\[COW:C4\]" ponder.log
+```
+
+You should see `invocation=#1`, then either `no generators need bootstrap` or `generators=...` + `DONE`, then **no further `[COW:C4]` lines** for that chain until restart.
+
+### Backfill skip — verify poller is not running during historical sync
+
+During backfill, the orderbook poller is silently skipped (no log line). To confirm live-only behavior, check that poll DONE lines only appear near the tip:
+
+```bash
+grep -n "\[COW:OB:POLL\] DONE" ponder.log | head -5
+```
+
+The `block=` values should be close to the current chain head. If you see poll DONE lines during historical blocks, the `PollResultPoller` start block may not be set to `"latest"`.
+
+---
+
 ## Known Error Patterns
 
 | Error message | Cause | Fix |
