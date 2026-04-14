@@ -101,6 +101,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
 
   let neverCount = 0;
   let successCount = 0;
+  const successPromises: Promise<unknown>[] = [];
 
   for (let i = 0; i < dueOrders.length; i++) {
     const result = results[i];
@@ -121,28 +122,32 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
         }
       }
 
-      await context.db.sql
-        .insert(candidateDiscreteOrder)
-        .values({
-          orderUid: orderUid.toLowerCase(),
-          chainId,
-          conditionalOrderGeneratorId: order.generatorId,
-          partIndex,
-          sellAmount: orderData.sellAmount.toString(),
-          buyAmount: orderData.buyAmount.toString(),
-          feeAmount: orderData.feeAmount.toString(),
-          validTo: orderData.validTo,
-          creationDate: BigInt(Number(event.block.timestamp)),
-        })
-        .onConflictDoNothing();
+      successPromises.push(
+        context.db.sql
+          .insert(candidateDiscreteOrder)
+          .values({
+            orderUid: orderUid.toLowerCase(),
+            chainId,
+            conditionalOrderGeneratorId: order.generatorId,
+            partIndex,
+            sellAmount: orderData.sellAmount.toString(),
+            buyAmount: orderData.buyAmount.toString(),
+            feeAmount: orderData.feeAmount.toString(),
+            validTo: orderData.validTo,
+            creationDate: BigInt(Number(event.block.timestamp)),
+          })
+          .onConflictDoNothing(),
+      );
 
       const isSingleShot = (SINGLE_SHOT_NON_DETERMINISTIC as readonly string[]).includes(order.orderType);
-      await updateGeneratorPollState(context, chainId, order.generatorId, currentBlock, {
-        nextCheckBlock: currentBlock + RECHECK_INTERVAL,
-        lastPollResult: "success",
-        nextCheckTimestamp: null,
-        allCandidatesKnown: isSingleShot ? true : undefined,
-      });
+      successPromises.push(
+        updateGeneratorPollState(context, chainId, order.generatorId, currentBlock, {
+          nextCheckBlock: currentBlock + RECHECK_INTERVAL,
+          lastPollResult: "success",
+          nextCheckTimestamp: null,
+          allCandidatesKnown: isSingleShot ? true : undefined,
+        }),
+      );
       successCount++;
     } else {
       const pollResult = parsePollError(result.error);
@@ -216,6 +221,8 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
     }
   }
 
+  await Promise.all(successPromises);
+
   console.log(
     `[COW:C1] DONE block=${currentBlock} chain=${chainId} due=${dueOrders.length} success=${successCount} never=${neverCount}`,
   );
@@ -228,6 +235,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
 ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
   const chainId = context.chain.id as SupportedChainId;
 
+  // Promoted candidates are always deleted below — no join needed to filter them
   const unconfirmed = await context.db.sql
     .select({
       orderUid: candidateDiscreteOrder.orderUid,
@@ -240,18 +248,8 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
       creationDate: candidateDiscreteOrder.creationDate,
     })
     .from(candidateDiscreteOrder)
-    .leftJoin(
-      discreteOrder,
-      and(
-        eq(candidateDiscreteOrder.chainId, discreteOrder.chainId),
-        eq(candidateDiscreteOrder.orderUid, discreteOrder.orderUid),
-      ),
-    )
     .where(
-      and(
-        eq(candidateDiscreteOrder.chainId, chainId),
-        sql`${discreteOrder.orderUid} IS NULL`,
-      ),
+      eq(candidateDiscreteOrder.chainId, chainId),
     ) as {
     orderUid: string;
     generatorId: string;
