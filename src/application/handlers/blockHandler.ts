@@ -29,6 +29,7 @@ import { computeOrderUid, type GPv2OrderData } from "../helpers/orderUid";
 const NON_DETERMINISTIC_TYPES = ["PerpetualSwap", "GoodAfterTime", "TradeAboveThreshold", "Unknown"] as const;
 const SINGLE_SHOT_NON_DETERMINISTIC = ["GoodAfterTime", "TradeAboveThreshold"] as const;
 const BLOCK_NEVER = 2n ** 63n - 1n; // sentinel for epoch-scheduled generators (PollTryAtEpoch)
+const VALID_DISCRETE_STATUSES = new Set(["fulfilled", "unfilled", "expired", "cancelled"]);
 
 
 // ─── C1: Contract Poller ─────────────────────────────────────────────────────
@@ -331,7 +332,7 @@ ponder.on("StatusUpdater:block", async ({ event, context }) => {
 
     let updated = 0;
     for (const [uid, status] of statuses) {
-      if (status !== "open") {
+      if (VALID_DISCRETE_STATUSES.has(status)) {
         await context.db.sql
           .update(discreteOrder)
           .set({ status: status as "fulfilled" | "unfilled" | "expired" | "cancelled" })

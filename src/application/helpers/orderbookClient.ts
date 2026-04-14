@@ -56,6 +56,7 @@ export interface ComposableOrder {
 
 const TERMINAL_STATUSES = new Set(["fulfilled", "expired", "cancelled"]);
 const PAGE_LIMIT = 1000;
+const BATCH_SIZE = 50;
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
@@ -280,29 +281,36 @@ async function fetchAccountOrders(
   return allOrders;
 }
 
-/** Batch-fetch orders by UID to refresh status of open orders. */
+/** Batch-fetch orders by UID to refresh status of open orders. Chunks into BATCH_SIZE to avoid HTTP 413. */
 async function fetchOrdersByUids(
   apiBaseUrl: string,
   uids: string[],
 ): Promise<OrderbookOrder[]> {
   if (uids.length === 0) return [];
 
+  const results: OrderbookOrder[] = [];
   const url = `${apiBaseUrl}/api/v1/orders/by_uids`;
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(uids),
-    });
-    if (!response.ok) {
-      console.warn(`[COW:OB] Batch fetch ${response.status} uids=${uids.length}`);
-      return [];
+
+  for (let i = 0; i < uids.length; i += BATCH_SIZE) {
+    const chunk = uids.slice(i, i + BATCH_SIZE);
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(chunk),
+      });
+      if (!response.ok) {
+        console.warn(`[COW:OB] Batch fetch ${response.status} uids=${chunk.length} offset=${i}`);
+        continue;
+      }
+      const batch = (await response.json()) as OrderbookOrder[];
+      results.push(...batch);
+    } catch (err) {
+      console.warn(`[COW:OB] Batch fetch failed err=${err} offset=${i}`);
     }
-    return (await response.json()) as OrderbookOrder[];
-  } catch (err) {
-    console.warn(`[COW:OB] Batch fetch failed err=${err}`);
-    return [];
   }
+
+  return results;
 }
 
 // ─── Processing ──────────────────────────────────────────────────────────────
