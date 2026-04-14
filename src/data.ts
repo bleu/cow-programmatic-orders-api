@@ -33,7 +33,7 @@ export const COMPOSABLE_COW_DEPLOYMENTS = {
     address: COMPOSABLE_COW_ADDRESS,
     startBlock: 29389123,
   },
-  // arbitrum: { address: COMPOSABLE_COW_ADDRESS, startBlock: ... }, // TODO: COW-7xx
+  // arbitrum: { address: COMPOSABLE_COW_ADDRESS, startBlock: ... }, // TODO: add Arbitrum support
 } as const;
 
 export const ComposableCowContract = {
