@@ -37,6 +37,8 @@ interface OrderbookOrder {
   creationDate: string; // ISO 8601
   signingScheme: string;
   signature: string;
+  executedSellAmount: string;
+  executedBuyAmount: string;
 }
 
 /** Processed composable order stored in cache and returned to callers. */
@@ -46,12 +48,20 @@ export interface ComposableOrder {
   generatorId: string;
   generatorHash: string;
   orderType: string;
-  partIndex: bigint | null;
   sellAmount: string;
   buyAmount: string;
   feeAmount: string;
   validTo: number;
   creationDate: number; // unix timestamp
+  executedSellAmount: string;
+  executedBuyAmount: string;
+}
+
+/** Status + executed amounts returned by fetchOrderStatusByUids. */
+export interface OrderStatusInfo {
+  status: string;
+  executedSellAmount: string | null;  // null when served from cache
+  executedBuyAmount: string | null;
 }
 
 const TERMINAL_STATUSES = new Set(["fulfilled", "expired", "cancelled"]);
@@ -116,6 +126,8 @@ export async function fetchComposableOrders(
       if (fresh && toRefresh.includes(result.uid)) {
         result.status = fresh.status as ComposableOrder["status"];
         result.validTo = fresh.validTo;
+        result.executedSellAmount = fresh.executedSellAmount;
+        result.executedBuyAmount = fresh.executedBuyAmount;
       }
     }
 
@@ -171,16 +183,22 @@ export async function upsertDiscreteOrders(
         chainId,
         conditionalOrderGeneratorId: order.generatorId,
         status: order.status,
-        partIndex: order.partIndex,
         sellAmount: order.sellAmount,
         buyAmount: order.buyAmount,
         feeAmount: order.feeAmount,
         validTo: order.validTo,
         creationDate: BigInt(order.creationDate),
+        executedSellAmount: order.executedSellAmount,
+        executedBuyAmount: order.executedBuyAmount,
       })
       .onConflictDoUpdate({
         target: [discreteOrder.chainId, discreteOrder.orderUid],
-        set: { status: order.status, validTo: order.validTo },
+        set: {
+          status: order.status,
+          validTo: order.validTo,
+          executedSellAmount: order.executedSellAmount,
+          executedBuyAmount: order.executedBuyAmount,
+        },
       });
     count++;
   }
@@ -189,16 +207,17 @@ export async function upsertDiscreteOrders(
 
 /**
  * Fetch order statuses by UIDs from the API, using the per-UID cache.
- * Returns a Map of uid -> status. Used by the backfill handler to check
- * pre-computed UIDs without a full owner fetch.
+ * Returns a Map of uid -> OrderStatusInfo. Executed amounts are null for
+ * cached results (the amounts are already stored in discreteOrder from
+ * the original fresh fetch).
  */
 export async function fetchOrderStatusByUids(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   context: any,
   chainId: number,
   uids: string[],
-): Promise<Map<string, string>> {
-  const result = new Map<string, string>();
+): Promise<Map<string, OrderStatusInfo>> {
+  const result = new Map<string, OrderStatusInfo>();
   if (uids.length === 0) return result;
 
   const apiBaseUrl = ORDERBOOK_API_URLS[chainId];
@@ -211,7 +230,7 @@ export async function fetchOrderStatusByUids(
   for (const uid of uids) {
     const cachedStatus = cached.get(uid);
     if (cachedStatus && TERMINAL_STATUSES.has(cachedStatus)) {
-      result.set(uid, cachedStatus);
+      result.set(uid, { status: cachedStatus, executedSellAmount: null, executedBuyAmount: null });
     } else {
       toFetch.push(uid);
     }
@@ -223,7 +242,11 @@ export async function fetchOrderStatusByUids(
     const newTerminal: ComposableOrder[] = [];
 
     for (const order of fetched) {
-      result.set(order.uid, order.status);
+      result.set(order.uid, {
+        status: order.status,
+        executedSellAmount: order.executedSellAmount,
+        executedBuyAmount: order.executedBuyAmount,
+      });
       if (TERMINAL_STATUSES.has(order.status)) {
         newTerminal.push({
           uid: order.uid,
@@ -231,12 +254,13 @@ export async function fetchOrderStatusByUids(
           generatorId: "",
           generatorHash: "",
           orderType: "",
-          partIndex: null,
           sellAmount: order.sellAmount,
           buyAmount: order.buyAmount,
           feeAmount: order.feeAmount,
           validTo: order.validTo,
           creationDate: 0,
+          executedSellAmount: order.executedSellAmount,
+          executedBuyAmount: order.executedBuyAmount,
         });
       }
     }
@@ -355,7 +379,6 @@ async function filterAndProcess(
       .select({
         eventId: conditionalOrderGenerator.eventId,
         orderType: conditionalOrderGenerator.orderType,
-        decodedParams: conditionalOrderGenerator.decodedParams,
       })
       .from(conditionalOrderGenerator)
       .where(
@@ -367,22 +390,11 @@ async function filterAndProcess(
       .limit(1)) as {
       eventId: string;
       orderType: string;
-      decodedParams: Record<string, string> | null;
     }[];
 
     if (generators.length === 0) continue;
 
     const generator = generators[0]!;
-
-    // Derive TWAP partIndex when t0 is known
-    let partIndex: bigint | null = null;
-    if (generator.orderType === "TWAP" && generator.decodedParams) {
-      const t0 = BigInt(generator.decodedParams["t0"] ?? "0");
-      const t = BigInt(generator.decodedParams["t"] ?? "0");
-      if (t0 > 0n && t > 0n) {
-        partIndex = (BigInt(order.validTo) + 1n - t0) / t - 1n;
-      }
-    }
 
     results.push({
       uid: order.uid,
@@ -390,12 +402,13 @@ async function filterAndProcess(
       generatorId: generator.eventId,
       generatorHash: paramHash,
       orderType: generator.orderType,
-      partIndex,
       sellAmount: order.sellAmount,
       buyAmount: order.buyAmount,
       feeAmount: order.feeAmount,
       validTo: order.validTo,
       creationDate: Math.floor(new Date(order.creationDate).getTime() / 1000),
+      executedSellAmount: order.executedSellAmount,
+      executedBuyAmount: order.executedBuyAmount,
     });
   }
 

@@ -29,11 +29,11 @@ const BALANCE_ERC20 = "0x5a28e9363bb942b639270062aa6bb295f434bcdfc42c97267bf003f
 
 export interface PrecomputedOrder {
   orderUid: string;
-  partIndex: number | null;
   validTo: number;
   sellAmount: string;
   buyAmount: string;
   feeAmount: string;
+  possibleValidAfterTimestamp: number | null;  // TWAP: t0 + partIndex * t
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -95,7 +95,8 @@ export async function precomputeAndDiscover(
   const statuses = await fetchOrderStatusByUids(context, chainId, uids);
 
   for (const order of precomputed) {
-    const apiStatus = statuses.get(order.orderUid) as
+    const statusInfo = statuses.get(order.orderUid);
+    const apiStatus = statusInfo?.status as
       "open" | "fulfilled" | "unfilled" | "expired" | "cancelled" | undefined;
 
     if (apiStatus) {
@@ -106,12 +107,13 @@ export async function precomputeAndDiscover(
           chainId,
           conditionalOrderGeneratorId: generatorEventId,
           status: apiStatus,
-          partIndex: order.partIndex !== null ? BigInt(order.partIndex) : null,
           sellAmount: order.sellAmount,
           buyAmount: order.buyAmount,
           feeAmount: order.feeAmount,
           validTo: order.validTo,
           creationDate: blockTimestamp,
+          executedSellAmount: statusInfo?.executedSellAmount ?? null,
+          executedBuyAmount: statusInfo?.executedBuyAmount ?? null,
         })
         .onConflictDoUpdate({
           target: [discreteOrder.chainId, discreteOrder.orderUid],
@@ -124,7 +126,9 @@ export async function precomputeAndDiscover(
           orderUid: order.orderUid,
           chainId,
           conditionalOrderGeneratorId: generatorEventId,
-          partIndex: order.partIndex !== null ? BigInt(order.partIndex) : null,
+          possibleValidAfterTimestamp: order.possibleValidAfterTimestamp != null
+            ? BigInt(order.possibleValidAfterTimestamp)
+            : null,
           sellAmount: order.sellAmount,
           buyAmount: order.buyAmount,
           feeAmount: order.feeAmount,
@@ -136,7 +140,7 @@ export async function precomputeAndDiscover(
   }
 
   const allTerminal = precomputed.every((o) => {
-    const s = statuses.get(o.orderUid);
+    const s = statuses.get(o.orderUid)?.status;
     return s === "fulfilled" || s === "expired" || s === "cancelled";
   });
 
@@ -258,11 +262,11 @@ function precomputeTwapUids(
 
     orders.push({
       orderUid: uid.toLowerCase(),
-      partIndex: i,
       validTo,
       sellAmount: partSellAmount,
       buyAmount: minPartLimit,
       feeAmount: "0",
+      possibleValidAfterTimestamp: Number(t0 + partIndex * tSeconds),
     });
   }
 
@@ -324,10 +328,10 @@ function precomputeStopLossUid(
 
   return [{
     orderUid: uid.toLowerCase(),
-    partIndex: null,
     validTo: Number(validTo),
     sellAmount,
     buyAmount,
     feeAmount: "0",
+    possibleValidAfterTimestamp: null,
   }];
 }
