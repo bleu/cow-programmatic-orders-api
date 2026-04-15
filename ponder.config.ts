@@ -39,26 +39,35 @@ export default createConfig({
   },
   blocks: {
     // C1: Contract Poller — RPC multicall for non-deterministic generators
+    // Gnosis interval=4 (~20s) vs mainnet interval=1 (~12s).
+    // The CoW watch-tower processes orders sequentially — with 1,461+ gnosis
+    // generators, a full cycle takes many blocks. Polling every 5s gnosis block
+    // wastes RPC calls since state rarely changes between blocks.
     ContractPoller: {
       chain: {
         mainnet: { startBlock: "latest" },
-        gnosis: { startBlock: "latest" },
+        gnosis: { startBlock: "latest", interval: 4 },
       },
       interval: 1,
     },
-    // C2: Candidate Confirmer — checks API for unconfirmed candidates
+    // C2: Candidate Confirmer — checks CoW API for unconfirmed candidates
+    // Order confirmations depend on watch-tower posting + settlement execution,
+    // both on the order of minutes. Every-block polling is wasteful.
+    // Gnosis interval=12 (~60s), mainnet interval=5 (~60s) — same wall-clock cadence.
     CandidateConfirmer: {
       chain: {
-        mainnet: { startBlock: "latest" },
-        gnosis: { startBlock: "latest" },
+        mainnet: { startBlock: "latest", interval: 5 },
+        gnosis: { startBlock: "latest", interval: 12 },
       },
       interval: 1,
     },
-    // C3: Status Updater — polls API for open discrete order status
+    // C3: Status Updater — polls CoW API for open discrete order status changes
+    // Status transitions (open→fulfilled/expired) happen at settlement time,
+    // not every block. Same wall-clock cadence as C2.
     StatusUpdater: {
       chain: {
-        mainnet: { startBlock: "latest" },
-        gnosis: { startBlock: "latest" },
+        mainnet: { startBlock: "latest", interval: 5 },
+        gnosis: { startBlock: "latest", interval: 12 },
       },
       interval: 1,
     },
