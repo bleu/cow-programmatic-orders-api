@@ -1,139 +1,69 @@
 # Programmatic Orders API
 
-Ponder-based indexer and GraphQL API for [CoW Protocol](https://cow.fi) Composable CoW programmatic orders. Indexes on-chain events from the ComposableCoW contract, decodes order types, and exposes queryable data via GraphQL and SQL endpoints.
+Indexes on-chain events from [CoW Protocol](https://cow.fi)'s ComposableCoW contract, decodes programmatic order types (TWAP, Stop Loss, Perpetual Swap, Good After Time, Trade Above Threshold), and serves the data through a GraphQL API. Built with [Ponder](https://ponder.sh) by [@bleu](https://github.com/bleu) for CoW Protocol.
 
-Built by [@bleu](https://github.com/bleu) for the [CoW Protocol](https://cow.fi) ecosystem.
+## Tech stack
 
-## Tech Stack
+- [Ponder](https://ponder.sh) 0.16.x -- blockchain indexing framework
+- TypeScript
+- [viem](https://viem.sh) -- Ethereum interactions and ABI encoding
+- [Hono](https://hono.dev) -- API routing
+- PostgreSQL (SQLite works for local dev)
 
-- **[Ponder](https://ponder.sh)** 0.16.x — blockchain indexing framework
-- **TypeScript** — type-safe handlers and API
-- **[viem](https://viem.sh)** — Ethereum interaction and ABI encoding
-- **[Hono](https://hono.dev)** — lightweight web framework for API routes
-- **PostgreSQL** — production database (SQLite for local dev)
-
-## Architecture
-
-```
-ComposableCoW contract (Ethereum mainnet)
-  ↓ events
-ponder.config.ts ← src/data.ts (contract addresses + start blocks)
-  ↓
-src/application/handlers/ (event handlers)
-  ↓
-schema/tables.ts (table definitions)
-  ↓
-src/api/index.ts (Hono: /graphql + /sql/*)
-```
-
-| Path                        | Purpose                                   |
-| --------------------------- | ----------------------------------------- |
-| `abis/`                     | Contract ABIs                             |
-| `src/data.ts`               | Chain configs and contract addresses      |
-| `schema/tables.ts`          | Table definitions                         |
-| `schema/relations.ts`       | Drizzle relations                         |
-| `src/application/handlers/` | Event handlers (one file per contract)    |
-| `src/api/index.ts`          | API layer — GraphQL and Ponder SQL client |
-| `ponder.config.ts`          | Ponder configuration (chains, contracts)  |
-
-## Getting Started
-
-### Prerequisites
-
-- Node.js >= 18.14
-- [pnpm](https://pnpm.io/)
-- Docker (optional, for PostgreSQL)
-
-### Installation
+## Quick start
 
 ```bash
-git clone https://github.com/bleu-fi/cow-programmatic-orders-api.git
+git clone https://github.com/bleu/cow-programmatic-orders-api.git
 cd cow-programmatic-orders-api
 pnpm install
 ```
 
-### Environment Setup
-
-Copy the example env file and configure your RPC URL:
+Copy the env file and set your RPC URL:
 
 ```bash
 cp .env.example .env.local
 ```
 
-Edit `.env.local` and set at minimum:
+Open `.env.local` and set `MAINNET_RPC_URL` to a working Ethereum RPC endpoint.
 
-```env
-MAINNET_RPC_URL=https://your-rpc-url
-```
-
-### Database
-
-**SQLite (default for local dev):** No setup needed — Ponder uses SQLite by default.
-
-**PostgreSQL:** Start the included Docker container:
+Start PostgreSQL (optional -- Ponder defaults to SQLite for local dev):
 
 ```bash
 docker compose up -d
 ```
 
-This starts PostgreSQL on port 5432 with the connection string already configured in `.env.example`:
-
-```
-postgresql://postgres:postgres@localhost:5432/programmatic-orders
-```
-
-### Run the Indexer
+Run the indexer:
 
 ```bash
 pnpm dev
 ```
 
-This starts the Ponder dev server, which will:
+The GraphQL API is at `http://localhost:42069` once the dev server starts.
 
-1. Sync historical blocks from the configured start block
-2. Index `ConditionalOrderCreated` events from the ComposableCoW contract
-3. Serve the GraphQL API at `http://localhost:42069`
-4. Serve the SQL endpoint at `http://localhost:42069/sql`
+## Commands
 
-### Production
+| Command | What it does |
+|---------|-------------|
+| `pnpm dev` | Start the indexer in dev mode |
+| `pnpm start` | Start in production mode |
+| `pnpm codegen` | Regenerate types after config or schema changes |
+| `pnpm typecheck` | Run TypeScript type checking |
+| `pnpm lint` | Run ESLint |
+| `pnpm test` | Run tests |
 
-```bash
-pnpm start
-```
+## Documentation
 
-### SQL
-
-The Ponder SQL client is available at `/sql/*` for direct SQL-style queries against the indexed data.
-
-## Development
-
-```bash
-pnpm dev         # Start the indexer in dev mode
-pnpm codegen     # Regenerate types (run after config/schema changes)
-pnpm typecheck   # TypeScript type checking
-pnpm lint        # ESLint
-```
-
-## CI
-
-GitHub Actions runs lint, typecheck, and codegen verification on every push to `main` and on pull requests.
-
-## Project Scope
-
-This project is developed across four milestones:
-
-| #   | Milestone               | Scope                                                                                                |
-| --- | ----------------------- | ---------------------------------------------------------------------------------------------------- |
-| 1   | Composable CoW Tracking | Event indexing, historical backfill, order type decoders (TWAP, Stop Loss, Perpetual Swap, GAT, TAT) |
-| 2   | Flash Loan & CoWShed    | Flash loan order-to-EOA mapping, CoWShed proxy ownership resolution                                  |
-| 3   | Orderbook Integration   | Historical/real-time orderbook data, order matching, execution status, off-chain cache               |
-| 4   | Review & Documentation  | Technical review, API docs, integration guides                                                       |
+- [docs/api-reference.md](docs/api-reference.md) -- GraphQL schema and query examples
+- [docs/integration-guide.md](docs/integration-guide.md) -- Common query patterns for integrators
+- [docs/architecture.md](docs/architecture.md) -- System internals, data flow, schema design
+- [docs/deployment.md](docs/deployment.md) -- Production setup and configuration
+- [docs/supported-order-types.md](docs/supported-order-types.md) -- Decoded order types and their parameters
 
 ## Links
 
-- [Composable CoW Repository](https://github.com/cowprotocol/composable-cow)
-- [CoW Protocol Programmatic Orders Docs](https://docs.cow.fi/cow-protocol/concepts/order-types/programmatic-orders)
-- [Ponder Documentation](https://ponder.sh/docs)
+- [CoW Protocol programmatic orders docs](https://docs.cow.fi/cow-protocol/concepts/order-types/programmatic-orders)
+- [Composable CoW repository](https://github.com/cowprotocol/composable-cow)
+- [Ponder documentation](https://ponder.sh/docs)
 
 ## License
 
