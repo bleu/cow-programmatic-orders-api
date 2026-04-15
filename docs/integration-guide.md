@@ -63,6 +63,11 @@ A TWAP order splits a large trade into `n` parts executed over time. To see how 
       discreteOrders {
         items {
           orderUid
+          status
+          partIndex
+          sellAmount
+          buyAmount
+          validTo
         }
       }
     }
@@ -70,7 +75,13 @@ A TWAP order splits a large trade into `n` parts executed over time. To see how 
 }
 ```
 
-The `decodedParams.n` field tells you how many parts the TWAP has in total. The length of `discreteOrders.items` tells you how many discrete orders have been created so far. A TWAP with `n: "10"` and 7 discrete orders is 70% through its schedule.
+The `decodedParams.n` field tells you how many parts the TWAP has in total. Each discrete order has a `partIndex` and a `status`. Count `fulfilled` parts to see how many have been filled. You can also use the REST endpoint for a quick summary:
+
+```
+GET /api/generator/<eventId>/execution-summary?chainId=1
+```
+
+This returns `{ totalParts, filledParts, openParts, unfilledParts, expiredParts, cancelledParts }`.
 
 You can also compute timing from the decoded params:
 
@@ -90,10 +101,11 @@ const progress = startTime === 0n
 
 ## Check if an order is active, expired, or cancelled
 
-The `status` field tracks on-chain state:
+The `status` field on a generator tracks its lifecycle:
 
 - `Active` -- the order is registered in the ComposableCoW contract and can still produce discrete orders.
-- `Cancelled` -- the order has been removed from the contract (via `remove()` or detected by the removal poller).
+- `Cancelled` -- the order has been removed from the contract (via `remove()` or `SingleOrderNotAuthed` during polling).
+- `Completed` -- all discrete orders are known and the generator has nothing left to produce (e.g. a fully-resolved TWAP, or a `PollNever` response from the contract).
 
 ```graphql
 {
@@ -109,7 +121,9 @@ The `status` field tracks on-chain state:
 }
 ```
 
-Note that `status` reflects the on-chain registration state, not whether the order's time window has passed. A TWAP that finished all its parts will still show as `Active` until explicitly removed. To check if a time-bound order has effectively expired, compare the current time against the decoded params:
+Discrete orders have their own status (`open`, `fulfilled`, `unfilled`, `expired`, `cancelled`) tracked via the orderbook API. A generator can be `Active` while its discrete orders are already `fulfilled`.
+
+To check if a time-bound order has effectively expired, compare the current time against the decoded params:
 
 - TWAP: expired when `now > t0 + (n * t)` (if `t0 > 0`)
 - StopLoss: check `validTo`
@@ -193,6 +207,11 @@ Each conditional order generator can produce multiple discrete orders (the actua
       discreteOrders {
         items {
           orderUid
+          status
+          partIndex
+          sellAmount
+          buyAmount
+          validTo
         }
       }
     }
@@ -200,25 +219,34 @@ Each conditional order generator can produce multiple discrete orders (the actua
 }
 ```
 
-Or query discrete orders directly and navigate back to the generator:
+Or query discrete orders directly and filter by status:
 
 ```graphql
 {
   discreteOrders(
-    where: { chainId: 1 }
+    where: { conditionalOrderGeneratorId: "some-event-id", status: "fulfilled" }
     limit: 100
   ) {
     items {
       orderUid
+      status
+      sellAmount
+      buyAmount
+      validTo
       conditionalOrderGenerator {
         orderType
         owner
         resolvedOwner
-        status
       }
     }
   }
 }
+```
+
+For owner-based lookups with proxy resolution, the REST endpoint is simpler:
+
+```
+GET /api/orders/by-owner/0x1234...abcd?chainId=1&status=open
 ```
 
 ## Pagination for large result sets
@@ -383,13 +411,10 @@ async function fetchAllGenerators(owner: string) {
 
 ## Indexed chains
 
-The indexer currently covers:
-
-| Chain | Chain ID | Status |
-|-------|----------|--------|
-| Ethereum mainnet | 1 | Active |
-| Gnosis Chain | 100 | Active |
-| Arbitrum | 42161 | Planned |
+| Chain | Chain ID |
+|-------|----------|
+| Ethereum mainnet | 1 |
+| Gnosis Chain | 100 |
 
 Filter by `chainId` to scope queries to a specific chain:
 

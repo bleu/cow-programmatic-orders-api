@@ -2,14 +2,17 @@
 
 ## Endpoints
 
-The API runs on Ponder 0.16.x and exposes three endpoints:
+The API runs on Ponder 0.16.x and exposes GraphQL, SQL, and custom REST endpoints.
 
 | Path | Method | Description |
 |------|--------|-------------|
 | `/graphql` | POST | GraphQL endpoint (also serves the playground via GET) |
 | `/` | POST | Same GraphQL endpoint, aliased at root |
 | `/sql/*` | GET | Ponder SQL client (read-only SQL over HTTP) |
+| `/api/orders/by-owner/:owner` | GET | Discrete orders for a resolved owner, with proxy resolution |
+| `/api/generator/:eventId/execution-summary` | GET | Part-count breakdown for a generator's discrete orders |
 | `/healthz` | GET | Returns `{ "status": "ok" }` |
+| `/ready` | GET | Ponder readiness check (used by Docker health check) |
 
 The default local URL is `http://localhost:42069`.
 
@@ -32,27 +35,61 @@ A programmatic order registered on-chain via `ComposableCoW.create()` or `create
 | `staticInput` | `String` | ABI-encoded handler parameters. The raw input that gets decoded into `decodedParams`. |
 | `hash` | `String` | `keccak256(abi.encode(handler, salt, staticInput))`. Uniquely identifies the order params on-chain. |
 | `orderType` | `String` | One of: `TWAP`, `StopLoss`, `PerpetualSwap`, `GoodAfterTime`, `TradeAboveThreshold`, `Unknown`. Derived from the handler address. |
-| `status` | `String` | `Active` or `Cancelled`. Orders start as Active and move to Cancelled when removed from the ComposableCoW contract. |
+| `status` | `String` | `Active`, `Cancelled`, or `Completed`. Orders start as Active. They move to Cancelled when removed from the contract, or to Completed when all discrete orders are known and the generator has nothing left to produce (e.g. a fully-filled TWAP). |
 | `decodedParams` | `JSON` | Decoded `staticInput` as a JSON object with human-readable fields. Null if the order type is `Unknown` or decoding failed. The shape depends on `orderType` (see [Decoded Params by Order Type](#decoded-params-by-order-type)). |
 | `decodeError` | `String` | `"invalid_static_input"` if decoding failed, otherwise null. |
-| `txHash` | `String` | Transaction hash where this order was created. |
+| `txHash` | `String (hex)` | Transaction hash where this order was created. |
+| `allCandidatesKnown` | `Boolean` | Whether all possible discrete orders for this generator have been discovered. True for deterministic types (TWAP, StopLoss) after UID precomputation. |
+| `nextCheckBlock` | `BigInt` | Next block at which the C1 poller should check this generator. Internal scheduling field. |
+| `lastCheckBlock` | `BigInt` | Last block where C1 polled this generator. |
+| `lastPollResult` | `String` | Result of the last C1 poll (e.g. `success`, `cancelled:SingleOrderNotAuthed`, `error:...`). Useful for debugging. |
+| `nextCheckTimestamp` | `BigInt` | For orders returning `PollTryAtEpoch`, the unix timestamp to wait for before the next poll. |
+
+All hex fields (`owner`, `resolvedOwner`, `handler`, `salt`, `staticInput`, `hash`, `txHash`) are lowercase `0x`-prefixed strings.
 
 Relations:
 - `transaction` -- the transaction that created this order
 - `discreteOrders` -- individual CoW Protocol orders produced by this generator
+- `candidateDiscreteOrders` -- unconfirmed orders discovered by the C1 poller, pending confirmation by C2
 
 ### discreteOrder
 
-An individual CoW Protocol order produced by a conditional order generator. These are the actual orders submitted to the CoW Protocol orderbook.
+An individual CoW Protocol order produced by a conditional order generator. These are the actual orders placed in the CoW Protocol orderbook.
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `orderUid` | `String` | The CoW Protocol order UID. Part of the composite primary key (with `chainId`). |
 | `chainId` | `Int` | Chain ID. |
 | `conditionalOrderGeneratorId` | `String` | References the parent generator's `eventId`. |
+| `status` | `String` | `open`, `fulfilled`, `unfilled`, `expired`, or `cancelled`. Tracked via the orderbook API. |
+| `partIndex` | `BigInt` | For TWAP orders, the index of this part in the sequence. Null for other order types. |
+| `sellAmount` | `String` | Sell amount as a decimal string (uint256). |
+| `buyAmount` | `String` | Buy amount as a decimal string (uint256). |
+| `feeAmount` | `String` | Fee amount as a decimal string (uint256). |
+| `validTo` | `Int` | Unix timestamp (uint32) when this order expires. Null if not yet known. |
+| `creationDate` | `BigInt` | Block timestamp when this order was discovered. |
 
 Relations:
 - `conditionalOrderGenerator` -- the generator that produced this order
+
+### candidateDiscreteOrder
+
+An unconfirmed discrete order discovered by the C1 block handler (via `getTradeableOrderWithSignature`). These are orders the contract says should exist but that haven't been confirmed against the orderbook API yet. C2 promotes confirmed candidates to `discreteOrder`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `orderUid` | `String` | The CoW Protocol order UID. Part of the composite primary key (with `chainId`). |
+| `chainId` | `Int` | Chain ID. |
+| `conditionalOrderGeneratorId` | `String` | References the parent generator's `eventId`. |
+| `partIndex` | `BigInt` | Part index for TWAP orders, null otherwise. |
+| `sellAmount` | `String` | Sell amount as a decimal string. |
+| `buyAmount` | `String` | Buy amount as a decimal string. |
+| `feeAmount` | `String` | Fee amount as a decimal string. |
+| `validTo` | `Int` | Order expiry timestamp. |
+| `creationDate` | `BigInt` | Block timestamp of discovery. |
+
+Relations:
+- `conditionalOrderGenerator` -- the generator that produced this candidate
 
 ### transaction
 
@@ -220,9 +257,7 @@ Use `orderBy` and `orderDirection` on plural queries:
 
 ## Pagination
 
-Ponder supports both cursor-based and limit/offset pagination.
-
-### Cursor-based (recommended for large datasets)
+Ponder uses cursor-based pagination. Each plural query returns `items` and `pageInfo`.
 
 ```graphql
 {
@@ -246,18 +281,6 @@ To get the next page, pass the `endCursor` value as `after`:
       hasNextPage
       endCursor
     }
-  }
-}
-```
-
-### Limit/offset
-
-Works for smaller result sets where you need a specific page:
-
-```graphql
-{
-  conditionalOrderGenerators(limit: 10, offset: 30) {
-    items { eventId orderType }
   }
 }
 ```
@@ -323,6 +346,11 @@ The maximum `limit` is 1000.
   ) {
     items {
       orderUid
+      status
+      partIndex
+      sellAmount
+      buyAmount
+      validTo
       conditionalOrderGenerator {
         orderType
         status
@@ -347,6 +375,87 @@ The maximum `limit` is 1000.
       resolutionDepth
     }
   }
+}
+```
+
+## Custom REST Endpoints
+
+These endpoints handle queries that require owner resolution or computed aggregates that aren't expressible in Ponder's auto-generated GraphQL.
+
+### GET /api/orders/by-owner/:owner
+
+Returns discrete orders for a resolved owner address. Resolves the EOA through `ownerMapping` so that users who created orders via CoWShed proxies or flash loan adapters see all their orders under their wallet address.
+
+Query parameters:
+
+| Param | Required | Description |
+|-------|----------|-------------|
+| `chainId` | No | Filter by chain ID. Returns all chains if omitted. |
+| `status` | No | Filter by discrete order status: `open`, `fulfilled`, `unfilled`, `expired`, `cancelled`. |
+
+Example:
+
+```
+GET /api/orders/by-owner/0xd8da6bf26964af9d7eed9e03e53415d37aa96045?chainId=1&status=open
+```
+
+Response:
+
+```json
+{
+  "orders": [
+    {
+      "orderUid": "0x...",
+      "chainId": 1,
+      "status": "open",
+      "partIndex": "3",
+      "sellAmount": "1000000000000000000",
+      "buyAmount": "950000000000000000",
+      "feeAmount": "0",
+      "validTo": 1700100000,
+      "creationDate": "1700000000",
+      "generatorId": "evt-abc123",
+      "generator": {
+        "eventId": "evt-abc123",
+        "chainId": 1,
+        "orderType": "TWAP",
+        "owner": "0x...",
+        "resolvedOwner": "0xd8da6bf26964af9d7eed9e03e53415d37aa96045",
+        "status": "Active"
+      }
+    }
+  ]
+}
+```
+
+### GET /api/generator/:eventId/execution-summary
+
+Returns a count breakdown of discrete order parts for a generator. Useful for showing progress like "3 of 5 TWAP parts filled" in a UI.
+
+Query parameters:
+
+| Param | Required | Description |
+|-------|----------|-------------|
+| `chainId` | Yes | Chain ID (required). |
+
+Example:
+
+```
+GET /api/generator/evt-abc123/execution-summary?chainId=1
+```
+
+Response:
+
+```json
+{
+  "generatorId": "evt-abc123",
+  "chainId": 1,
+  "totalParts": 10,
+  "filledParts": 7,
+  "openParts": 1,
+  "unfilledParts": 0,
+  "expiredParts": 2,
+  "cancelledParts": 0
 }
 ```
 
