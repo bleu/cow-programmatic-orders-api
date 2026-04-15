@@ -8,9 +8,11 @@ Indexes on-chain events from [CoW Protocol](https://cow.fi)'s ComposableCoW cont
 - TypeScript
 - [viem](https://viem.sh) -- Ethereum interactions and ABI encoding
 - [Hono](https://hono.dev) -- API routing
-- PostgreSQL (SQLite works for local dev)
+- PostgreSQL
 
 ## Quick start
+
+Requires Node.js >= 18.14, [pnpm](https://pnpm.io/), and Docker.
 
 ```bash
 git clone https://github.com/bleu/cow-programmatic-orders-api.git
@@ -18,23 +20,18 @@ cd cow-programmatic-orders-api
 pnpm install
 ```
 
-Copy the env file and set your RPC URL:
+Copy the env file and configure your RPC endpoints:
 
 ```bash
 cp .env.example .env.local
 ```
 
-Open `.env.local` and set `MAINNET_RPC_URL` to a working Ethereum RPC endpoint.
+Open `.env.local` and set `MAINNET_RPC_URL` and `GNOSIS_RPC_URL`.
 
-Start PostgreSQL (optional -- Ponder defaults to SQLite for local dev):
+Start PostgreSQL and run the indexer:
 
 ```bash
 docker compose up -d
-```
-
-Run the indexer:
-
-```bash
 pnpm dev
 ```
 
