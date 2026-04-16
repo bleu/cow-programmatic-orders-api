@@ -92,12 +92,13 @@ export const discreteOrder = onchainTable(
     chainId: t.integer().notNull(),
     conditionalOrderGeneratorId: t.text().notNull(),  // references eventId
     status: discreteOrderStatusEnum("status").notNull(),
-    partIndex: t.bigint(),                            // TWAP only: (validTo + 1 - startTime) / t - 1
     sellAmount: t.text().notNull(),                   // uint256 as decimal string
     buyAmount: t.text().notNull(),
     feeAmount: t.text().notNull(),
     validTo: t.integer(),                             // uint32 Unix timestamp — from API or getTradeableOrderWithSignature
     creationDate: t.bigint().notNull(),               // block timestamp (seconds)
+    executedSellAmount: t.text(),                     // actual executed amount (from API, post-settlement)
+    executedBuyAmount: t.text(),                      // actual executed amount (from API, post-settlement)
   }),
   (table) => ({
     pk: primaryKey({ columns: [table.chainId, table.orderUid] }),
@@ -113,12 +114,12 @@ export const candidateDiscreteOrder = onchainTable(
     orderUid: t.text().notNull(),
     chainId: t.integer().notNull(),
     conditionalOrderGeneratorId: t.text().notNull(),
-    partIndex: t.bigint(),
     sellAmount: t.text().notNull(),
     buyAmount: t.text().notNull(),
     feeAmount: t.text().notNull(),
     validTo: t.integer(),
     creationDate: t.bigint().notNull(),
+    possibleValidAfterTimestamp: t.bigint(),   // TWAP: t0 + partIndex * t — skip API calls before this
   }),
   (table) => ({
     pk: primaryKey({ columns: [table.chainId, table.orderUid] }),

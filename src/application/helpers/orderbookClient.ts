@@ -37,6 +37,8 @@ interface OrderbookOrder {
   creationDate: string; // ISO 8601
   signingScheme: string;
   signature: string;
+  executedSellAmount: string;
+  executedBuyAmount: string;
 }
 
 /** Processed composable order stored in cache and returned to callers. */
@@ -46,12 +48,20 @@ export interface ComposableOrder {
   generatorId: string;
   generatorHash: string;
   orderType: string;
-  partIndex: bigint | null;
   sellAmount: string;
   buyAmount: string;
   feeAmount: string;
   validTo: number;
   creationDate: number; // unix timestamp
+  executedSellAmount: string;
+  executedBuyAmount: string;
+}
+
+/** Status + executed amounts returned by fetchOrderStatusByUids. */
+export interface OrderStatusInfo {
+  status: string;
+  executedSellAmount: string | null;  // null when served from cache
+  executedBuyAmount: string | null;
 }
 
 const TERMINAL_STATUSES = new Set(["fulfilled", "expired", "cancelled"]);
@@ -97,9 +107,9 @@ export async function fetchComposableOrders(
 
   for (const order of composable) {
     const cached = cachedStatuses.get(order.uid);
-    if (cached && TERMINAL_STATUSES.has(cached)) {
+    if (cached && TERMINAL_STATUSES.has(cached.status)) {
       // Use cached terminal status — skip API refresh
-      results.push({ ...order, status: cached as ComposableOrder["status"] });
+      results.push({ ...order, status: cached.status as ComposableOrder["status"] });
     } else {
       toRefresh.push(order.uid);
       results.push(order);
@@ -116,6 +126,8 @@ export async function fetchComposableOrders(
       if (fresh && toRefresh.includes(result.uid)) {
         result.status = fresh.status as ComposableOrder["status"];
         result.validTo = fresh.validTo;
+        result.executedSellAmount = fresh.executedSellAmount;
+        result.executedBuyAmount = fresh.executedBuyAmount;
       }
     }
 
@@ -171,16 +183,22 @@ export async function upsertDiscreteOrders(
         chainId,
         conditionalOrderGeneratorId: order.generatorId,
         status: order.status,
-        partIndex: order.partIndex,
         sellAmount: order.sellAmount,
         buyAmount: order.buyAmount,
         feeAmount: order.feeAmount,
         validTo: order.validTo,
         creationDate: BigInt(order.creationDate),
+        executedSellAmount: order.executedSellAmount,
+        executedBuyAmount: order.executedBuyAmount,
       })
       .onConflictDoUpdate({
         target: [discreteOrder.chainId, discreteOrder.orderUid],
-        set: { status: order.status, validTo: order.validTo },
+        set: {
+          status: order.status,
+          validTo: order.validTo,
+          executedSellAmount: order.executedSellAmount,
+          executedBuyAmount: order.executedBuyAmount,
+        },
       });
     count++;
   }
@@ -189,16 +207,17 @@ export async function upsertDiscreteOrders(
 
 /**
  * Fetch order statuses by UIDs from the API, using the per-UID cache.
- * Returns a Map of uid -> status. Used by the backfill handler to check
- * pre-computed UIDs without a full owner fetch.
+ * Returns a Map of uid -> OrderStatusInfo. Executed amounts are null for
+ * cached results (the amounts are already stored in discreteOrder from
+ * the original fresh fetch).
  */
 export async function fetchOrderStatusByUids(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   context: any,
   chainId: number,
   uids: string[],
-): Promise<Map<string, string>> {
-  const result = new Map<string, string>();
+): Promise<Map<string, OrderStatusInfo>> {
+  const result = new Map<string, OrderStatusInfo>();
   if (uids.length === 0) return result;
 
   const apiBaseUrl = ORDERBOOK_API_URLS[chainId];
@@ -209,9 +228,13 @@ export async function fetchOrderStatusByUids(
   const toFetch: string[] = [];
 
   for (const uid of uids) {
-    const cachedStatus = cached.get(uid);
-    if (cachedStatus && TERMINAL_STATUSES.has(cachedStatus)) {
-      result.set(uid, cachedStatus);
+    const cachedData = cached.get(uid);
+    if (cachedData && TERMINAL_STATUSES.has(cachedData.status)) {
+      result.set(uid, {
+        status: cachedData.status,
+        executedSellAmount: cachedData.executedSellAmount,
+        executedBuyAmount: cachedData.executedBuyAmount,
+      });
     } else {
       toFetch.push(uid);
     }
@@ -223,7 +246,11 @@ export async function fetchOrderStatusByUids(
     const newTerminal: ComposableOrder[] = [];
 
     for (const order of fetched) {
-      result.set(order.uid, order.status);
+      result.set(order.uid, {
+        status: order.status,
+        executedSellAmount: order.executedSellAmount,
+        executedBuyAmount: order.executedBuyAmount,
+      });
       if (TERMINAL_STATUSES.has(order.status)) {
         newTerminal.push({
           uid: order.uid,
@@ -231,12 +258,13 @@ export async function fetchOrderStatusByUids(
           generatorId: "",
           generatorHash: "",
           orderType: "",
-          partIndex: null,
           sellAmount: order.sellAmount,
           buyAmount: order.buyAmount,
           feeAmount: order.feeAmount,
           validTo: order.validTo,
           creationDate: 0,
+          executedSellAmount: order.executedSellAmount,
+          executedBuyAmount: order.executedBuyAmount,
         });
       }
     }
@@ -355,7 +383,6 @@ async function filterAndProcess(
       .select({
         eventId: conditionalOrderGenerator.eventId,
         orderType: conditionalOrderGenerator.orderType,
-        decodedParams: conditionalOrderGenerator.decodedParams,
       })
       .from(conditionalOrderGenerator)
       .where(
@@ -367,22 +394,11 @@ async function filterAndProcess(
       .limit(1)) as {
       eventId: string;
       orderType: string;
-      decodedParams: Record<string, string> | null;
     }[];
 
     if (generators.length === 0) continue;
 
     const generator = generators[0]!;
-
-    // Derive TWAP partIndex when t0 is known
-    let partIndex: bigint | null = null;
-    if (generator.orderType === "TWAP" && generator.decodedParams) {
-      const t0 = BigInt(generator.decodedParams["t0"] ?? "0");
-      const t = BigInt(generator.decodedParams["t"] ?? "0");
-      if (t0 > 0n && t > 0n) {
-        partIndex = (BigInt(order.validTo) + 1n - t0) / t - 1n;
-      }
-    }
 
     results.push({
       uid: order.uid,
@@ -390,12 +406,13 @@ async function filterAndProcess(
       generatorId: generator.eventId,
       generatorHash: paramHash,
       orderType: generator.orderType,
-      partIndex,
       sellAmount: order.sellAmount,
       buyAmount: order.buyAmount,
       feeAmount: order.feeAmount,
       validTo: order.validTo,
       creationDate: Math.floor(new Date(order.creationDate).getTime() / 1000),
+      executedSellAmount: order.executedSellAmount,
+      executedBuyAmount: order.executedBuyAmount,
     });
   }
 
@@ -405,14 +422,21 @@ async function filterAndProcess(
 // ─── Per-UID cache helpers ──────────────────────────────────────────────────
 // cow_cache.order_uid_cache is created by setup.ts. Fully qualified names required.
 
-/** Get cached statuses for a list of UIDs. Returns a Map of uid -> status. */
+/** Cached order data returned by getCachedUidStatuses. */
+interface CachedOrderData {
+  status: string;
+  executedSellAmount: string | null;
+  executedBuyAmount: string | null;
+}
+
+/** Get cached data for a list of UIDs. Returns a Map of uid -> CachedOrderData. */
 async function getCachedUidStatuses(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   context: any,
   chainId: number,
   uids: string[],
-): Promise<Map<string, string>> {
-  const result = new Map<string, string>();
+): Promise<Map<string, CachedOrderData>> {
+  const result = new Map<string, CachedOrderData>();
   if (uids.length === 0) return result;
 
   try {
@@ -423,12 +447,17 @@ async function getCachedUidStatuses(
       const placeholders = batch.map((uid) => `'${uid.replace(/'/g, "''")}'`).join(",");
       const rows = (await context.db.sql.execute(
         sql.raw(
-          `SELECT order_uid, status FROM cow_cache.order_uid_cache
+          `SELECT order_uid, status, executed_sell_amount, executed_buy_amount
+           FROM cow_cache.order_uid_cache
            WHERE chain_id = ${chainId} AND order_uid IN (${placeholders})`,
         ),
-      )) as { order_uid: string; status: string }[];
+      )) as { order_uid: string; status: string; executed_sell_amount: string | null; executed_buy_amount: string | null }[];
       for (const row of rows) {
-        result.set(row.order_uid, row.status);
+        result.set(row.order_uid, {
+          status: row.status,
+          executedSellAmount: row.executed_sell_amount,
+          executedBuyAmount: row.executed_buy_amount,
+        });
       }
     }
   } catch {
@@ -438,7 +467,7 @@ async function getCachedUidStatuses(
   return result;
 }
 
-/** Cache terminal statuses for composable orders. */
+/** Cache terminal statuses and executed amounts for composable orders. */
 async function cacheUidStatuses(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   context: any,
@@ -449,11 +478,15 @@ async function cacheUidStatuses(
   for (const order of orders) {
     try {
       await context.db.sql.execute(
-        sql`INSERT INTO cow_cache.order_uid_cache (chain_id, order_uid, status, fetched_at)
-            VALUES (${chainId}, ${order.uid}, ${order.status}, ${now})
+        sql`INSERT INTO cow_cache.order_uid_cache
+              (chain_id, order_uid, status, fetched_at, executed_sell_amount, executed_buy_amount)
+            VALUES (${chainId}, ${order.uid}, ${order.status}, ${now},
+                    ${order.executedSellAmount}, ${order.executedBuyAmount})
             ON CONFLICT (chain_id, order_uid) DO UPDATE SET
-              status     = EXCLUDED.status,
-              fetched_at = EXCLUDED.fetched_at`,
+              status               = EXCLUDED.status,
+              fetched_at           = EXCLUDED.fetched_at,
+              executed_sell_amount  = EXCLUDED.executed_sell_amount,
+              executed_buy_amount   = EXCLUDED.executed_buy_amount`,
       );
     } catch {
       // Best-effort cache write
