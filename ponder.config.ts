@@ -50,24 +50,19 @@ export default createConfig({
       },
       interval: 1,
     },
-    // C2: Candidate Confirmer — checks CoW API for unconfirmed candidates
-    // Order confirmations depend on watch-tower posting + settlement execution,
-    // both on the order of minutes. Every-block polling is wasteful.
-    // Gnosis interval=12 (~60s), mainnet interval=5 (~60s) — same wall-clock cadence.
+    // C2: Candidate Confirmer — checks API for unconfirmed candidates
     CandidateConfirmer: {
       chain: {
-        mainnet: { startBlock: "latest", interval: 5 },
-        gnosis: { startBlock: "latest", interval: 12 },
+        mainnet: { startBlock: "latest" },
+        gnosis: { startBlock: "latest" },
       },
       interval: 1,
     },
-    // C3: Status Updater — polls CoW API for open discrete order status changes
-    // Status transitions (open→fulfilled/expired) happen at settlement time,
-    // not every block. Same wall-clock cadence as C2.
+    // C3: Status Updater — polls API for open discrete order status
     StatusUpdater: {
       chain: {
-        mainnet: { startBlock: "latest", interval: 5 },
-        gnosis: { startBlock: "latest", interval: 12 },
+        mainnet: { startBlock: "latest" },
+        gnosis: { startBlock: "latest" },
       },
       interval: 1,
     },
