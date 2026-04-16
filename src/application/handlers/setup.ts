@@ -27,13 +27,15 @@ ponder.on("ComposableCow:setup", async ({ context }) => {
     )
   `);
 
-  // Per-UID cache for terminal order statuses
+  // Per-UID cache for terminal order statuses + executed amounts
   await context.db.sql.execute(sql`
     CREATE TABLE IF NOT EXISTS cow_cache.order_uid_cache (
-      chain_id   INTEGER NOT NULL,
-      order_uid  TEXT NOT NULL,
-      status     TEXT NOT NULL,
-      fetched_at BIGINT NOT NULL,
+      chain_id              INTEGER NOT NULL,
+      order_uid             TEXT NOT NULL,
+      status                TEXT NOT NULL,
+      fetched_at            BIGINT NOT NULL,
+      executed_sell_amount   TEXT,
+      executed_buy_amount    TEXT,
       PRIMARY KEY (chain_id, order_uid)
     )
   `);

@@ -101,6 +101,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
 
   let neverCount = 0;
   let successCount = 0;
+  const successPromises: Promise<unknown>[] = [];
 
   for (let i = 0; i < dueOrders.length; i++) {
     const result = results[i];
@@ -112,37 +113,42 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
       const [orderData] = result.result as [GPv2OrderData, Hex];
       const orderUid = computeOrderUid(chainId, orderData, order.owner);
 
-      let partIndex: bigint | null = null;
+      let possibleValidAfterTimestamp: bigint | null = null;
       if (order.orderType === "TWAP" && order.decodedParams) {
         const t0 = BigInt(order.decodedParams["t0"] ?? "0");
         const t = BigInt(order.decodedParams["t"] ?? "0");
         if (t0 > 0n && t > 0n) {
-          partIndex = (BigInt(orderData.validTo) + 1n - t0) / t - 1n;
+          const partIndex = (BigInt(orderData.validTo) + 1n - t0) / t - 1n;
+          possibleValidAfterTimestamp = t0 + partIndex * t;
         }
       }
 
-      await context.db.sql
-        .insert(candidateDiscreteOrder)
-        .values({
-          orderUid: orderUid.toLowerCase(),
-          chainId,
-          conditionalOrderGeneratorId: order.generatorId,
-          partIndex,
-          sellAmount: orderData.sellAmount.toString(),
-          buyAmount: orderData.buyAmount.toString(),
-          feeAmount: orderData.feeAmount.toString(),
-          validTo: orderData.validTo,
-          creationDate: BigInt(Number(event.block.timestamp)),
-        })
-        .onConflictDoNothing();
+      successPromises.push(
+        context.db.sql
+          .insert(candidateDiscreteOrder)
+          .values({
+            orderUid: orderUid.toLowerCase(),
+            chainId,
+            conditionalOrderGeneratorId: order.generatorId,
+            possibleValidAfterTimestamp,
+            sellAmount: orderData.sellAmount.toString(),
+            buyAmount: orderData.buyAmount.toString(),
+            feeAmount: orderData.feeAmount.toString(),
+            validTo: orderData.validTo,
+            creationDate: BigInt(Number(event.block.timestamp)),
+          })
+          .onConflictDoNothing(),
+      );
 
       const isSingleShot = (SINGLE_SHOT_NON_DETERMINISTIC as readonly string[]).includes(order.orderType);
-      await updateGeneratorPollState(context, chainId, order.generatorId, currentBlock, {
-        nextCheckBlock: currentBlock + RECHECK_INTERVAL,
-        lastPollResult: "success",
-        nextCheckTimestamp: null,
-        allCandidatesKnown: isSingleShot ? true : undefined,
-      });
+      successPromises.push(
+        updateGeneratorPollState(context, chainId, order.generatorId, currentBlock, {
+          nextCheckBlock: currentBlock + RECHECK_INTERVAL,
+          lastPollResult: "success",
+          nextCheckTimestamp: null,
+          allCandidatesKnown: isSingleShot ? true : undefined,
+        }),
+      );
       successCount++;
     } else {
       const pollResult = parsePollError(result.error);
@@ -216,6 +222,8 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
     }
   }
 
+  await Promise.all(successPromises);
+
   console.log(
     `[COW:C1] DONE block=${currentBlock} chain=${chainId} due=${dueOrders.length} success=${successCount} never=${neverCount}`,
   );
@@ -228,11 +236,12 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
 ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
   const chainId = context.chain.id as SupportedChainId;
 
+  // Promoted candidates are always deleted below — no join needed to filter them.
+  // Skip TWAP parts whose validity window hasn't started (possibleValidAfterTimestamp).
   const unconfirmed = await context.db.sql
     .select({
       orderUid: candidateDiscreteOrder.orderUid,
       generatorId: candidateDiscreteOrder.conditionalOrderGeneratorId,
-      partIndex: candidateDiscreteOrder.partIndex,
       sellAmount: candidateDiscreteOrder.sellAmount,
       buyAmount: candidateDiscreteOrder.buyAmount,
       feeAmount: candidateDiscreteOrder.feeAmount,
@@ -240,22 +249,17 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
       creationDate: candidateDiscreteOrder.creationDate,
     })
     .from(candidateDiscreteOrder)
-    .leftJoin(
-      discreteOrder,
-      and(
-        eq(candidateDiscreteOrder.chainId, discreteOrder.chainId),
-        eq(candidateDiscreteOrder.orderUid, discreteOrder.orderUid),
-      ),
-    )
     .where(
       and(
         eq(candidateDiscreteOrder.chainId, chainId),
-        sql`${discreteOrder.orderUid} IS NULL`,
+        or(
+          sql`${candidateDiscreteOrder.possibleValidAfterTimestamp} IS NULL`,
+          lte(candidateDiscreteOrder.possibleValidAfterTimestamp, event.block.timestamp),
+        ),
       ),
     ) as {
     orderUid: string;
     generatorId: string;
-    partIndex: bigint | null;
     sellAmount: string;
     buyAmount: string;
     feeAmount: string;
@@ -272,8 +276,9 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
   const confirmedUids: string[] = [];
 
   for (const candidate of unconfirmed) {
-    const apiStatus = statuses.get(candidate.orderUid);
-    if (!apiStatus) continue; // not on API yet — retry next block
+    const statusInfo = statuses.get(candidate.orderUid);
+    if (!statusInfo) continue; // not on API yet — retry next block
+    const apiStatus = statusInfo.status;
 
     await context.db.sql
       .insert(discreteOrder)
@@ -282,16 +287,21 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
         chainId,
         conditionalOrderGeneratorId: candidate.generatorId,
         status: apiStatus as "open" | "fulfilled" | "unfilled" | "expired" | "cancelled",
-        partIndex: candidate.partIndex,
         sellAmount: candidate.sellAmount,
         buyAmount: candidate.buyAmount,
         feeAmount: candidate.feeAmount,
         validTo: candidate.validTo,
         creationDate: candidate.creationDate,
+        executedSellAmount: statusInfo.executedSellAmount,
+        executedBuyAmount: statusInfo.executedBuyAmount,
       })
       .onConflictDoUpdate({
         target: [discreteOrder.chainId, discreteOrder.orderUid],
-        set: { status: apiStatus as "open" | "fulfilled" | "unfilled" | "expired" | "cancelled" },
+        set: {
+          status: apiStatus as "open" | "fulfilled" | "unfilled" | "expired" | "cancelled",
+          executedSellAmount: statusInfo.executedSellAmount,
+          executedBuyAmount: statusInfo.executedBuyAmount,
+        },
       });
     confirmedUids.push(candidate.orderUid);
     confirmed++;
@@ -350,11 +360,19 @@ ponder.on("StatusUpdater:block", async ({ event, context }) => {
     const statuses = await fetchOrderStatusByUids(context, chainId, uids);
 
     let updated = 0;
-    for (const [uid, status] of statuses) {
-      if (VALID_DISCRETE_STATUSES.has(status)) {
+    for (const [uid, info] of statuses) {
+      if (VALID_DISCRETE_STATUSES.has(info.status)) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const setFields: Record<string, any> = {
+          status: info.status as "fulfilled" | "unfilled" | "expired" | "cancelled",
+        };
+        if (info.executedSellAmount != null) {
+          setFields.executedSellAmount = info.executedSellAmount;
+          setFields.executedBuyAmount = info.executedBuyAmount;
+        }
         await context.db.sql
           .update(discreteOrder)
-          .set({ status: status as "fulfilled" | "unfilled" | "expired" | "cancelled" })
+          .set(setFields)
           .where(
             and(
               eq(discreteOrder.chainId, chainId),
