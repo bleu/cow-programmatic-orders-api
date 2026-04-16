@@ -107,9 +107,9 @@ export async function fetchComposableOrders(
 
   for (const order of composable) {
     const cached = cachedStatuses.get(order.uid);
-    if (cached && TERMINAL_STATUSES.has(cached)) {
+    if (cached && TERMINAL_STATUSES.has(cached.status)) {
       // Use cached terminal status — skip API refresh
-      results.push({ ...order, status: cached as ComposableOrder["status"] });
+      results.push({ ...order, status: cached.status as ComposableOrder["status"] });
     } else {
       toRefresh.push(order.uid);
       results.push(order);
@@ -228,9 +228,13 @@ export async function fetchOrderStatusByUids(
   const toFetch: string[] = [];
 
   for (const uid of uids) {
-    const cachedStatus = cached.get(uid);
-    if (cachedStatus && TERMINAL_STATUSES.has(cachedStatus)) {
-      result.set(uid, { status: cachedStatus, executedSellAmount: null, executedBuyAmount: null });
+    const cachedData = cached.get(uid);
+    if (cachedData && TERMINAL_STATUSES.has(cachedData.status)) {
+      result.set(uid, {
+        status: cachedData.status,
+        executedSellAmount: cachedData.executedSellAmount,
+        executedBuyAmount: cachedData.executedBuyAmount,
+      });
     } else {
       toFetch.push(uid);
     }
@@ -418,14 +422,21 @@ async function filterAndProcess(
 // ─── Per-UID cache helpers ──────────────────────────────────────────────────
 // cow_cache.order_uid_cache is created by setup.ts. Fully qualified names required.
 
-/** Get cached statuses for a list of UIDs. Returns a Map of uid -> status. */
+/** Cached order data returned by getCachedUidStatuses. */
+interface CachedOrderData {
+  status: string;
+  executedSellAmount: string | null;
+  executedBuyAmount: string | null;
+}
+
+/** Get cached data for a list of UIDs. Returns a Map of uid -> CachedOrderData. */
 async function getCachedUidStatuses(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   context: any,
   chainId: number,
   uids: string[],
-): Promise<Map<string, string>> {
-  const result = new Map<string, string>();
+): Promise<Map<string, CachedOrderData>> {
+  const result = new Map<string, CachedOrderData>();
   if (uids.length === 0) return result;
 
   try {
@@ -436,12 +447,17 @@ async function getCachedUidStatuses(
       const placeholders = batch.map((uid) => `'${uid.replace(/'/g, "''")}'`).join(",");
       const rows = (await context.db.sql.execute(
         sql.raw(
-          `SELECT order_uid, status FROM cow_cache.order_uid_cache
+          `SELECT order_uid, status, executed_sell_amount, executed_buy_amount
+           FROM cow_cache.order_uid_cache
            WHERE chain_id = ${chainId} AND order_uid IN (${placeholders})`,
         ),
-      )) as { order_uid: string; status: string }[];
+      )) as { order_uid: string; status: string; executed_sell_amount: string | null; executed_buy_amount: string | null }[];
       for (const row of rows) {
-        result.set(row.order_uid, row.status);
+        result.set(row.order_uid, {
+          status: row.status,
+          executedSellAmount: row.executed_sell_amount,
+          executedBuyAmount: row.executed_buy_amount,
+        });
       }
     }
   } catch {
@@ -451,7 +467,7 @@ async function getCachedUidStatuses(
   return result;
 }
 
-/** Cache terminal statuses for composable orders. */
+/** Cache terminal statuses and executed amounts for composable orders. */
 async function cacheUidStatuses(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   context: any,
@@ -462,11 +478,15 @@ async function cacheUidStatuses(
   for (const order of orders) {
     try {
       await context.db.sql.execute(
-        sql`INSERT INTO cow_cache.order_uid_cache (chain_id, order_uid, status, fetched_at)
-            VALUES (${chainId}, ${order.uid}, ${order.status}, ${now})
+        sql`INSERT INTO cow_cache.order_uid_cache
+              (chain_id, order_uid, status, fetched_at, executed_sell_amount, executed_buy_amount)
+            VALUES (${chainId}, ${order.uid}, ${order.status}, ${now},
+                    ${order.executedSellAmount}, ${order.executedBuyAmount})
             ON CONFLICT (chain_id, order_uid) DO UPDATE SET
-              status     = EXCLUDED.status,
-              fetched_at = EXCLUDED.fetched_at`,
+              status               = EXCLUDED.status,
+              fetched_at           = EXCLUDED.fetched_at,
+              executed_sell_amount  = EXCLUDED.executed_sell_amount,
+              executed_buy_amount   = EXCLUDED.executed_buy_amount`,
       );
     } catch {
       // Best-effort cache write
