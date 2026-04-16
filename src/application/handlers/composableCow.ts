@@ -166,6 +166,11 @@ ponder.on(
     const { handler, staticInput } = event.args.params;
     const orderType = getOrderTypeFromHandler(handler, chainId);
     const decoded = decodeStaticInput(orderType, staticInput);
+    // Resolve t0=0: the contract uses block.timestamp when staticInput has t0=0.
+    // Store the resolved value so precompute always has the real start time.
+    if (decoded && orderType === "TWAP" && BigInt((decoded as Record<string, unknown>).t0 as bigint ?? 0n) === 0n) {
+      (decoded as Record<string, unknown>).t0 = event.block.timestamp;
+    }
     const decodedParams = decoded ? replaceBigInts(decoded, String) as Record<string, string> : null;
 
     await precomputeAndDiscover(
@@ -186,6 +191,9 @@ ponder.on(
     const { handler, staticInput } = event.args.params;
     const orderType = getOrderTypeFromHandler(handler, chainId);
     const decoded = decodeStaticInput(orderType, staticInput);
+    if (decoded && orderType === "TWAP" && BigInt((decoded as Record<string, unknown>).t0 as bigint ?? 0n) === 0n) {
+      (decoded as Record<string, unknown>).t0 = event.block.timestamp;
+    }
     const decodedParams = decoded ? replaceBigInts(decoded, String) as Record<string, string> : null;
 
     await precomputeAndDiscover(

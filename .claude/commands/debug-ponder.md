@@ -105,6 +105,43 @@ After running all steps, output:
 
 ---
 
+## Precompute Diagnostics
+
+Deterministic types (TWAP, StopLoss) should have all UIDs precomputed at creation — they should NOT appear in C1 polling. If precompute fails, the generator falls into C1 and wastes RPC calls every block.
+
+### Precompute failures — why generators fall into C1
+
+```bash
+grep -n "\[COW:PRECOMPUTE\] SKIP" ponder.log | head -20
+```
+
+Each line is a deterministic generator that FAILED precompute and will fall into C1 polling. The `reason=` field tells you why:
+
+| reason | meaning | fix |
+|--------|---------|-----|
+| `decodedParams_null` | Decode of staticInput returned null | Check decoder for that order type; likely malformed on-chain data |
+| `missing_params` | Required fields missing after decode (see `missing=` for which) | Decoder returned incomplete data |
+| `invalid_math` | nParts <= 0 or tSeconds <= 0 | Invalid TWAP params on-chain |
+| `too_many_parts` | nParts > 100,000 | Extremely large TWAP; raise limit if legitimate |
+
+**If you see SKIP lines**: count them and cross-reference with C1's `due=` count. If they match, precompute failures are the sole cause of C1 polling for deterministic types.
+
+```bash
+grep -c "\[COW:PRECOMPUTE\] SKIP" ponder.log
+```
+
+### Verify deterministic types are NOT in C1
+
+After precompute fixes, C1 should only poll non-deterministic types. Check if C1 success lines show TWAP/StopLoss (they shouldn't):
+
+```bash
+grep "\[COW:C1\] DONE" ponder.log | grep 'chain=100' | tail -5
+```
+
+A healthy `due=` count should be much smaller than total generators — only non-deterministic types should remain.
+
+---
+
 ## Orderbook Cache (M3)
 
 The `orderbook_cache` table persists across Ponder resyncs (it is NOT an `onchainTable`). These steps verify the cache is alive and working.
