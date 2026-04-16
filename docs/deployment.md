@@ -20,7 +20,7 @@ The indexer is RPC-heavy during initial sync. Rate-limited endpoints will work b
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `DATABASE_URL` | Yes | PostgreSQL connection string |
-| `DATABASE_SCHEMA` | Yes | PostgreSQL schema name. `manage.sh` defaults to `programmatic_orders`. For zero-downtime deploys, use a per-revision schema name (see Redeployment below). |
+| `DATABASE_SCHEMA` | Yes | PostgreSQL schema name. `manage.sh` defaults to `programmatic_orders`. |
 
 Example: `DATABASE_URL=postgresql://cow_programmatic:secretpass@localhost:5433/cow_programmatic`
 
@@ -133,40 +133,6 @@ Once running, the indexer exposes:
 - `/sql/*` -- Ponder SQL client (direct Drizzle-based queries)
 - `GET /healthz` -- returns `{"status":"ok"}`
 - `GET /ready` -- readiness check (used by the Docker health check)
-
-
-## Redeployment
-
-Ponder's restart behavior depends on what changed:
-
-**Code-only changes** (handler logic): Ponder resumes from where it left off. Sync progress is stored in the database and it picks up from the last indexed block.
-
-**Schema changes** (tables in `schema/tables.ts`): Ponder detects the mismatch, drops its data, and re-indexes from scratch. No manual migration.
-
-**Config changes** (new chain, new contract, changed start block): Same as schema changes -- triggers a full re-sync.
-
-### Zero-downtime deploys
-
-A re-sync means the new version has no data until it catches up. To avoid downtime, deploy with a unique `DATABASE_SCHEMA` per revision (e.g. `programmatic_orders_<commit-sha>`). The old container keeps serving from the old schema while the new one syncs in parallel. Once the new container is synced, point traffic to it and remove the old one.
-
-`manage.sh` currently hardcodes `DATABASE_SCHEMA=programmatic_orders`. For zero-downtime, override it in your `.env`:
-
-```
-DATABASE_SCHEMA=programmatic_orders_abc1234
-```
-
-The cache tracking sync progress lives in the same schema as the data. Dropping the schema means a full re-sync.
-
-
-## Initial Sync
-
-Sync starts from the contract deployment blocks and works forward to chain tip. With a good RPC endpoint, expect several hours. With rate-limited endpoints, a day or more.
-
-Watch the logs to track progress. Ponder logs the current block number as it processes. The `[SETTLEMENT:STATS]` lines from the GPv2Settlement handler log every ~30 seconds and are a good heartbeat indicator.
-
-Setting `DISABLE_POLL_RESULT_CHECK=true` and `DISABLE_SETTLEMENT_FACTORY_CHECK=true` during initial backfill reduces RPC load. Restart without them once you're near chain tip.
-
-The Docker health check gives a 24-hour window before marking the container unhealthy, specifically to accommodate sync time.
 
 
 ## What's Not Implemented
