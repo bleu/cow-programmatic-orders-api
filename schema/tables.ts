@@ -14,6 +14,7 @@ export const orderTypeEnum = onchainEnum("order_type", [
 export const orderStatusEnum = onchainEnum("order_status", [
   "Active",
   "Cancelled",
+  "Completed",
 ]);
 
 export const addressTypeEnum = onchainEnum("address_type", [
@@ -25,6 +26,14 @@ export const AddressType = {
   CowshedProxy: "cowshed_proxy",
   FlashLoanHelper: "flash_loan_helper",
 } as const;
+
+export const discreteOrderStatusEnum = onchainEnum("discrete_order_status", [
+  "open",
+  "fulfilled",
+  "unfilled",
+  "expired",
+  "cancelled",
+]);
 
 // ── Tables ───────────────────────────────────────────────────────────────────
 
@@ -58,6 +67,11 @@ export const conditionalOrderGenerator = onchainTable(
     decodedParams: t.json(),               // null if unknown type or decode failed
     decodeError: t.text(),                 // "invalid_static_input" | null
     txHash: t.hex().notNull(),             // FK → transaction.hash
+    allCandidatesKnown: t.boolean().notNull().default(false),
+    nextCheckBlock: t.bigint(),            // block handler scheduling
+    lastCheckBlock: t.bigint(),
+    lastPollResult: t.text(),
+    nextCheckTimestamp: t.bigint(),        // for PollTryAtEpoch — store epoch directly
   }),
   (table) => ({
     pk: primaryKey({ columns: [table.chainId, table.eventId] }),
@@ -66,6 +80,8 @@ export const conditionalOrderGenerator = onchainTable(
     hashIdx: index().on(table.hash),
     chainOwnerIdx: index().on(table.chainId, table.owner),
     resolvedOwnerIdx: index().on(table.resolvedOwner),
+    checkBlockActiveIdx: index("generator_check_block_active_idx")
+      .on(table.nextCheckBlock, table.status),
   })
 );
 
@@ -75,10 +91,40 @@ export const discreteOrder = onchainTable(
     orderUid: t.text().notNull(),
     chainId: t.integer().notNull(),
     conditionalOrderGeneratorId: t.text().notNull(),  // references eventId
+    status: discreteOrderStatusEnum("status").notNull(),
+    sellAmount: t.text().notNull(),                   // uint256 as decimal string
+    buyAmount: t.text().notNull(),
+    feeAmount: t.text().notNull(),
+    validTo: t.integer(),                             // uint32 Unix timestamp — from API or getTradeableOrderWithSignature
+    creationDate: t.bigint().notNull(),               // block timestamp (seconds)
+    executedSellAmount: t.text(),                     // actual executed amount (from API, post-settlement)
+    executedBuyAmount: t.text(),                      // actual executed amount (from API, post-settlement)
   }),
   (table) => ({
     pk: primaryKey({ columns: [table.chainId, table.orderUid] }),
-    generatorIdx: index().on(table.conditionalOrderGeneratorId),
+    generatorIdx: index("discrete_order_generator_idx")
+      .on(table.chainId, table.conditionalOrderGeneratorId),
+    statusIdx: index("discrete_order_status_idx").on(table.status),
+  })
+);
+
+export const candidateDiscreteOrder = onchainTable(
+  "candidate_discrete_order",
+  (t) => ({
+    orderUid: t.text().notNull(),
+    chainId: t.integer().notNull(),
+    conditionalOrderGeneratorId: t.text().notNull(),
+    sellAmount: t.text().notNull(),
+    buyAmount: t.text().notNull(),
+    feeAmount: t.text().notNull(),
+    validTo: t.integer(),
+    creationDate: t.bigint().notNull(),
+    possibleValidAfterTimestamp: t.bigint(),   // TWAP: t0 + partIndex * t — skip API calls before this
+  }),
+  (table) => ({
+    pk: primaryKey({ columns: [table.chainId, table.orderUid] }),
+    generatorIdx: index("candidate_discrete_order_generator_idx")
+      .on(table.chainId, table.conditionalOrderGeneratorId),
   })
 );
 

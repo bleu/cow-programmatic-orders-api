@@ -7,7 +7,7 @@
 - **TWAP**: decoder available in cow-sdk GitHub source (`packages/composable/src/orderTypes/Twap.ts`). Use as reference for ABI tuple and interface pattern.
 - **StopLoss, GoodAfterTime, PerpetualSwap, TradeAboveThreshold**: no TypeScript decoders exist anywhere. Implement from Solidity struct layouts (documented below).
 - The installed `@cowprotocol/cow-sdk@7.3.8` does NOT export the composable package. All decoders are implemented locally with viem.
-- Grant scope (Forum Update #2): cow-sdk integration removed. Local implementation only.
+- cow-sdk integration was removed from scope. All decoders are implemented locally.
 
 ---
 
@@ -304,7 +304,7 @@ enum PollResultCode {
 
 | Decision | Rationale |
 |----------|-----------|
-| Local decoders, no cow-sdk integration | Grant scope Update #2 explicitly removes cow-sdk contribution |
+| Local decoders, no cow-sdk integration | cow-sdk composable package not usable as-is; local viem-based decoders are simpler and self-contained |
 | Standalone `decode<Type>StaticInput()` functions, not `ConditionalOrder<D,S>` class | M1 only needs decode; the full SDK class adds encoding, signing, polling complexity not needed yet |
 | Store `priceCheckerPayload` as opaque hex in M1 | Payload parsing is context-dependent and out of M1 scope |
 | All handler addresses identical on mainnet/gnosis/arbitrum | Confirmed from `networks.json` in composable-cow repo; safe to use same addresses for all chains |
@@ -317,5 +317,5 @@ enum PollResultCode {
 - cow-sdk source: https://github.com/cowprotocol/cow-sdk/tree/main/packages/composable/src/orderTypes
 - composable-cow types: https://github.com/cowprotocol/composable-cow/tree/main/src/types
 - networks.json: https://github.com/cowprotocol/composable-cow/blob/main/networks.json
-- Grant scope update: https://forum.cow.fi/t/grant-application-programmatic-orders-api/3346
+
 - PollResultErrors: https://github.com/cowprotocol/cow-sdk/blob/main/packages/composable/src/types.ts

@@ -1,11 +1,18 @@
 import { ComposableCowAbi } from "../abis/ComposableCowAbi";
 import { CoWShedFactoryAbi } from "../abis/CoWShedFactoryAbi";
 import { GPv2SettlementAbi } from "../abis/GPv2SettlementAbi";
+import { HANDLER_ADDRESS_TO_TYPE } from "./utils/order-types";
+
+/**
+ * Supported chain IDs — update this type when adding a new chain.
+ * All per-chain Record<> maps below use this type to enforce completeness.
+ */
+export type SupportedChainId = 1 | 100;
 
 // CREATE2-deployed contracts share the same address across chains
 const COMPOSABLE_COW_ADDRESS =
   "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74" as const;
-const GPV2_SETTLEMENT_ADDRESS =
+export const GPV2_SETTLEMENT_ADDRESS =
   "0x9008D19f58AAbD9eD0D60971565AA8510560ab41" as const;
 const AAVE_V3_ADAPTER_FACTORY_ADDRESS =
   "0xdeCc46a4b09162f5369c5c80383aaa9159bcf192" as const;
@@ -26,7 +33,7 @@ export const COMPOSABLE_COW_DEPLOYMENTS = {
     address: COMPOSABLE_COW_ADDRESS,
     startBlock: 29389123,
   },
-  // arbitrum: { address: COMPOSABLE_COW_ADDRESS, startBlock: ... }, // TODO: COW-7xx
+  // arbitrum: { address: COMPOSABLE_COW_ADDRESS, startBlock: ... }, // TODO: add Arbitrum support
 } as const;
 
 export const ComposableCowContract = {
@@ -111,3 +118,50 @@ export const FLASH_LOAN_ROUTER_ADDRESSES = {
   gnosis: FLASH_LOAN_ROUTER_ADDRESS, // confirmed via ROUTER() on Gnosis AaveV3AdapterFactory
   // arbitrum: "0x...", // TODO: confirm via ROUTER() on arbitrum AaveV3AdapterFactory
 } as const;
+
+/**
+ * Orderbook polling interval in blocks.
+ * ~20 blocks ≈ 4 min on mainnet (12s/block), ~2 min on Gnosis (5s/block).
+ * Used in ponder.config.ts for block handler intervals and in constants.ts for RECHECK_INTERVAL.
+ */
+export const ORDERBOOK_POLL_INTERVAL = 20;
+
+/**
+ * Approximate block time in seconds per chain ID.
+ * Used by the block handler to estimate block numbers from epoch timestamps (PollTryAtEpoch).
+ */
+export const BLOCK_TIME_SECONDS: Record<SupportedChainId, number> = {
+  1: 12,    // mainnet
+  100: 5,   // gnosis
+};
+
+/**
+ * ComposableCoW address keyed by numeric chain ID.
+ * Derived from COMPOSABLE_COW_DEPLOYMENTS — update that map to add new chains.
+ */
+export const COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID: Record<SupportedChainId, `0x${string}`> = {
+  1: COMPOSABLE_COW_DEPLOYMENTS.mainnet.address,
+  100: COMPOSABLE_COW_DEPLOYMENTS.gnosis.address,
+};
+
+/**
+ * Known ComposableCoW order handler addresses — derived from the canonical HANDLER_ADDRESS_TO_TYPE
+ * map in src/utils/order-types.ts (single source of truth). Used by the EIP-1271 decoder and
+ * orderbook handlers to validate that a decoded signature belongs to a composable order.
+ */
+export const COMPOSABLE_COW_HANDLER_ADDRESSES = new Set(
+  Object.keys(HANDLER_ADDRESS_TO_TYPE),
+);
+
+/**
+ * CoW Protocol Orderbook API base URLs per chain ID.
+ * Used by the orderbook fetch utility and trade event handler.
+ * No authentication required. Append /api/v1/<endpoint> for all calls.
+ */
+export const ORDERBOOK_API_URLS: Record<number, string> = {
+  1: "https://api.cow.fi/mainnet",
+  100: "https://api.cow.fi/xdai",
+  42161: "https://api.cow.fi/arbitrum_one",
+  8453: "https://api.cow.fi/base",
+  11155111: "https://api.cow.fi/sepolia",
+};

@@ -39,7 +39,7 @@ apps/
 lib/
   utils/             ← shared ABIs, chain configs, types (workspace package)
 agent_docs/          ← documentation for agents and developers
-thoughts/            ← analysis, plans, research notes (not shipped)
+thoughts/            ← local-only working notes (not in repo)
 ```
 
 ---

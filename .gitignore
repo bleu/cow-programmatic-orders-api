@@ -19,5 +19,8 @@ deployment/.env
 /generated/
 /.ponder/
 
-# Archived plans
-thoughts/plans/archive/
+# Internal working notes (local only, not in repo)
+thoughts/
+
+# Linear command with real team IDs (local only)
+.claude/commands/linear.md
