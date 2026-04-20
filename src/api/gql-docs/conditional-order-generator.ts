@@ -14,7 +14,7 @@ export const conditionalOrderGeneratorDocs: DocMap = {
   "conditionalOrderGenerator.owner":
     "Address that created the order on-chain. May be a CoWShed proxy or Aave flash loan adapter rather than the EOA.",
   "conditionalOrderGenerator.resolvedOwner":
-    "The underlying EOA behind the order. Resolved through ownerMapping when owner is a proxy. Null transiently if the mapping hasn't been indexed yet.",
+    "The underlying EOA for this order, set once at insert time. Equals the mapped EOA if owner is a known CoWShed or Aave adapter at creation time; otherwise equals owner. Not updated retroactively if a proxy mapping is indexed later.",
   "conditionalOrderGenerator.handler":
     "The IConditionalOrder handler contract address. Determines the order type.",
   "conditionalOrderGenerator.salt":

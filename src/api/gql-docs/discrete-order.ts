@@ -22,7 +22,7 @@ export const discreteOrderDocs: DocMap = {
   "discreteOrder.validTo":
     "Unix timestamp (uint32) when this order expires. Null if not yet known.",
   "discreteOrder.creationDate":
-    "Block timestamp (unix seconds) when this order was discovered.",
+    "Unix timestamp (seconds). Source depends on discovery path: C4-fetched orders use the orderbook API's order submission timestamp; pre-computed deterministic orders (TWAP, StopLoss) use the generator event's block timestamp; C1-discovered orders use the block timestamp at C1 discovery.",
   "discreteOrder.executedSellAmount":
     "Actual sell amount filled after settlement. Null before the order is fulfilled.",
   "discreteOrder.executedBuyAmount":

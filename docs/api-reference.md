@@ -21,7 +21,7 @@ Ponder auto-generates the GraphQL schema from the tables in `ponder.schema.ts`. 
 
 High-level map of what's queryable:
 
-- **`conditionalOrderGenerator`** — one row per programmatic order registered via `ComposableCoW.create()`. Holds decoded params, order type, owner (resolved through any proxy chain), and lifecycle status.
+- **`conditionalOrderGenerator`** — one row per programmatic order registered via `ComposableCoW.create()` or `createWithContext()`. Holds decoded params, order type, `owner` (raw on-chain address), `resolvedOwner` (looked up in `ownerMapping` at insert time; falls back to `owner` if no mapping exists yet), and lifecycle status.
 - **`discreteOrder`** — individual CoW Protocol orders produced by a generator (a TWAP with 10 parts produces 10 discrete orders). Tracks orderbook status and executed amounts.
 - **`candidateDiscreteOrder`** — unconfirmed discrete orders discovered by the block handler, awaiting confirmation against the orderbook API.
 - **`transaction`** — block and timestamp metadata for indexed transactions.
