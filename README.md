@@ -50,8 +50,7 @@ The GraphQL API is at `http://localhost:42069` once the dev server starts.
 
 ## Documentation
 
-- [docs/api-reference.md](docs/api-reference.md) -- GraphQL schema and query examples
-- [docs/integration-guide.md](docs/integration-guide.md) -- Common query patterns for integrators
+- [docs/api-reference.md](docs/api-reference.md) -- Endpoints overview (GraphQL, SQL, REST). OpenAPI/Swagger for custom REST routes lives at `/docs` when the API is running.
 - [docs/architecture.md](docs/architecture.md) -- System internals, data flow, schema design
 - [docs/deployment.md](docs/deployment.md) -- Production setup and configuration
 - [docs/supported-order-types.md](docs/supported-order-types.md) -- Decoded order types and their parameters
