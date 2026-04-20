@@ -6,7 +6,7 @@ This document covers how the indexer works, from on-chain events to the GraphQL 
 
 The system is a Ponder 0.16.x indexer that watches the ComposableCoW contract on Ethereum mainnet and Gnosis Chain. When a user creates a programmatic order (TWAP, Stop Loss, etc.), the contract emits a `ConditionalOrderCreated` event. The indexer picks that up, decodes the order parameters, resolves the actual owner (which may be behind a proxy), and writes the result to Postgres. A Hono HTTP server exposes the data through GraphQL and a SQL passthrough endpoint.
 
-There are seven handlers total: three event handlers and four live-only block handlers. The event handlers react to on-chain events in real time. The block handlers (C1–C4) poll contract state and the orderbook API during live sync. The settlement handler detects flash loan adapter contracts through Trade logs.
+Ponder registers eight top-level handlers: four contract event handlers (`ComposableCow` backfill, `ComposableCowLive`, `CoWShedFactory`, `GPv2Settlement`) plus four live-only block handlers in `blockHandler.ts` (C1–C4). The contract handlers react to on-chain events; C1–C4 poll contract state and the orderbook API during live sync. `settlement.ts` inspects `Settlement` receipts to detect Aave adapters from Trade logs.
 
 ## Contracts and Chains
 
@@ -76,7 +76,7 @@ Hono API server
 
 ## Schema
 
-Four tables, defined in `schema/tables.ts`. All use composite primary keys with `chainId` as the first column, which is necessary for multi-chain support and prevents collisions between chains.
+Five tables, defined in `schema/tables.ts`. All use composite primary keys with `chainId` as the first column, which is necessary for multi-chain support and prevents collisions between chains.
 
 ### transaction
 
@@ -92,7 +92,7 @@ The main table. One row per `ConditionalOrderCreated` event. Stores the raw orde
 Key columns:
 - `eventId` -- Ponder's event ID, used as the entity identifier
 - `owner` -- the address from the event (could be a proxy)
-- `resolvedOwner` -- the actual EOA, resolved via `ownerMapping` at insert time
+- `resolvedOwner` -- EOA from `ownerMapping` when `owner` already has a row at insert time; otherwise the same as `owner`. Not rewritten when a new `owner_mapping` row is added later.
 - `handler` -- the IConditionalOrder handler contract address
 - `hash` -- keccak256 of the ABI-encoded params tuple (handler, salt, staticInput). This is what `singleOrders(owner, hash)` checks on-chain.
 - `orderType` -- one of TWAP, StopLoss, PerpetualSwap, GoodAfterTime, TradeAboveThreshold, or Unknown
@@ -108,6 +108,12 @@ Links individual order UIDs (from the CoW Protocol orderbook) back to their pare
 
 Key columns: `orderUid`, `chainId`, `conditionalOrderGeneratorId` (references `eventId`), `status` (open/fulfilled/unfilled/expired/cancelled), `sellAmount`, `buyAmount`, `executedSellAmount`, `executedBuyAmount`.
 PK: `(chainId, orderUid)`. See [api-reference.md](./api-reference.md) for full field docs.
+
+### candidate_discrete_order
+
+Staging rows for discrete orders discovered by C1 (`getTradeableOrderWithSignature`) before the orderbook API lists them. When C2 confirms a UID against the API, the row is promoted to `discrete_order` and removed from candidates.
+
+Key columns: `orderUid`, `chainId`, `conditionalOrderGeneratorId`, amounts, `validTo`, `creationDate`, `possibleValidAfterTimestamp` (TWAP scheduling). PK: `(chainId, orderUid)`.
 
 ### owner_mapping
 
@@ -129,7 +135,7 @@ This is the primary event handler. When a `ConditionalOrderCreated` fires:
 
 1. ABI-encode the params tuple `(handler, salt, staticInput)` and hash it with keccak256. This hash matches what the on-chain `singleOrders` mapping uses.
 
-2. Look up the `owner` address in `ownerMapping`. If there's a match (the owner is a known CoWShed proxy), use the mapped EOA as `resolvedOwner`. If no match exists, `resolvedOwner` defaults to `owner`. For Aave adapters, the mapping might not exist yet when the order is created -- the settlement handler will backfill it later.
+2. Look up the `owner` address in `ownerMapping`. If there's a match (e.g. a known CoWShed proxy), use the mapped EOA as `resolvedOwner`. If no match exists, `resolvedOwner` is set to `owner`. For Aave adapters there is often no row yet at insert time; settlement may later insert `owner_mapping` for the adapter, but existing `conditional_order_generator` rows are not updated—queries and REST endpoints use `owner_mapping` (e.g. `/api/orders/by-owner`) to resolve EOAs.
 
 3. Identify the order type by looking up the handler address in a map (`src/utils/order-types.ts`). The handler addresses are the same across all chains. If the handler isn't recognized, the order is stored as `Unknown`.
 
@@ -188,7 +194,7 @@ Two proxy patterns exist:
 
 **Aave V3 flash loan adapters**: These are per-user proxy contracts created by the AaveV3AdapterFactory. They're trickier to detect because there's no factory event -- the adapter is just a contract that happens to trade through CoW Protocol. The settlement handler identifies them by checking whether a trade address implements `FACTORY()` returning the known AaveV3AdapterFactory address, then calls `owner()` to get the EOA.
 
-The ordering matters: CoWShed mappings are typically available before the order is created (the user deploys the proxy first). Aave adapter mappings might not be -- the adapter might trade before it creates a conditional order. In that case, `resolvedOwner` will initially be the adapter address and can be updated later.
+CoWShed mappings are usually available before the conditional order is created. Aave adapter mappings may appear only after a settlement trade. The `resolvedOwner` column on `conditional_order_generator` is set once at insert and does not change when `owner_mapping` later gains a matching row; join `owner_mapping` or use owner-aware APIs for current proxy-to-EOA resolution.
 
 ## API Layer
 
@@ -216,6 +222,6 @@ The block handlers (C1–C4) already run on both mainnet and gnosis. Adding a ne
 ## Known Limitations
 
 - Cancellation of deterministic generators (TWAP) isn't detected after all parts are discovered. Once `allCandidatesKnown=true`, C1 stops polling — so on-chain removal via `ComposableCoW.remove()` won't be reflected in the status. There's no on-chain event for removals; detecting it would require re-polling completed generators periodically.
-- Aave adapter owner resolution is reactive — it happens when the adapter trades, not when the order is created. Orders from adapters that haven't traded yet will have `resolvedOwner` equal to the adapter address.
+- Aave adapter owner resolution is reactive — `owner_mapping` is written when the adapter appears in settlement, which may be after the conditional order is created. The generator row keeps `resolvedOwner` equal to the adapter address when no mapping existed at insert time; that column is not backfilled when the mapping is inserted later.
 - Arbitrum addresses are stubbed in `src/data.ts` but not wired into the config.
 - The GPv2Settlement handler is mainnet-only in the Ponder config, though the deployment data for gnosis exists in `data.ts`.
