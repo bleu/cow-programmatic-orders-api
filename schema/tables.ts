@@ -72,6 +72,7 @@ export const conditionalOrderGenerator = onchainTable(
     lastCheckBlock: t.bigint(),
     lastPollResult: t.text(),
     nextCheckTimestamp: t.bigint(),        // for PollTryAtEpoch — store epoch directly
+    consecutiveTryNextBlock: t.integer().notNull().default(0),  // COW-907: backoff counter for stuck generators
   }),
   (table) => ({
     pk: primaryKey({ columns: [table.chainId, table.eventId] }),
