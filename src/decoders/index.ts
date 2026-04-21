@@ -5,6 +5,7 @@ import { decodeStopLossStaticInput } from "./stop-loss";
 import { decodePerpetualSwapStaticInput } from "./perpetual-swap";
 import { decodeGoodAfterTimeStaticInput } from "./good-after-time";
 import { decodeTradeAboveThresholdStaticInput } from "./trade-above-threshold";
+import { decodeCirclesBackingOrderStaticInput } from "./circles-backing-order";
 
 export {
   decodeTwapStaticInput,
@@ -12,6 +13,7 @@ export {
   decodePerpetualSwapStaticInput,
   decodeGoodAfterTimeStaticInput,
   decodeTradeAboveThresholdStaticInput,
+  decodeCirclesBackingOrderStaticInput,
 };
 
 export function decodeStaticInput(orderType: OrderType, staticInput: Hex): unknown {
@@ -21,6 +23,7 @@ export function decodeStaticInput(orderType: OrderType, staticInput: Hex): unkno
     case "PerpetualSwap":       return decodePerpetualSwapStaticInput(staticInput);
     case "GoodAfterTime":       return decodeGoodAfterTimeStaticInput(staticInput);
     case "TradeAboveThreshold": return decodeTradeAboveThresholdStaticInput(staticInput);
+    case "CirclesBackingOrder": return decodeCirclesBackingOrderStaticInput(staticInput);
     case "Unknown":             return null;
   }
 }

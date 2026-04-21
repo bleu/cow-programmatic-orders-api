@@ -6,6 +6,7 @@ import {
   decodePerpetualSwapStaticInput,
   decodeGoodAfterTimeStaticInput,
   decodeTradeAboveThresholdStaticInput,
+  decodeCirclesBackingOrderStaticInput,
   decodeStaticInput,
 } from "../../src/decoders/index";
 
@@ -150,6 +151,29 @@ describe("decodeTradeAboveThresholdStaticInput", () => {
     expect(result.threshold).toBe(1000000n);
     expect(result.validityBucketSeconds).toBe(1800);
     expect(result.receiver).toBe(ADDR_C);
+  });
+});
+
+describe("decodeCirclesBackingOrderStaticInput", () => {
+  it("round-trips all four fields", () => {
+    const encoded = encodeAbiParameters(
+      [{ type: "tuple", components: [
+        { name: "buyToken",  type: "address" },
+        { name: "buyAmount", type: "uint256" },
+        { name: "validTo",   type: "uint32"  },
+        { name: "appData",   type: "bytes32" },
+      ]}],
+      [{ buyToken: ADDR_A, buyAmount: 12345n, validTo: 1800000000, appData: APP_DATA }],
+    );
+    const result = decodeCirclesBackingOrderStaticInput(encoded);
+    expect(result.buyToken).toBe(ADDR_A);
+    expect(result.buyAmount).toBe(12345n);
+    expect(result.validTo).toBe(1800000000);
+    expect(result.appData).toBe(APP_DATA);
+  });
+
+  it("throws on malformed input", () => {
+    expect(() => decodeCirclesBackingOrderStaticInput("0xdeadbeef")).toThrow();
   });
 });
 
