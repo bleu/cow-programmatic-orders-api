@@ -7,6 +7,8 @@ import {
   decodeGoodAfterTimeStaticInput,
   decodeTradeAboveThresholdStaticInput,
   decodeCirclesBackingOrderStaticInput,
+  decodeSwapOrderHandlerStaticInput,
+  decodeErc4626CowSwapFeeBurnerStaticInput,
   decodeStaticInput,
 } from "../../src/decoders/index";
 
@@ -174,6 +176,47 @@ describe("decodeCirclesBackingOrderStaticInput", () => {
 
   it("throws on malformed input", () => {
     expect(() => decodeCirclesBackingOrderStaticInput("0xdeadbeef")).toThrow();
+  });
+});
+
+describe("decodeSwapOrderHandlerStaticInput", () => {
+  it("round-trips all five fields", () => {
+    const encoded = encodeAbiParameters(
+      [{ type: "tuple", components: [
+        { name: "sellToken",      type: "address" },
+        { name: "buyToken",       type: "address" },
+        { name: "receiver",       type: "address" },
+        { name: "validityPeriod", type: "uint32"  },
+        { name: "appData",        type: "bytes32" },
+      ]}],
+      [{ sellToken: ADDR_A, buyToken: ADDR_B, receiver: ADDR_C,
+         validityPeriod: 86400, appData: APP_DATA }],
+    );
+    const result = decodeSwapOrderHandlerStaticInput(encoded);
+    expect(result.sellToken).toBe(ADDR_A);
+    expect(result.buyToken).toBe(ADDR_B);
+    expect(result.receiver).toBe(ADDR_C);
+    expect(result.validityPeriod).toBe(86400);
+    expect(result.appData).toBe(APP_DATA);
+  });
+
+  it("throws on malformed input", () => {
+    expect(() => decodeSwapOrderHandlerStaticInput("0xdeadbeef")).toThrow();
+  });
+});
+
+describe("decodeErc4626CowSwapFeeBurnerStaticInput", () => {
+  it("round-trips a single address", () => {
+    const encoded = encodeAbiParameters(
+      [{ name: "tokenIn", type: "address" }] as const,
+      [ADDR_A],
+    );
+    const result = decodeErc4626CowSwapFeeBurnerStaticInput(encoded);
+    expect(result.tokenIn).toBe(ADDR_A);
+  });
+
+  it("throws on malformed input", () => {
+    expect(() => decodeErc4626CowSwapFeeBurnerStaticInput("0xdeadbeef")).toThrow();
   });
 });
 

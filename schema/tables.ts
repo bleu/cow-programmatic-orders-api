@@ -9,6 +9,8 @@ export const orderTypeEnum = onchainEnum("order_type", [
   "GoodAfterTime",
   "TradeAboveThreshold",
   "CirclesBackingOrder",
+  "SwapOrderHandler",
+  "ERC4626CowSwapFeeBurner",
   "Unknown",
 ]);
 
