@@ -201,7 +201,7 @@ The `block=` values should be close to the current chain head. If you see poll D
 
 ---
 
-## C1 tryNextBlock backoff (COW-907)
+## C1 tryNextBlock backoff
 
 Generators that keep returning `PollResult.tryNextBlock` are progressively rate-limited. After 50 consecutive tryNextBlock responses the recheck interval jumps from +1 to +10 blocks; after 200, to +50.
 

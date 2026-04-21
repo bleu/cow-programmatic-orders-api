@@ -19,7 +19,7 @@ export const RECHECK_INTERVAL = BigInt(ORDERBOOK_POLL_INTERVAL);
 export const SIGNING_SCHEME_EIP1271 = "eip1271";
 
 /**
- * COW-907: Progressive backoff for generators stuck returning PollResult.tryNextBlock.
+ * Progressive backoff for generators stuck returning PollResult.tryNextBlock.
  *
  * Every tryNextBlock response increments a counter on the generator; any other
  * response resets it to zero. The counter selects the next-check block offset:
