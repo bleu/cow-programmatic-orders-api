@@ -149,6 +149,11 @@ export const COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID: Record<SupportedChainId, `0x${s
  * list in src/utils/order-types.ts (union of the chain-agnostic map + all per-chain overlays).
  * Used by the EIP-1271 decoder and orderbook handlers to validate that a decoded signature
  * belongs to a composable order.
+ *
+ * Chain-global union by design: a Gnosis-only handler address (e.g. CirclesBackingOrder) is
+ * accepted on any chain here. Cross-chain false positives are benign — the handler wouldn't
+ * actually be deployed at that address on the wrong chain, so downstream calls would revert —
+ * and keeping one flat set avoids threading chainId through every EIP-1271 validation site.
  */
 export const COMPOSABLE_COW_HANDLER_ADDRESSES = new Set(ALL_HANDLER_ADDRESSES);
 

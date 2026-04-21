@@ -52,6 +52,7 @@ import { CirclesBackingOrderAbi } from "../../../abis/CirclesBackingOrderAbi";
 // that references the same handler address. Cached per `${chainId}:${handler}` so we
 // make one eth_call per process, not one per generator.
 
+// Never invalidated by design — the cached values are contract immutables.
 const circlesImmutablesCache = new Map<
   string,
   { sellToken: Hex; sellAmount: bigint }
