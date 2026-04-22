@@ -18,7 +18,14 @@ import {
   COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID,
   type SupportedChainId,
 } from "../../data";
-import { RECHECK_INTERVAL } from "../../constants";
+import {
+  RECHECK_INTERVAL,
+  TRY_NEXT_BLOCK_WARMUP_THRESHOLD,
+  TRY_NEXT_BLOCK_COOLDOWN_THRESHOLD,
+  TRY_NEXT_BLOCK_BACKOFF_WARMUP,
+  TRY_NEXT_BLOCK_BACKOFF_MID,
+  TRY_NEXT_BLOCK_BACKOFF_COLD,
+} from "../../constants";
 import { fetchComposableOrders, fetchOrderStatusByUids, upsertDiscreteOrders } from "../helpers/orderbookClient";
 import {
   GET_TRADEABLE_ORDER_WITH_ERRORS_ABI,
@@ -56,6 +63,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
       staticInput: conditionalOrderGenerator.staticInput,
       orderType: conditionalOrderGenerator.orderType,
       decodedParams: conditionalOrderGenerator.decodedParams,
+      consecutiveTryNextBlock: conditionalOrderGenerator.consecutiveTryNextBlock,
     })
     .from(conditionalOrderGenerator)
     .where(
@@ -76,6 +84,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
     staticInput: Hex;
     orderType: string;
     decodedParams: Record<string, string> | null;
+    consecutiveTryNextBlock: number;
   }[];
 
   if (dueOrders.length === 0) return;
@@ -101,6 +110,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
 
   let neverCount = 0;
   let successCount = 0;
+  let backedOffCount = 0;  // tryNextBlock results that exceeded the warmup threshold
   const successPromises: Promise<unknown>[] = [];
 
   for (let i = 0; i < dueOrders.length; i++) {
@@ -147,6 +157,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
           lastPollResult: "success",
           nextCheckTimestamp: null,
           allCandidatesKnown: isSingleShot ? true : undefined,
+          consecutiveTryNextBlock: 0,
         }),
       );
       successCount++;
@@ -154,13 +165,21 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
       const pollResult = parsePollError(result.error);
 
       switch (pollResult.type) {
-        case "tryNextBlock":
+        case "tryNextBlock": {
+          const consecutive = order.consecutiveTryNextBlock + 1;
+          const backoff =
+            consecutive > TRY_NEXT_BLOCK_COOLDOWN_THRESHOLD ? TRY_NEXT_BLOCK_BACKOFF_COLD
+            : consecutive > TRY_NEXT_BLOCK_WARMUP_THRESHOLD ? TRY_NEXT_BLOCK_BACKOFF_MID
+            : TRY_NEXT_BLOCK_BACKOFF_WARMUP;
+          if (consecutive > TRY_NEXT_BLOCK_WARMUP_THRESHOLD) backedOffCount++;
           await updateGeneratorPollState(context, chainId, order.generatorId, currentBlock, {
-            nextCheckBlock: currentBlock + 1n,
+            nextCheckBlock: currentBlock + backoff,
             lastPollResult: "tryNextBlock",
             nextCheckTimestamp: null,
+            consecutiveTryNextBlock: consecutive,
           });
           break;
+        }
 
         case "tryAtBlock":
           await updateGeneratorPollState(context, chainId, order.generatorId, currentBlock, {
@@ -169,6 +188,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
               : currentBlock + 1n,
             lastPollResult: "tryAtBlock",
             nextCheckTimestamp: null,
+            consecutiveTryNextBlock: 0,
           });
           break;
 
@@ -177,6 +197,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
             nextCheckBlock: BLOCK_NEVER,
             lastPollResult: "tryAtEpoch",
             nextCheckTimestamp: pollResult.timestamp,
+            consecutiveTryNextBlock: 0,
           });
           break;
 
@@ -187,6 +208,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
               status: "Completed",
               lastCheckBlock: currentBlock,
               lastPollResult: `pollNever:${pollResult.reason}`,
+              consecutiveTryNextBlock: 0,
             })
             .where(
               and(
@@ -207,6 +229,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
               status: "Cancelled",
               lastCheckBlock: currentBlock,
               lastPollResult: "cancelled:SingleOrderNotAuthed",
+              consecutiveTryNextBlock: 0,
             })
             .where(
               and(
@@ -225,7 +248,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
   await Promise.all(successPromises);
 
   console.log(
-    `[COW:C1] DONE block=${currentBlock} chain=${chainId} due=${dueOrders.length} success=${successCount} never=${neverCount}`,
+    `[COW:C1] DONE block=${currentBlock} chain=${chainId} due=${dueOrders.length} success=${successCount} never=${neverCount} backedOff=${backedOffCount}`,
   );
 });
 
@@ -473,6 +496,7 @@ async function updateGeneratorPollState(
     lastPollResult: string;
     nextCheckTimestamp: bigint | null;
     allCandidatesKnown?: boolean;
+    consecutiveTryNextBlock?: number;
   },
 ): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -484,6 +508,9 @@ async function updateGeneratorPollState(
   };
   if (fields.allCandidatesKnown !== undefined) {
     setFields.allCandidatesKnown = fields.allCandidatesKnown;
+  }
+  if (fields.consecutiveTryNextBlock !== undefined) {
+    setFields.consecutiveTryNextBlock = fields.consecutiveTryNextBlock;
   }
 
   await context.db.sql
