@@ -276,9 +276,9 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
   const confirmedUids: string[] = [];
 
   for (const candidate of unconfirmed) {
-    const statusInfo = statuses.get(candidate.orderUid);
-    if (!statusInfo) continue; // not on API yet — retry next block
-    const apiStatus = statusInfo.status;
+    const orderbookEntry = statuses.get(candidate.orderUid);
+    if (!orderbookEntry) continue; // not on API yet — retry next block
+    const apiStatus = orderbookEntry.status;
 
     await context.db.sql
       .insert(discreteOrder)
@@ -292,15 +292,15 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
         feeAmount: candidate.feeAmount,
         validTo: candidate.validTo,
         creationDate: candidate.creationDate,
-        executedSellAmount: statusInfo.executedSellAmount,
-        executedBuyAmount: statusInfo.executedBuyAmount,
+        executedSellAmount: orderbookEntry.executedSellAmount,
+        executedBuyAmount: orderbookEntry.executedBuyAmount,
       })
       .onConflictDoUpdate({
         target: [discreteOrder.chainId, discreteOrder.orderUid],
         set: {
           status: apiStatus as "open" | "fulfilled" | "unfilled" | "expired" | "cancelled",
-          executedSellAmount: statusInfo.executedSellAmount,
-          executedBuyAmount: statusInfo.executedBuyAmount,
+          executedSellAmount: orderbookEntry.executedSellAmount,
+          executedBuyAmount: orderbookEntry.executedBuyAmount,
         },
       });
     confirmedUids.push(candidate.orderUid);
