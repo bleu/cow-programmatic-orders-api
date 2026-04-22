@@ -17,7 +17,7 @@ Currently indexed:
 - **Mainnet** (chain ID 1) -- ComposableCoW from block 17883049, CoWShedFactory from block 22939254, GPv2Settlement from block 23812751
 - **Gnosis** (chain ID 100) -- ComposableCoW from block 29389123, CoWShedFactory from block 41469991
 
-Arbitrum is stubbed out but not yet active.
+Arbitrum is stubbed out but not yet active. See [Adding a New Chain](#adding-a-new-chain) below for the step-by-step checklist to wire in a new chain.
 
 `ponder.config.ts` imports everything from `data.ts` and wires it into Ponder's `createConfig`. It never contains raw addresses or block numbers directly. The config also sets up four live-only block handlers — C1 (`ContractPoller`), C2 (`CandidateConfirmer`), C3 (`StatusUpdater`), C4 (`HistoricalBootstrap`) — all running every block during live sync.
 
@@ -223,5 +223,3 @@ The block handlers (C1–C4) already run on both mainnet and gnosis. Adding a ne
 
 - Cancellation of deterministic generators (TWAP) isn't detected after all parts are discovered. Once `allCandidatesKnown=true`, C1 stops polling — so on-chain removal via `ComposableCoW.remove()` won't be reflected in the status. There's no on-chain event for removals; detecting it would require re-polling completed generators periodically.
 - Aave adapter owner resolution is reactive — `owner_mapping` is written when the adapter appears in settlement, which may be after the conditional order is created. The generator row keeps `resolvedOwner` equal to the adapter address when no mapping existed at insert time; that column is not backfilled when the mapping is inserted later.
-- Arbitrum addresses are stubbed in `src/data.ts` but not wired into the config.
-- The GPv2Settlement handler is mainnet-only in the Ponder config, though the deployment data for gnosis exists in `data.ts`.
