@@ -19,6 +19,7 @@ import { and, eq } from "ponder";
 import { candidateDiscreteOrder, conditionalOrderGenerator, discreteOrder } from "ponder:schema";
 import { computeOrderUid, type GPv2OrderData } from "./orderUid";
 import { fetchOrderStatusByUids } from "./orderbookClient";
+import { isDeterministicOrderType } from "../../utils/order-types";
 
 // GPv2Order.sol constant hashes
 const KIND_SELL = "0xf3b277728b3fee749481eb3e0b3b48980dbbab78658fc419025cb16eee346775" as Hex;
@@ -58,7 +59,7 @@ export function precomputeOrderUids(
   blockTimestamp: bigint,
 ): PrecomputedOrder[] | null {
   if (!decodedParams) {
-    if (orderType === "TWAP" || orderType === "StopLoss") {
+    if (isDeterministicOrderType(orderType)) {
       console.warn(`[COW:PRECOMPUTE] SKIP type=${orderType} owner=${owner} chain=${chainId} reason=decodedParams_null`);
     }
     return null;
