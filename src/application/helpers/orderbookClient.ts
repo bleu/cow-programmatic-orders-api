@@ -41,21 +41,19 @@ interface OrderbookOrder {
   executedBuyAmount: string;
 }
 
-/** Processed composable order stored in cache and returned to callers. */
-export interface ComposableOrder {
+/** Processed composable order stored in cache and returned to callers.
+ *  Shares field types with the discreteOrder schema for the DB-mapped fields.
+ *  creationDate is number here (unix seconds) and converted to bigint at insert time. */
+export type ComposableOrder = Pick<
+  typeof discreteOrder.$inferInsert,
+  "status" | "sellAmount" | "buyAmount" | "feeAmount" | "validTo" | "executedSellAmount" | "executedBuyAmount"
+> & {
   uid: string;
-  status: "open" | "fulfilled" | "expired" | "cancelled";
   generatorId: string;
   generatorHash: string;
   orderType: string;
-  sellAmount: string;
-  buyAmount: string;
-  feeAmount: string;
-  validTo: number;
-  creationDate: number; // unix timestamp
-  executedSellAmount: string;
-  executedBuyAmount: string;
-}
+  creationDate: number;
+};
 
 /** Status + executed amounts returned by fetchOrderStatusByUids. */
 export interface OrderStatusInfo {

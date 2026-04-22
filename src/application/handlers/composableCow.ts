@@ -145,6 +145,15 @@ async function insertGenerator(
   if (orderType !== "Unknown") {
     try {
       const decoded = decodeStaticInput(orderType, staticInput) ?? null;
+      // Resolve t0=0: the contract uses block.timestamp when staticInput has t0=0.
+      // Store the resolved value so precompute always has the real start time.
+      if (
+        decoded &&
+        orderType === "TWAP" &&
+        BigInt(((decoded as Record<string, unknown>).t0 as bigint) ?? 0n) === 0n
+      ) {
+        (decoded as Record<string, unknown>).t0 = event.block.timestamp;
+      }
       decodedParams = decoded
         ? (replaceBigInts(decoded, String) as Record<string, string>)
         : null;
