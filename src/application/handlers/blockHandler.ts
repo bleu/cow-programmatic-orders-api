@@ -12,13 +12,13 @@
 
 import { ponder } from "ponder:registry";
 import { candidateDiscreteOrder, conditionalOrderGenerator, discreteOrder } from "ponder:schema";
-import { and, eq, inArray, lte, or, sql } from "ponder";
+import { and, asc, eq, inArray, lte, or, sql } from "ponder";
 import type { Hex } from "viem";
 import {
   COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID,
   type SupportedChainId,
 } from "../../data";
-import { RECHECK_INTERVAL } from "../../constants";
+import { DEFAULT_MAX_GENERATORS_PER_BLOCK, RECHECK_INTERVAL } from "../../constants";
 import { fetchComposableOrders, fetchOrderStatusByUids, upsertDiscreteOrders } from "../helpers/orderbookClient";
 import {
   GET_TRADEABLE_ORDER_WITH_ERRORS_ABI,
@@ -47,6 +47,10 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
   const currentBlock = event.block.number;
   const currentTimestamp = event.block.timestamp;
 
+  const maxGeneratorsPerBlock =
+    Number(process.env[`MAX_GENERATORS_PER_BLOCK_${chainId}`]) ||
+    DEFAULT_MAX_GENERATORS_PER_BLOCK;
+
   const dueOrders = await context.db.sql
     .select({
       generatorId: conditionalOrderGenerator.eventId,
@@ -68,7 +72,9 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
           lte(conditionalOrderGenerator.nextCheckTimestamp, currentTimestamp),
         ),
       ),
-    ) as {
+    )
+    .orderBy(asc(conditionalOrderGenerator.lastCheckBlock))
+    .limit(maxGeneratorsPerBlock) as {
     generatorId: string;
     owner: Hex;
     handler: Hex;
@@ -224,8 +230,9 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
 
   await Promise.all(successPromises);
 
+  const capped = dueOrders.length === maxGeneratorsPerBlock;
   console.log(
-    `[COW:C1] DONE block=${currentBlock} chain=${chainId} due=${dueOrders.length} success=${successCount} never=${neverCount}`,
+    `[COW:C1] DONE block=${currentBlock} chain=${chainId} due=${dueOrders.length} success=${successCount} never=${neverCount}${capped ? " CAPPED" : ""}`,
   );
 });
 
