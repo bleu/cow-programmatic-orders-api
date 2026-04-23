@@ -243,6 +243,90 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
 ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
   const chainId = context.chain.id as SupportedChainId;
 
+  // Parent-cancelled cascade: candidates whose parent generator flipped to
+  // Cancelled never hit the orderbook, so skip the API and promote them
+  // directly to discrete_order as cancelled. Drains before the normal flow so
+  // the unconfirmed SELECT below won't see these rows.
+  const cancelledGeneratorIds = (
+    await context.db.sql
+      .select({ id: conditionalOrderGenerator.eventId })
+      .from(conditionalOrderGenerator)
+      .where(
+        and(
+          eq(conditionalOrderGenerator.chainId, chainId),
+          eq(conditionalOrderGenerator.status, "Cancelled"),
+        ),
+      )
+  ).map((g) => g.id);
+
+  if (cancelledGeneratorIds.length > 0) {
+    const orphanCandidates = await context.db.sql
+      .select({
+        orderUid: candidateDiscreteOrder.orderUid,
+        generatorId: candidateDiscreteOrder.conditionalOrderGeneratorId,
+        sellAmount: candidateDiscreteOrder.sellAmount,
+        buyAmount: candidateDiscreteOrder.buyAmount,
+        feeAmount: candidateDiscreteOrder.feeAmount,
+        validTo: candidateDiscreteOrder.validTo,
+        creationDate: candidateDiscreteOrder.creationDate,
+      })
+      .from(candidateDiscreteOrder)
+      .where(
+        and(
+          eq(candidateDiscreteOrder.chainId, chainId),
+          inArray(
+            candidateDiscreteOrder.conditionalOrderGeneratorId,
+            cancelledGeneratorIds,
+          ),
+        ),
+      ) as {
+      orderUid: string;
+      generatorId: string;
+      sellAmount: string;
+      buyAmount: string;
+      feeAmount: string;
+      validTo: number | null;
+      creationDate: bigint;
+    }[];
+
+    if (orphanCandidates.length > 0) {
+      await context.db.sql
+        .insert(discreteOrder)
+        .values(
+          orphanCandidates.map((c) => ({
+            orderUid: c.orderUid,
+            chainId,
+            conditionalOrderGeneratorId: c.generatorId,
+            status: "cancelled" as const,
+            sellAmount: c.sellAmount,
+            buyAmount: c.buyAmount,
+            feeAmount: c.feeAmount,
+            validTo: c.validTo,
+            creationDate: c.creationDate,
+            executedSellAmount: null,
+            executedBuyAmount: null,
+          })),
+        )
+        .onConflictDoNothing();
+
+      await context.db.sql
+        .delete(candidateDiscreteOrder)
+        .where(
+          and(
+            eq(candidateDiscreteOrder.chainId, chainId),
+            inArray(
+              candidateDiscreteOrder.orderUid,
+              orphanCandidates.map((c) => c.orderUid),
+            ),
+          ),
+        );
+
+      console.log(
+        `[COW:C2] block=${event.block.number} chain=${chainId} parent-cancelled=${orphanCandidates.length}`,
+      );
+    }
+  }
+
   // Promoted candidates are always deleted below — no join needed to filter them.
   // Skip TWAP parts whose validity window hasn't started (possibleValidAfterTimestamp).
   const unconfirmed = await context.db.sql
@@ -395,6 +479,39 @@ ponder.on("StatusUpdater:block", async ({ event, context }) => {
         `[COW:C3] block=${event.block.number} chain=${chainId} open=${openOrders.length} updated=${updated}`,
       );
     }
+  }
+
+  // Parent-cancelled cascade: any open discrete_order whose parent generator
+  // is Cancelled and whose API state is non-terminal (not fulfilled / unfilled
+  // / expired / cancelled) should be cancelled from on-chain truth. The API
+  // loop above already applied API-terminal statuses, so what remains as
+  // status='open' here is exactly the "API silent" set.
+  const cancelledGeneratorIds = (
+    await context.db.sql
+      .select({ id: conditionalOrderGenerator.eventId })
+      .from(conditionalOrderGenerator)
+      .where(
+        and(
+          eq(conditionalOrderGenerator.chainId, chainId),
+          eq(conditionalOrderGenerator.status, "Cancelled"),
+        ),
+      )
+  ).map((g) => g.id);
+
+  if (cancelledGeneratorIds.length > 0) {
+    await context.db.sql
+      .update(discreteOrder)
+      .set({ status: "cancelled" })
+      .where(
+        and(
+          eq(discreteOrder.chainId, chainId),
+          eq(discreteOrder.status, "open"),
+          inArray(
+            discreteOrder.conditionalOrderGeneratorId,
+            cancelledGeneratorIds,
+          ),
+        ),
+      );
   }
 
   // Expire orders past validTo
