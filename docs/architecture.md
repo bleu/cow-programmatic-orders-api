@@ -171,7 +171,7 @@ Stats are accumulated and logged every 30 seconds to track throughput without pe
 
 ### blockHandler.ts -- C1 / C2 / C3 / C4 / C5
 
-Five live-only block handlers, all in a single file. They only run during live sync (startBlock: "latest") to avoid hammering the orderbook API during historical backfill. C1 and C5 share a per-chain batch cap (`MAX_GENERATORS_PER_BLOCK_<chainId>`, default 200) and use a priority queue ordered by oldest `lastCheckBlock` first, so busy chains degrade gracefully rather than stalling.
+Five live-only block handlers, all in a single file. They only run during live sync (startBlock: "latest") to avoid hammering the orderbook API during historical backfill. C1 and C5 share a per-chain batch cap (`MAX_GENERATORS_PER_BLOCK_<chainId>`, default 200) and pull from a priority queue ordered by oldest `lastCheckBlock` first. Generators past the cap defer to the next block.
 
 **C1 — ContractPoller** (every block, mainnet + gnosis): Multicalls `getTradeableOrderWithSignature` on ComposableCoW for each `Active` generator where `allCandidatesKnown=false`. A success result creates a `candidateDiscreteOrder` entry. A `SingleOrderNotAuthed` error marks the generator as `Cancelled` with `lastPollResult='cancelled:SingleOrderNotAuthed'`. Other errors (tryNextBlock, tryAtEpoch, etc.) advance the generator's `nextCheckBlock` accordingly. Single-shot non-deterministic types (GoodAfterTime, TradeAboveThreshold) set `allCandidatesKnown=true` after first success. Can be disabled with `DISABLE_POLL_RESULT_CHECK=true`.
 
@@ -185,10 +185,7 @@ Five live-only block handlers, all in a single file. They only run during live s
 
 ## Order Types and Decoders
 
-Eight order types are supported, each with a dedicated decoder in `src/decoders/`:
-
-- **Deterministic** (UIDs precomputed at creation, `allCandidatesKnown=true`, not polled by C1): TWAP, StopLoss, CirclesBackingOrder.
-- **Non-deterministic** (UIDs depend on runtime state, polled every block by C1): PerpetualSwap, GoodAfterTime, TradeAboveThreshold, SwapOrderHandler, ERC4626CowSwapFeeBurner.
+Eight order types are supported, each with a dedicated decoder in `src/decoders/`. Three are deterministic (UIDs precomputed at creation, `allCandidatesKnown=true`, not polled by C1): TWAP, StopLoss, CirclesBackingOrder. Five are non-deterministic (UIDs depend on runtime state, polled every block by C1): PerpetualSwap, GoodAfterTime, TradeAboveThreshold, SwapOrderHandler, ERC4626CowSwapFeeBurner.
 
 Core handler addresses are identical across all chains; some newer handlers (SwapOrderHandler, ERC4626CowSwapFeeBurner) are per-chain overlays. Both are tracked in `src/utils/order-types.ts`.
 

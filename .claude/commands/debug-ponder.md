@@ -305,7 +305,7 @@ Healthy output (one ENTER + one DONE per block where work happens):
 
 If `due=0` on every block for a long time, either there are no Active deterministic generators on that chain yet, or the kill-switch is on (see below).
 
-### Cancellations detected — the interesting signal
+### Cancellations detected
 
 ```bash
 grep -n "\[COW:C5\] CANCELLED" ponder.log
@@ -327,7 +327,7 @@ SELECT count(*) FROM discrete_order
 WHERE status='cancelled' AND conditional_order_generator_id = '<eventId>';
 ```
 
-### Multicall errors — non-fatal, will self-heal
+### Multicall errors
 
 `errors > 0` on a DONE line is not fatal: C5 leaves `nextCheckBlock` untouched for errored entries so they retry on the next sweep. Sustained nonzero `errors` across many blocks means the RPC provider is flaky — consider swapping provider (see COW-887 on DRPC flakiness).
 
