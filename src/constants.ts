@@ -19,6 +19,16 @@ export const RECHECK_INTERVAL = BigInt(ORDERBOOK_POLL_INTERVAL);
 export const SIGNING_SCHEME_EIP1271 = "eip1271";
 
 /**
+ * COW-908: Hard per-block ceiling on how many generators the C1 ContractPoller
+ * will multicall in a single block. Generators exceeding the cap defer to the
+ * next block (prioritized by oldest lastCheckBlock first).
+ *
+ * Override per chain with env var MAX_GENERATORS_PER_BLOCK_<chainId>, e.g.
+ * MAX_GENERATORS_PER_BLOCK_1=200, MAX_GENERATORS_PER_BLOCK_100=400.
+ */
+export const DEFAULT_MAX_GENERATORS_PER_BLOCK = 200;
+
+/**
  * Progressive backoff for generators stuck returning PollResult.tryNextBlock.
  *
  * Every tryNextBlock response increments a counter on the generator; any other
