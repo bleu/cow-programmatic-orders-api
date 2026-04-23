@@ -1,7 +1,7 @@
 import { ComposableCowAbi } from "../abis/ComposableCowAbi";
 import { CoWShedFactoryAbi } from "../abis/CoWShedFactoryAbi";
 import { GPv2SettlementAbi } from "../abis/GPv2SettlementAbi";
-import { HANDLER_ADDRESS_TO_TYPE } from "./utils/order-types";
+import { ALL_HANDLER_ADDRESSES } from "./utils/order-types";
 
 /**
  * Supported chain IDs — update this type when adding a new chain.
@@ -145,13 +145,17 @@ export const COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID: Record<SupportedChainId, `0x${s
 };
 
 /**
- * Known ComposableCoW order handler addresses — derived from the canonical HANDLER_ADDRESS_TO_TYPE
- * map in src/utils/order-types.ts (single source of truth). Used by the EIP-1271 decoder and
- * orderbook handlers to validate that a decoded signature belongs to a composable order.
+ * Known ComposableCoW order handler addresses — derived from the ALL_HANDLER_ADDRESSES
+ * list in src/utils/order-types.ts (union of the chain-agnostic map + all per-chain overlays).
+ * Used by the EIP-1271 decoder and orderbook handlers to validate that a decoded signature
+ * belongs to a composable order.
+ *
+ * Chain-global union by design: a Gnosis-only handler address (e.g. CirclesBackingOrder) is
+ * accepted on any chain here. Cross-chain false positives are benign — the handler wouldn't
+ * actually be deployed at that address on the wrong chain, so downstream calls would revert —
+ * and keeping one flat set avoids threading chainId through every EIP-1271 validation site.
  */
-export const COMPOSABLE_COW_HANDLER_ADDRESSES = new Set(
-  Object.keys(HANDLER_ADDRESS_TO_TYPE),
-);
+export const COMPOSABLE_COW_HANDLER_ADDRESSES = new Set(ALL_HANDLER_ADDRESSES);
 
 /**
  * CoW Protocol Orderbook API base URLs per chain ID.

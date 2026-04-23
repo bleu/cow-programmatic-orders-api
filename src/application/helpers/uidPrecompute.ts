@@ -7,11 +7,12 @@
  * Supported order types:
  *   - TWAP: all N part UIDs computable (given t0 or block.timestamp for t0=0)
  *   - StopLoss: single UID computable (order data is fully in staticInput)
+ *   - CirclesBackingOrder: single UID computable (staticInput + handler immutables; receiver=owner)
  *
  * Non-deterministic types (PerpetualSwap, TradeAboveThreshold) depend on
  * on-chain state (oracle prices, balances) and cannot be pre-computed.
  *
- * Reference: composable-cow/src/types/twap/TWAP.sol, StopLoss.sol
+ * Reference: composable-cow/src/types/twap/TWAP.sol, StopLoss.sol, circles-lbp/CirclesBackingOrder.sol
  */
 
 import type { Hex } from "viem";
@@ -70,6 +71,8 @@ export function precomputeOrderUids(
       return precomputeTwapUids(chainId, owner, decodedParams, blockTimestamp);
     case "StopLoss":
       return precomputeStopLossUid(chainId, owner, decodedParams);
+    case "CirclesBackingOrder":
+      return precomputeCirclesBackingOrderUid(chainId, owner, decodedParams);
     default:
       // PerpetualSwap, GoodAfterTime, TradeAboveThreshold — not deterministic
       return null;
@@ -335,6 +338,64 @@ function precomputeStopLossUid(
     feeAmount: 0n,
     kind: isSellOrder === "true" ? KIND_SELL : KIND_BUY,
     partiallyFillable: isPartiallyFillable === "true",
+    sellTokenBalance: BALANCE_ERC20,
+    buyTokenBalance: BALANCE_ERC20,
+  };
+
+  const uid = computeOrderUid(chainId, orderData, owner);
+
+  return [{
+    orderUid: uid.toLowerCase(),
+    validTo: Number(validTo),
+    sellAmount,
+    buyAmount,
+    feeAmount: "0",
+    possibleValidAfterTimestamp: null,
+  }];
+}
+
+// ─── CirclesBackingOrder ────────────────────────────────────────────────────
+
+/**
+ * Compute the single CirclesBackingOrder UID.
+ *
+ * Source: aboutcircles/circles-lbp/src/CirclesBackingOrder.sol (verified on Gnosis).
+ *   - sellToken, sellAmount come from handler constructor immutables (merged into
+ *     decodedParams by the event handler before calling here).
+ *   - buyToken, buyAmount, validTo, appData come from staticInput.
+ *   - receiver = owner (hardcoded in getOrder).
+ *   - kind = KIND_SELL, partiallyFillable = false, feeAmount = 0,
+ *     sellTokenBalance = buyTokenBalance = BALANCE_ERC20 (all contract constants).
+ *   - On-chain reads in getTradeableOrder are revert guards only — they do not
+ *     affect the returned order, so the UID is fully deterministic at creation.
+ */
+function precomputeCirclesBackingOrderUid(
+  chainId: number,
+  owner: Hex,
+  params: Record<string, string>,
+): PrecomputedOrder[] | null {
+  const sellToken = params["sellToken"] as Hex | undefined;
+  const buyToken = params["buyToken"] as Hex | undefined;
+  const sellAmount = params["sellAmount"];
+  const buyAmount = params["buyAmount"];
+  const validTo = params["validTo"];
+  const appData = params["appData"] as Hex | undefined;
+
+  if (!sellToken || !buyToken || !sellAmount || !buyAmount || !validTo || !appData) {
+    return null;
+  }
+
+  const orderData: GPv2OrderData = {
+    sellToken,
+    buyToken,
+    receiver: owner,
+    sellAmount: BigInt(sellAmount),
+    buyAmount: BigInt(buyAmount),
+    validTo: Number(validTo),
+    appData,
+    feeAmount: 0n,
+    kind: KIND_SELL,
+    partiallyFillable: false,
     sellTokenBalance: BALANCE_ERC20,
     buyTokenBalance: BALANCE_ERC20,
   };
