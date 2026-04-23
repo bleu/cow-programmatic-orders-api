@@ -105,6 +105,43 @@ After running all steps, output:
 
 ---
 
+## Precompute Diagnostics
+
+Deterministic types (TWAP, StopLoss) should have all UIDs precomputed at creation — they should NOT appear in C1 polling. If precompute fails, the generator falls into C1 and wastes RPC calls every block.
+
+### Precompute failures — why generators fall into C1
+
+```bash
+grep -n "\[COW:PRECOMPUTE\] SKIP" ponder.log | head -20
+```
+
+Each line is a deterministic generator that FAILED precompute and will fall into C1 polling. The `reason=` field tells you why:
+
+| reason | meaning | fix |
+|--------|---------|-----|
+| `decodedParams_null` | Decode of staticInput returned null | Check decoder for that order type; likely malformed on-chain data |
+| `missing_params` | Required fields missing after decode (see `missing=` for which) | Decoder returned incomplete data |
+| `invalid_math` | nParts <= 0 or tSeconds <= 0 | Invalid TWAP params on-chain |
+| `too_many_parts` | nParts > 100,000 | Extremely large TWAP; raise limit if legitimate |
+
+**If you see SKIP lines**: count them and cross-reference with C1's `due=` count. If they match, precompute failures are the sole cause of C1 polling for deterministic types.
+
+```bash
+grep -c "\[COW:PRECOMPUTE\] SKIP" ponder.log
+```
+
+### Verify deterministic types are NOT in C1
+
+After precompute fixes, C1 should only poll non-deterministic types. Check if C1 success lines show TWAP/StopLoss (they shouldn't):
+
+```bash
+grep "\[COW:C1\] DONE" ponder.log | grep 'chain=100' | tail -5
+```
+
+A healthy `due=` count should be much smaller than total generators — only non-deterministic types should remain.
+
+---
+
 ## Orderbook Cache (M3)
 
 The `orderbook_cache` table persists across Ponder resyncs (it is NOT an `onchainTable`). These steps verify the cache is alive and working.
@@ -198,6 +235,55 @@ grep -n "\[COW:OB:POLL\] DONE" ponder.log | head -5
 ```
 
 The `block=` values should be close to the current chain head. If you see poll DONE lines during historical blocks, the `PollResultPoller` start block may not be set to `"latest"`.
+
+---
+
+## C1 tryNextBlock backoff
+
+Generators that keep returning `PollResult.tryNextBlock` are progressively rate-limited. After 50 consecutive tryNextBlock responses the recheck interval jumps from +1 to +10 blocks; after 200, to +50.
+
+### DONE log — backoff count per cycle
+
+```bash
+grep -n "\[COW:C1\] DONE" ponder.log | tail -20
+```
+
+Healthy output (mainnet, few stuck generators):
+```
+[COW:C1] DONE block=12345678 chain=1 due=12 success=2 never=0 backedOff=0
+```
+
+Gnosis after warm-up — expect non-zero `backedOff=` as chronic offenders climb past the 50-threshold:
+```
+[COW:C1] DONE block=45678901 chain=100 due=180 success=3 never=0 backedOff=150
+```
+
+`backedOff=` counts generators whose counter exceeded the warmup threshold on *this* block — i.e., they received a backoff longer than +1.
+
+### Counter distribution — verify the mechanism is climbing
+
+Run against the indexer Postgres (see `docker compose up -d`):
+
+```sql
+SELECT chain_id,
+       CASE
+         WHEN consecutive_try_next_block <= 50 THEN '0-50 (warmup)'
+         WHEN consecutive_try_next_block <= 200 THEN '51-200 (mid)'
+         ELSE '201+ (cold)'
+       END AS tier,
+       COUNT(*) AS generators,
+       MAX(consecutive_try_next_block) AS max_count
+FROM conditional_order_generator
+WHERE status = 'Active' AND all_candidates_known = false
+GROUP BY 1, 2
+ORDER BY 1, 2;
+```
+
+On a healthy gnosis run post-sync you should see a non-trivial bucket in `51-200` and/or `201+`. If everything sits at `0-50` after >300 gnosis blocks, either COW-904 eliminated all such generators (success) *or* the counter is not incrementing (bug).
+
+### Red flag — counter stuck high but `due=` still huge
+
+If `consecutive_try_next_block` is large for many generators *and* the C1 `due=` count is still massive every block, the backoff is not actually deferring those generators — check that the C1 SELECT filters by `nextCheckBlock <= currentBlock` and that the handler updated `nextCheckBlock = currentBlock + <backoff>` correctly on tryNextBlock.
 
 ---
 

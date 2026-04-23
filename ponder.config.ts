@@ -39,10 +39,14 @@ export default createConfig({
   },
   blocks: {
     // C1: Contract Poller — RPC multicall for non-deterministic generators
+    // Gnosis interval=4 (~20s) vs mainnet interval=1 (~12s).
+    // The CoW watch-tower processes orders sequentially — with 1,461+ gnosis
+    // generators, a full cycle takes many blocks. Polling every 5s gnosis block
+    // wastes RPC calls since state rarely changes between blocks.
     ContractPoller: {
       chain: {
         mainnet: { startBlock: "latest" },
-        gnosis: { startBlock: "latest" },
+        gnosis: { startBlock: "latest", interval: 4 },
       },
       interval: 1,
     },
