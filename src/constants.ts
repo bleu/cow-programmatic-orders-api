@@ -45,3 +45,14 @@ export const TRY_NEXT_BLOCK_COOLDOWN_THRESHOLD = 200;
 export const TRY_NEXT_BLOCK_BACKOFF_WARMUP = 1n;
 export const TRY_NEXT_BLOCK_BACKOFF_MID = 10n;
 export const TRY_NEXT_BLOCK_BACKOFF_COLD = 50n;
+
+/**
+ * C5 (DeterministicCancellationSweeper) re-check cadence, in blocks.
+ *
+ * For deterministic generators (`allCandidatesKnown = true`), `remove()` detection
+ * is via a `ComposableCoW.singleOrders(owner, hash)` storage read. `remove()` is
+ * rare; a ~100 block cadence gives a worst-case detection lag of ~20 min on
+ * mainnet and ~8 min on Gnosis while keeping the RPC cost well below C1's
+ * every-block poll.
+ */
+export const DETERMINISTIC_CANCEL_SWEEP_INTERVAL = 100n;

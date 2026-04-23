@@ -1,10 +1,14 @@
 /**
- * Block handlers — four responsibilities split into separate Ponder block entries.
+ * Block handlers — five responsibilities split into separate Ponder block entries.
  *
  * C1 (ContractPoller):      RPC multicall for non-deterministic generators. Every block.
  * C2 (CandidateConfirmer):  API batch check for unconfirmed candidates. Every block.
  * C3 (StatusUpdater):       API batch check for open discrete orders + expiry. Every block.
  * C4 (HistoricalBootstrap): One-time owner fetch for non-deterministic backfill orders.
+ * C5 (DeterministicCancellationSweeper): singleOrders() mapping read for
+ *                           deterministic generators (allCandidatesKnown=true) that
+ *                           C1 skips. Runs every block but re-checks each generator
+ *                           only every DETERMINISTIC_CANCEL_SWEEP_INTERVAL blocks.
  *
  * All handlers start at "latest" — only run during live sync.
  * C4 additionally has endBlock: "latest", so it fires exactly once.
@@ -20,6 +24,7 @@ import {
 } from "../../data";
 import {
   DEFAULT_MAX_GENERATORS_PER_BLOCK,
+  DETERMINISTIC_CANCEL_SWEEP_INTERVAL,
   RECHECK_INTERVAL,
   TRY_NEXT_BLOCK_WARMUP_THRESHOLD,
   TRY_NEXT_BLOCK_COOLDOWN_THRESHOLD,
@@ -38,6 +43,21 @@ const NON_DETERMINISTIC_TYPES = ["PerpetualSwap", "GoodAfterTime", "TradeAboveTh
 const SINGLE_SHOT_NON_DETERMINISTIC = ["GoodAfterTime", "TradeAboveThreshold"] as const;
 const BLOCK_NEVER = 2n ** 63n - 1n; // sentinel for epoch-scheduled generators (PollTryAtEpoch)
 const VALID_DISCRETE_STATUSES = new Set(["fulfilled", "unfilled", "expired", "cancelled"]);
+
+// Minimal ABI for C5: reads the singleOrders(owner, hash) mapping on ComposableCoW.
+// `false` means the owner called remove() — generator is cancelled on-chain.
+const SINGLE_ORDERS_ABI = [
+  {
+    inputs: [
+      { internalType: "address", name: "", type: "address" },
+      { internalType: "bytes32", name: "", type: "bytes32" },
+    ],
+    name: "singleOrders",
+    outputs: [{ internalType: "bool", name: "", type: "bool" }],
+    stateMutability: "view",
+    type: "function",
+  },
+] as const;
 
 
 // ─── C1: Contract Poller ─────────────────────────────────────────────────────
@@ -605,6 +625,129 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
 
   console.log(
     `[COW:C4] DONE block=${event.block.number} chain=${chainId} discovered=${totalDiscovered}`,
+  );
+});
+
+// ─── C5: Deterministic Cancellation Sweeper ──────────────────────────────────
+// C1 skips generators with allCandidatesKnown=true (deterministic types: TWAP,
+// StopLoss, CirclesBackingOrder), so SingleOrderNotAuthed is never observed
+// for them. This handler closes that gap by reading
+// ComposableCoW.singleOrders(owner, hash) on a DETERMINISTIC_CANCEL_SWEEP_INTERVAL
+// cadence. A `false` result means the owner called remove() on-chain → flip to
+// Cancelled, which lets the C2/C3 parent-cancelled cascade (COW-918) reconcile
+// the child discrete / candidate rows on the next block.
+
+ponder.on("DeterministicCancellationSweeper:block", async ({ event, context }) => {
+  if (process.env.DISABLE_DETERMINISTIC_CANCEL_SWEEP) return;
+
+  const chainId = context.chain.id as SupportedChainId;
+  const composableCowAddress = COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID[chainId];
+  if (!composableCowAddress) return;
+
+  const currentBlock = event.block.number;
+
+  const maxGeneratorsPerBlock =
+    Number(process.env[`MAX_GENERATORS_PER_BLOCK_${chainId}`]) ||
+    DEFAULT_MAX_GENERATORS_PER_BLOCK;
+
+  const dueGenerators = await context.db.sql
+    .select({
+      generatorId: conditionalOrderGenerator.eventId,
+      owner: conditionalOrderGenerator.owner,
+      hash: conditionalOrderGenerator.hash,
+      orderType: conditionalOrderGenerator.orderType,
+    })
+    .from(conditionalOrderGenerator)
+    .where(
+      and(
+        eq(conditionalOrderGenerator.chainId, chainId),
+        eq(conditionalOrderGenerator.status, "Active"),
+        eq(conditionalOrderGenerator.allCandidatesKnown, true),
+        or(
+          sql`${conditionalOrderGenerator.nextCheckBlock} IS NULL`,
+          lte(conditionalOrderGenerator.nextCheckBlock, currentBlock),
+        ),
+      ),
+    )
+    .orderBy(asc(conditionalOrderGenerator.lastCheckBlock))
+    .limit(maxGeneratorsPerBlock) as {
+    generatorId: string;
+    owner: Hex;
+    hash: Hex;
+    orderType: string;
+  }[];
+
+  if (dueGenerators.length === 0) return;
+
+  console.log(
+    `[COW:C5] ENTER block=${currentBlock} chain=${chainId} due=${dueGenerators.length}`,
+  );
+
+  const results = await context.client.multicall({
+    contracts: dueGenerators.map((g) => ({
+      address: composableCowAddress,
+      abi: SINGLE_ORDERS_ABI,
+      functionName: "singleOrders" as const,
+      args: [g.owner, g.hash] as const,
+    })),
+    allowFailure: true,
+  });
+
+  let cancelledCount = 0;
+  let stillActiveCount = 0;
+  let errorCount = 0;
+
+  for (let i = 0; i < dueGenerators.length; i++) {
+    const result = results[i];
+    const gen = dueGenerators[i]!;
+
+    if (result === undefined || result.status === "failure") {
+      errorCount++;
+      // Leave state untouched — retry next sweep cycle.
+      continue;
+    }
+
+    const stillAuthorized = result.result as boolean;
+
+    if (!stillAuthorized) {
+      await context.db.sql
+        .update(conditionalOrderGenerator)
+        .set({
+          status: "Cancelled",
+          lastCheckBlock: currentBlock,
+          lastPollResult: "cancelled:removeMapping",
+          nextCheckBlock: null,
+        })
+        .where(
+          and(
+            eq(conditionalOrderGenerator.chainId, chainId),
+            eq(conditionalOrderGenerator.eventId, gen.generatorId),
+          ),
+        );
+      console.log(
+        `[COW:C5] CANCELLED generatorId=${gen.generatorId} orderType=${gen.orderType} block=${currentBlock} chain=${chainId}`,
+      );
+      cancelledCount++;
+    } else {
+      await context.db.sql
+        .update(conditionalOrderGenerator)
+        .set({
+          lastCheckBlock: currentBlock,
+          nextCheckBlock: currentBlock + DETERMINISTIC_CANCEL_SWEEP_INTERVAL,
+          lastPollResult: "sweep:stillAuthorized",
+        })
+        .where(
+          and(
+            eq(conditionalOrderGenerator.chainId, chainId),
+            eq(conditionalOrderGenerator.eventId, gen.generatorId),
+          ),
+        );
+      stillActiveCount++;
+    }
+  }
+
+  console.log(
+    `[COW:C5] DONE block=${currentBlock} chain=${chainId} due=${dueGenerators.length} cancelled=${cancelledCount} stillActive=${stillActiveCount} errors=${errorCount}`,
   );
 });
 

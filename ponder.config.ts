@@ -74,5 +74,16 @@ export default createConfig({
       },
       interval: 1,
     },
+    // C5: Deterministic Cancellation Sweeper — singleOrders() mapping read for
+    // generators C1 skips (allCandidatesKnown=true). Cadence per generator is
+    // DETERMINISTIC_CANCEL_SWEEP_INTERVAL blocks; the handler itself is cheap
+    // when nothing is due.
+    DeterministicCancellationSweeper: {
+      chain: {
+        mainnet: { startBlock: "latest" },
+        gnosis: { startBlock: "latest" },
+      },
+      interval: 1,
+    },
   },
 });
