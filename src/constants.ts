@@ -56,3 +56,25 @@ export const TRY_NEXT_BLOCK_BACKOFF_COLD = 50n;
  * every-block poll.
  */
 export const DETERMINISTIC_CANCEL_SWEEP_INTERVAL = 100n;
+
+/**
+ * Hard wall-clock cap for a single orderbook HTTP request (per page or per
+ * batched `by_uids` chunk). Keeps block-handler transactions short so a slow
+ * api.cow.fi response cannot drive the indexer into Ponder's retry/shutdown
+ * path. See `src/application/helpers/withTimeout.ts`.
+ */
+export const ORDERBOOK_HTTP_TIMEOUT_MS = 10_000;
+
+/**
+ * Hard wall-clock cap for a block handler's aggregate `context.client.multicall`
+ * call (C1, C5). viem has no per-call signal; the timer races the promise and
+ * the handler returns cleanly on breach.
+ */
+export const BLOCK_HANDLER_RPC_TIMEOUT_MS = 15_000;
+
+/**
+ * Hard wall-clock cap for the whole per-owner bootstrap fetch in C4
+ * (account pagination + by_uids refresh). Owners that exceed this are skipped;
+ * the normal C1 / C2 path picks them up on subsequent blocks.
+ */
+export const BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS = 30_000;
