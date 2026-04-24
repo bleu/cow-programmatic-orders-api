@@ -23,6 +23,8 @@ import {
   type SupportedChainId,
 } from "../../data";
 import {
+  BLOCK_HANDLER_RPC_TIMEOUT_MS,
+  BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
   DEFAULT_MAX_GENERATORS_PER_BLOCK,
   DETERMINISTIC_CANCEL_SWEEP_INTERVAL,
   RECHECK_INTERVAL,
@@ -33,6 +35,7 @@ import {
   TRY_NEXT_BLOCK_BACKOFF_COLD,
 } from "../../constants";
 import { fetchComposableOrders, fetchOrderStatusByUids, upsertDiscreteOrders } from "../helpers/orderbookClient";
+import { TimeoutError, withTimeout } from "../helpers/withTimeout";
 import {
   GET_TRADEABLE_ORDER_WITH_ERRORS_ABI,
   parsePollError,
@@ -120,7 +123,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
     `[COW:C1] ENTER block=${currentBlock} chain=${chainId} due=${dueOrders.length}`,
   );
 
-  const results = await context.client.multicall({
+  const c1MulticallPromise = context.client.multicall({
     contracts: dueOrders.map((order) => ({
       address: composableCowAddress,
       abi: GET_TRADEABLE_ORDER_WITH_ERRORS_ABI,
@@ -134,6 +137,23 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
     })),
     allowFailure: true,
   });
+
+  let results: Awaited<typeof c1MulticallPromise>;
+  try {
+    results = await withTimeout(
+      c1MulticallPromise,
+      BLOCK_HANDLER_RPC_TIMEOUT_MS,
+      "c1:multicall",
+    );
+  } catch (err) {
+    if (err instanceof TimeoutError) {
+      console.warn(
+        `[COW:C1] multicall timeout block=${currentBlock} chain=${chainId} due=${dueOrders.length}`,
+      );
+      return;
+    }
+    throw err;
+  }
 
   let neverCount = 0;
   let successCount = 0;
@@ -407,40 +427,46 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
   const uids = unconfirmed.map((c) => c.orderUid);
   const statuses = await fetchOrderStatusByUids(context, chainId, uids);
 
-  let confirmed = 0;
+  type DiscreteStatus = "open" | "fulfilled" | "unfilled" | "expired" | "cancelled";
+  const rowsToUpsert: (typeof discreteOrder.$inferInsert)[] = [];
   const confirmedUids: string[] = [];
 
   for (const candidate of unconfirmed) {
     const orderbookEntry = statuses.get(candidate.orderUid);
     if (!orderbookEntry) continue; // not on API yet — retry next block
-    const apiStatus = orderbookEntry.status;
 
+    rowsToUpsert.push({
+      orderUid: candidate.orderUid,
+      chainId,
+      conditionalOrderGeneratorId: candidate.generatorId,
+      status: orderbookEntry.status as DiscreteStatus,
+      sellAmount: candidate.sellAmount,
+      buyAmount: candidate.buyAmount,
+      feeAmount: candidate.feeAmount,
+      validTo: candidate.validTo,
+      creationDate: candidate.creationDate,
+      executedSellAmount: orderbookEntry.executedSellAmount,
+      executedBuyAmount: orderbookEntry.executedBuyAmount,
+    });
+    confirmedUids.push(candidate.orderUid);
+  }
+
+  // One multi-row upsert keeps the block TX open for one round-trip instead of N.
+  if (rowsToUpsert.length > 0) {
     await context.db.sql
       .insert(discreteOrder)
-      .values({
-        orderUid: candidate.orderUid,
-        chainId,
-        conditionalOrderGeneratorId: candidate.generatorId,
-        status: apiStatus as "open" | "fulfilled" | "unfilled" | "expired" | "cancelled",
-        sellAmount: candidate.sellAmount,
-        buyAmount: candidate.buyAmount,
-        feeAmount: candidate.feeAmount,
-        validTo: candidate.validTo,
-        creationDate: candidate.creationDate,
-        executedSellAmount: orderbookEntry.executedSellAmount,
-        executedBuyAmount: orderbookEntry.executedBuyAmount,
-      })
+      .values(rowsToUpsert)
       .onConflictDoUpdate({
         target: [discreteOrder.chainId, discreteOrder.orderUid],
         set: {
-          status: apiStatus as "open" | "fulfilled" | "unfilled" | "expired" | "cancelled",
-          executedSellAmount: orderbookEntry.executedSellAmount,
-          executedBuyAmount: orderbookEntry.executedBuyAmount,
+          status: sql`excluded.status`,
+          executedSellAmount: sql`excluded.executed_sell_amount`,
+          executedBuyAmount: sql`excluded.executed_buy_amount`,
         },
       });
-    confirmedUids.push(candidate.orderUid);
-    confirmed++;
   }
+
+  const confirmed = rowsToUpsert.length;
 
   // Clean up promoted candidates
   if (confirmedUids.length > 0) {
@@ -618,9 +644,23 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
 
   let totalDiscovered = 0;
   for (const owner of owners) {
-    const orders = await fetchComposableOrders(context, chainId, owner);
-    const count = await upsertDiscreteOrders(context, chainId, orders);
-    totalDiscovered += count;
+    try {
+      const orders = await withTimeout(
+        fetchComposableOrders(context, chainId, owner),
+        BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
+        `c4:owner:${owner}`,
+      );
+      const count = await upsertDiscreteOrders(context, chainId, orders);
+      totalDiscovered += count;
+    } catch (err) {
+      if (err instanceof TimeoutError) {
+        console.warn(
+          `[COW:C4] owner timeout owner=${owner} chain=${chainId} after=${BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS}ms`,
+        );
+        continue;
+      }
+      throw err;
+    }
   }
 
   console.log(
@@ -683,7 +723,7 @@ ponder.on("DeterministicCancellationSweeper:block", async ({ event, context }) =
     `[COW:C5] ENTER block=${currentBlock} chain=${chainId} due=${dueGenerators.length}`,
   );
 
-  const results = await context.client.multicall({
+  const c5MulticallPromise = context.client.multicall({
     contracts: dueGenerators.map((g) => ({
       address: composableCowAddress,
       abi: SINGLE_ORDERS_ABI,
@@ -692,6 +732,23 @@ ponder.on("DeterministicCancellationSweeper:block", async ({ event, context }) =
     })),
     allowFailure: true,
   });
+
+  let results: Awaited<typeof c5MulticallPromise>;
+  try {
+    results = await withTimeout(
+      c5MulticallPromise,
+      BLOCK_HANDLER_RPC_TIMEOUT_MS,
+      "c5:multicall",
+    );
+  } catch (err) {
+    if (err instanceof TimeoutError) {
+      console.warn(
+        `[COW:C5] multicall timeout block=${currentBlock} chain=${chainId} due=${dueGenerators.length}`,
+      );
+      return;
+    }
+    throw err;
+  }
 
   let cancelledCount = 0;
   let stillActiveCount = 0;
