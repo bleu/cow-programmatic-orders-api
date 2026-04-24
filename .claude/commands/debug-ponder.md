@@ -287,6 +287,74 @@ If `consecutive_try_next_block` is large for many generators *and* the C1 `due=`
 
 ---
 
+## C5 DeterministicCancellationSweeper — singleOrders() mapping sweep
+
+`DeterministicCancellationSweeper` in `ponder.config.ts` runs every block but only does work when at least one deterministic generator (`allCandidatesKnown = true AND status = "Active"`) has `nextCheckBlock <= currentBlock`. Per-generator cadence is `DETERMINISTIC_CANCEL_SWEEP_INTERVAL` blocks (see `src/constants.ts`, default 100). The handler reads `ComposableCoW.singleOrders(owner, hash)` — `false` means the owner called `remove()` on-chain.
+
+### ENTER / DONE — per-sweep summary
+
+```bash
+grep -n "\[COW:C5\]" ponder.log | tail -40
+```
+
+Healthy output (one ENTER + one DONE per block where work happens):
+```
+... [COW:C5] ENTER block=... chain=1 due=12
+... [COW:C5] DONE block=... chain=1 due=12 cancelled=0 stillActive=12 errors=0
+```
+
+If `due=0` on every block for a long time, either there are no Active deterministic generators on that chain yet, or the kill-switch is on (see below).
+
+### Cancellations detected
+
+```bash
+grep -n "\[COW:C5\] CANCELLED" ponder.log
+```
+
+Each line is a deterministic generator whose on-chain `singleOrders(owner, hash)` returned `false`:
+```
+[COW:C5] CANCELLED generatorId=... orderType=StopLoss block=... chain=1
+```
+
+After any `CANCELLED` line you should see COW-918's cascade fire on the next C2 block tick:
+```
+[COW:C2] block=... chain=1 parent-cancelled=N   ← candidates drained to discrete_order
+```
+
+C3's parent-cancelled sweep has no dedicated log line — verify via SQL:
+```sql
+SELECT count(*) FROM discrete_order
+WHERE status='cancelled' AND conditional_order_generator_id = '<eventId>';
+```
+
+### Multicall errors
+
+`errors > 0` on a DONE line is not fatal: C5 leaves `nextCheckBlock` untouched for errored entries so they retry on the next sweep. Sustained nonzero `errors` across many blocks means the RPC provider is flaky — consider swapping provider (see COW-887 on DRPC flakiness).
+
+### Sweep disabled (kill-switch)
+
+If operators see no `[COW:C5]` lines at all and expect them:
+```bash
+grep -n "DISABLE_DETERMINISTIC_CANCEL_SWEEP" .env.local env.prod 2>/dev/null
+```
+
+Non-empty means the sweeper is intentionally disabled via env var — same pattern as `DISABLE_POLL_RESULT_CHECK` for C1.
+
+### lastPollResult audit
+
+SQL spot-check for what C5 has touched:
+```sql
+SELECT chain_id, order_type, status, last_poll_result, count(*)
+FROM conditional_order_generator
+WHERE last_poll_result IN ('cancelled:removeMapping', 'sweep:stillAuthorized')
+GROUP BY 1,2,3,4
+ORDER BY 1,2,3,4;
+```
+
+`cancelled:removeMapping` rows are the on-chain-detected cancellations. `sweep:stillAuthorized` rows are healthy generators last confirmed still-authorized — cross-check that their `next_check_block - last_check_block == 100` (or whatever `DETERMINISTIC_CANCEL_SWEEP_INTERVAL` is set to).
+
+---
+
 ## Known Error Patterns
 
 | Error message | Cause | Fix |

@@ -21,8 +21,9 @@ import {
 import { and, eq, sql } from "ponder";
 import { encodeAbiParameters, keccak256, type Hex } from "viem";
 import { COMPOSABLE_COW_HANDLER_ADDRESSES, ORDERBOOK_API_URLS } from "../../data";
-import { SIGNING_SCHEME_EIP1271 } from "../../constants";
+import { ORDERBOOK_HTTP_TIMEOUT_MS, SIGNING_SCHEME_EIP1271 } from "../../constants";
 import { decodeEip1271Signature } from "../decoders/erc1271Signature";
+import { fetchWithTimeout, TimeoutError, withTimeout } from "./withTimeout";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -238,9 +239,27 @@ export async function fetchOrderStatusByUids(
     }
   }
 
-  // Batch-fetch non-cached UIDs
+  // Batch-fetch non-cached UIDs. Outer bound: if every chunk sits right at the
+  // per-request cap, the sequential loop could still linger well past a block
+  // budget — cap total HTTP wall-time for this call at 2 × the per-request cap.
   if (toFetch.length > 0) {
-    const fetched = await fetchOrdersByUids(apiBaseUrl, toFetch);
+    let fetched: OrderbookOrder[];
+    try {
+      fetched = await withTimeout(
+        fetchOrdersByUids(apiBaseUrl, toFetch),
+        ORDERBOOK_HTTP_TIMEOUT_MS * 2,
+        "ob:statusByUids",
+      );
+    } catch (err) {
+      if (err instanceof TimeoutError) {
+        console.warn(
+          `[COW:OB] statusByUids timeout chain=${chainId} toFetch=${toFetch.length} after=${ORDERBOOK_HTTP_TIMEOUT_MS * 2}ms`,
+        );
+        return result; // cache-only map — caller treats missing UIDs as "not on API yet"
+      }
+      throw err;
+    }
+
     const newTerminal: ComposableOrder[] = [];
 
     for (const order of fetched) {
@@ -289,7 +308,12 @@ async function fetchAccountOrders(
   while (true) {
     const url = `${apiBaseUrl}/api/v1/account/${owner}/orders?limit=${PAGE_LIMIT}&offset=${offset}`;
     try {
-      const response = await fetch(url);
+      const response = await fetchWithTimeout(
+        url,
+        undefined,
+        ORDERBOOK_HTTP_TIMEOUT_MS,
+        "ob:account",
+      );
       if (!response.ok) {
         console.warn(`[COW:OB] API ${response.status} owner=${owner}`);
         break;
@@ -299,6 +323,12 @@ async function fetchAccountOrders(
       if (page.length < PAGE_LIMIT) break; // last page
       offset += page.length;
     } catch (err) {
+      if (err instanceof TimeoutError) {
+        console.warn(
+          `[COW:OB] Account fetch timeout owner=${owner} offset=${offset} after=${ORDERBOOK_HTTP_TIMEOUT_MS}ms`,
+        );
+        break;
+      }
       console.warn(`[COW:OB] Fetch failed owner=${owner} err=${err}`);
       break;
     }
@@ -320,11 +350,16 @@ async function fetchOrdersByUids(
   for (let i = 0; i < uids.length; i += BATCH_SIZE) {
     const chunk = uids.slice(i, i + BATCH_SIZE);
     try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(chunk),
-      });
+      const response = await fetchWithTimeout(
+        url,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(chunk),
+        },
+        ORDERBOOK_HTTP_TIMEOUT_MS,
+        "ob:byUids",
+      );
       if (!response.ok) {
         console.warn(`[COW:OB] Batch fetch ${response.status} uids=${chunk.length} offset=${i}`);
         continue;
@@ -332,6 +367,12 @@ async function fetchOrdersByUids(
       const batch = (await response.json()) as OrderbookOrder[];
       results.push(...batch);
     } catch (err) {
+      if (err instanceof TimeoutError) {
+        console.warn(
+          `[COW:OB] Batch fetch timeout uids=${chunk.length} offset=${i} after=${ORDERBOOK_HTTP_TIMEOUT_MS}ms`,
+        );
+        continue;
+      }
       console.warn(`[COW:OB] Batch fetch failed err=${err} offset=${i}`);
     }
   }

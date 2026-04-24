@@ -1,10 +1,14 @@
 /**
- * Block handlers — four responsibilities split into separate Ponder block entries.
+ * Block handlers — five responsibilities split into separate Ponder block entries.
  *
  * C1 (ContractPoller):      RPC multicall for non-deterministic generators. Every block.
  * C2 (CandidateConfirmer):  API batch check for unconfirmed candidates. Every block.
  * C3 (StatusUpdater):       API batch check for open discrete orders + expiry. Every block.
  * C4 (HistoricalBootstrap): One-time owner fetch for non-deterministic backfill orders.
+ * C5 (DeterministicCancellationSweeper): singleOrders() mapping read for
+ *                           deterministic generators (allCandidatesKnown=true) that
+ *                           C1 skips. Runs every block but re-checks each generator
+ *                           only every DETERMINISTIC_CANCEL_SWEEP_INTERVAL blocks.
  *
  * All handlers start at "latest" — only run during live sync.
  * C4 additionally has endBlock: "latest", so it fires exactly once.
@@ -19,7 +23,10 @@ import {
   type SupportedChainId,
 } from "../../data";
 import {
+  BLOCK_HANDLER_RPC_TIMEOUT_MS,
+  BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
   DEFAULT_MAX_GENERATORS_PER_BLOCK,
+  DETERMINISTIC_CANCEL_SWEEP_INTERVAL,
   RECHECK_INTERVAL,
   TRY_NEXT_BLOCK_WARMUP_THRESHOLD,
   TRY_NEXT_BLOCK_COOLDOWN_THRESHOLD,
@@ -28,6 +35,7 @@ import {
   TRY_NEXT_BLOCK_BACKOFF_COLD,
 } from "../../constants";
 import { fetchComposableOrders, fetchOrderStatusByUids, upsertDiscreteOrders } from "../helpers/orderbookClient";
+import { TimeoutError, withTimeout } from "../helpers/withTimeout";
 import {
   GET_TRADEABLE_ORDER_WITH_ERRORS_ABI,
   parsePollError,
@@ -38,6 +46,21 @@ const NON_DETERMINISTIC_TYPES = ["PerpetualSwap", "GoodAfterTime", "TradeAboveTh
 const SINGLE_SHOT_NON_DETERMINISTIC = ["GoodAfterTime", "TradeAboveThreshold"] as const;
 const BLOCK_NEVER = 2n ** 63n - 1n; // sentinel for epoch-scheduled generators (PollTryAtEpoch)
 const VALID_DISCRETE_STATUSES = new Set(["fulfilled", "unfilled", "expired", "cancelled"]);
+
+// Minimal ABI for C5: reads the singleOrders(owner, hash) mapping on ComposableCoW.
+// `false` means the owner called remove() — generator is cancelled on-chain.
+const SINGLE_ORDERS_ABI = [
+  {
+    inputs: [
+      { internalType: "address", name: "", type: "address" },
+      { internalType: "bytes32", name: "", type: "bytes32" },
+    ],
+    name: "singleOrders",
+    outputs: [{ internalType: "bool", name: "", type: "bool" }],
+    stateMutability: "view",
+    type: "function",
+  },
+] as const;
 
 
 // ─── C1: Contract Poller ─────────────────────────────────────────────────────
@@ -100,7 +123,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
     `[COW:C1] ENTER block=${currentBlock} chain=${chainId} due=${dueOrders.length}`,
   );
 
-  const results = await context.client.multicall({
+  const c1MulticallPromise = context.client.multicall({
     contracts: dueOrders.map((order) => ({
       address: composableCowAddress,
       abi: GET_TRADEABLE_ORDER_WITH_ERRORS_ABI,
@@ -114,6 +137,23 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
     })),
     allowFailure: true,
   });
+
+  let results: Awaited<typeof c1MulticallPromise>;
+  try {
+    results = await withTimeout(
+      c1MulticallPromise,
+      BLOCK_HANDLER_RPC_TIMEOUT_MS,
+      "c1:multicall",
+    );
+  } catch (err) {
+    if (err instanceof TimeoutError) {
+      console.warn(
+        `[COW:C1] multicall timeout block=${currentBlock} chain=${chainId} due=${dueOrders.length}`,
+      );
+      return;
+    }
+    throw err;
+  }
 
   let neverCount = 0;
   let successCount = 0;
@@ -387,40 +427,46 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
   const uids = unconfirmed.map((c) => c.orderUid);
   const statuses = await fetchOrderStatusByUids(context, chainId, uids);
 
-  let confirmed = 0;
+  type DiscreteStatus = "open" | "fulfilled" | "unfilled" | "expired" | "cancelled";
+  const rowsToUpsert: (typeof discreteOrder.$inferInsert)[] = [];
   const confirmedUids: string[] = [];
 
   for (const candidate of unconfirmed) {
     const orderbookEntry = statuses.get(candidate.orderUid);
     if (!orderbookEntry) continue; // not on API yet — retry next block
-    const apiStatus = orderbookEntry.status;
 
+    rowsToUpsert.push({
+      orderUid: candidate.orderUid,
+      chainId,
+      conditionalOrderGeneratorId: candidate.generatorId,
+      status: orderbookEntry.status as DiscreteStatus,
+      sellAmount: candidate.sellAmount,
+      buyAmount: candidate.buyAmount,
+      feeAmount: candidate.feeAmount,
+      validTo: candidate.validTo,
+      creationDate: candidate.creationDate,
+      executedSellAmount: orderbookEntry.executedSellAmount,
+      executedBuyAmount: orderbookEntry.executedBuyAmount,
+    });
+    confirmedUids.push(candidate.orderUid);
+  }
+
+  // One multi-row upsert keeps the block TX open for one round-trip instead of N.
+  if (rowsToUpsert.length > 0) {
     await context.db.sql
       .insert(discreteOrder)
-      .values({
-        orderUid: candidate.orderUid,
-        chainId,
-        conditionalOrderGeneratorId: candidate.generatorId,
-        status: apiStatus as "open" | "fulfilled" | "unfilled" | "expired" | "cancelled",
-        sellAmount: candidate.sellAmount,
-        buyAmount: candidate.buyAmount,
-        feeAmount: candidate.feeAmount,
-        validTo: candidate.validTo,
-        creationDate: candidate.creationDate,
-        executedSellAmount: orderbookEntry.executedSellAmount,
-        executedBuyAmount: orderbookEntry.executedBuyAmount,
-      })
+      .values(rowsToUpsert)
       .onConflictDoUpdate({
         target: [discreteOrder.chainId, discreteOrder.orderUid],
         set: {
-          status: apiStatus as "open" | "fulfilled" | "unfilled" | "expired" | "cancelled",
-          executedSellAmount: orderbookEntry.executedSellAmount,
-          executedBuyAmount: orderbookEntry.executedBuyAmount,
+          status: sql`excluded.status`,
+          executedSellAmount: sql`excluded.executed_sell_amount`,
+          executedBuyAmount: sql`excluded.executed_buy_amount`,
         },
       });
-    confirmedUids.push(candidate.orderUid);
-    confirmed++;
   }
+
+  const confirmed = rowsToUpsert.length;
 
   // Clean up promoted candidates
   if (confirmedUids.length > 0) {
@@ -598,13 +644,167 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
 
   let totalDiscovered = 0;
   for (const owner of owners) {
-    const orders = await fetchComposableOrders(context, chainId, owner);
-    const count = await upsertDiscreteOrders(context, chainId, orders);
-    totalDiscovered += count;
+    try {
+      const orders = await withTimeout(
+        fetchComposableOrders(context, chainId, owner),
+        BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
+        `c4:owner:${owner}`,
+      );
+      const count = await upsertDiscreteOrders(context, chainId, orders);
+      totalDiscovered += count;
+    } catch (err) {
+      if (err instanceof TimeoutError) {
+        console.warn(
+          `[COW:C4] owner timeout owner=${owner} chain=${chainId} after=${BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS}ms`,
+        );
+        continue;
+      }
+      throw err;
+    }
   }
 
   console.log(
     `[COW:C4] DONE block=${event.block.number} chain=${chainId} discovered=${totalDiscovered}`,
+  );
+});
+
+// ─── C5: Deterministic Cancellation Sweeper ──────────────────────────────────
+// C1 skips generators with allCandidatesKnown=true (deterministic types: TWAP,
+// StopLoss, CirclesBackingOrder), so SingleOrderNotAuthed is never observed
+// for them. This handler closes that gap by reading
+// ComposableCoW.singleOrders(owner, hash) on a DETERMINISTIC_CANCEL_SWEEP_INTERVAL
+// cadence. A `false` result means the owner called remove() on-chain → flip to
+// Cancelled, which lets the C2/C3 parent-cancelled cascade (COW-918) reconcile
+// the child discrete / candidate rows on the next block.
+
+ponder.on("DeterministicCancellationSweeper:block", async ({ event, context }) => {
+  if (process.env.DISABLE_DETERMINISTIC_CANCEL_SWEEP) return;
+
+  const chainId = context.chain.id as SupportedChainId;
+  const composableCowAddress = COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID[chainId];
+  if (!composableCowAddress) return;
+
+  const currentBlock = event.block.number;
+
+  const maxGeneratorsPerBlock =
+    Number(process.env[`MAX_GENERATORS_PER_BLOCK_${chainId}`]) ||
+    DEFAULT_MAX_GENERATORS_PER_BLOCK;
+
+  const dueGenerators = await context.db.sql
+    .select({
+      generatorId: conditionalOrderGenerator.eventId,
+      owner: conditionalOrderGenerator.owner,
+      hash: conditionalOrderGenerator.hash,
+      orderType: conditionalOrderGenerator.orderType,
+    })
+    .from(conditionalOrderGenerator)
+    .where(
+      and(
+        eq(conditionalOrderGenerator.chainId, chainId),
+        eq(conditionalOrderGenerator.status, "Active"),
+        eq(conditionalOrderGenerator.allCandidatesKnown, true),
+        or(
+          sql`${conditionalOrderGenerator.nextCheckBlock} IS NULL`,
+          lte(conditionalOrderGenerator.nextCheckBlock, currentBlock),
+        ),
+      ),
+    )
+    .orderBy(asc(conditionalOrderGenerator.lastCheckBlock))
+    .limit(maxGeneratorsPerBlock) as {
+    generatorId: string;
+    owner: Hex;
+    hash: Hex;
+    orderType: string;
+  }[];
+
+  if (dueGenerators.length === 0) return;
+
+  console.log(
+    `[COW:C5] ENTER block=${currentBlock} chain=${chainId} due=${dueGenerators.length}`,
+  );
+
+  const c5MulticallPromise = context.client.multicall({
+    contracts: dueGenerators.map((g) => ({
+      address: composableCowAddress,
+      abi: SINGLE_ORDERS_ABI,
+      functionName: "singleOrders" as const,
+      args: [g.owner, g.hash] as const,
+    })),
+    allowFailure: true,
+  });
+
+  let results: Awaited<typeof c5MulticallPromise>;
+  try {
+    results = await withTimeout(
+      c5MulticallPromise,
+      BLOCK_HANDLER_RPC_TIMEOUT_MS,
+      "c5:multicall",
+    );
+  } catch (err) {
+    if (err instanceof TimeoutError) {
+      console.warn(
+        `[COW:C5] multicall timeout block=${currentBlock} chain=${chainId} due=${dueGenerators.length}`,
+      );
+      return;
+    }
+    throw err;
+  }
+
+  let cancelledCount = 0;
+  let stillActiveCount = 0;
+  let errorCount = 0;
+
+  for (let i = 0; i < dueGenerators.length; i++) {
+    const result = results[i];
+    const gen = dueGenerators[i]!;
+
+    if (result === undefined || result.status === "failure") {
+      errorCount++;
+      // Leave state untouched — retry next sweep cycle.
+      continue;
+    }
+
+    const stillAuthorized = result.result as boolean;
+
+    if (!stillAuthorized) {
+      await context.db.sql
+        .update(conditionalOrderGenerator)
+        .set({
+          status: "Cancelled",
+          lastCheckBlock: currentBlock,
+          lastPollResult: "cancelled:removeMapping",
+          nextCheckBlock: null,
+        })
+        .where(
+          and(
+            eq(conditionalOrderGenerator.chainId, chainId),
+            eq(conditionalOrderGenerator.eventId, gen.generatorId),
+          ),
+        );
+      console.log(
+        `[COW:C5] CANCELLED generatorId=${gen.generatorId} orderType=${gen.orderType} block=${currentBlock} chain=${chainId}`,
+      );
+      cancelledCount++;
+    } else {
+      await context.db.sql
+        .update(conditionalOrderGenerator)
+        .set({
+          lastCheckBlock: currentBlock,
+          nextCheckBlock: currentBlock + DETERMINISTIC_CANCEL_SWEEP_INTERVAL,
+          lastPollResult: "sweep:stillAuthorized",
+        })
+        .where(
+          and(
+            eq(conditionalOrderGenerator.chainId, chainId),
+            eq(conditionalOrderGenerator.eventId, gen.generatorId),
+          ),
+        );
+      stillActiveCount++;
+    }
+  }
+
+  console.log(
+    `[COW:C5] DONE block=${currentBlock} chain=${chainId} due=${dueGenerators.length} cancelled=${cancelledCount} stillActive=${stillActiveCount} errors=${errorCount}`,
   );
 });
 
