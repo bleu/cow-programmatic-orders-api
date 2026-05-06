@@ -6,6 +6,7 @@ import {
   FLASH_LOAN_ROUTER_ADDRESSES,
   GPv2SettlementContract,
 } from "./src/data";
+import { ComposableCowAbi } from "./abis/ComposableCowAbi";
 
 export default createConfig({
   chains: {
@@ -20,6 +21,13 @@ export default createConfig({
   },
   contracts: {
     ComposableCow: ComposableCowContract,
+    ComposableCowLive: {
+      abi: ComposableCowAbi,
+      chain: {
+        mainnet: { ...COMPOSABLE_COW_DEPLOYMENTS.mainnet, startBlock: "latest" },
+        gnosis: { ...COMPOSABLE_COW_DEPLOYMENTS.gnosis, startBlock: "latest" },
+      },
+    },
     CoWShedFactory: CoWShedFactoryContract,
     GPv2Settlement: {
       ...GPv2SettlementContract,
@@ -30,10 +38,52 @@ export default createConfig({
     },
   },
   blocks: {
-    RemovalPoller: {
-      chain: "mainnet",
-      startBlock: COMPOSABLE_COW_DEPLOYMENTS.mainnet.startBlock,
-      interval: 100, // every ~20 min at 12s/block
+    // C1: Contract Poller — RPC multicall for non-deterministic generators
+    // Gnosis interval=4 (~20s) vs mainnet interval=1 (~12s).
+    // The CoW watch-tower processes orders sequentially — with 1,461+ gnosis
+    // generators, a full cycle takes many blocks. Polling every 5s gnosis block
+    // wastes RPC calls since state rarely changes between blocks.
+    ContractPoller: {
+      chain: {
+        mainnet: { startBlock: "latest" },
+        gnosis: { startBlock: "latest", interval: 4 },
+      },
+      interval: 1,
+    },
+    // C2: Candidate Confirmer — checks API for unconfirmed candidates
+    CandidateConfirmer: {
+      chain: {
+        mainnet: { startBlock: "latest" },
+        gnosis: { startBlock: "latest" },
+      },
+      interval: 1,
+    },
+    // C3: Status Updater — polls API for open discrete order status
+    StatusUpdater: {
+      chain: {
+        mainnet: { startBlock: "latest" },
+        gnosis: { startBlock: "latest" },
+      },
+      interval: 1,
+    },
+    // C4: Historical Bootstrap — one-time owner fetch for non-deterministic backfill orders
+    HistoricalBootstrap: {
+      chain: {
+        mainnet: { startBlock: "latest", endBlock: "latest" },
+        gnosis: { startBlock: "latest", endBlock: "latest" },
+      },
+      interval: 1,
+    },
+    // C5: Deterministic Cancellation Sweeper — singleOrders() mapping read for
+    // generators C1 skips (allCandidatesKnown=true). Cadence per generator is
+    // DETERMINISTIC_CANCEL_SWEEP_INTERVAL blocks; the handler itself is cheap
+    // when nothing is due.
+    DeterministicCancellationSweeper: {
+      chain: {
+        mainnet: { startBlock: "latest" },
+        gnosis: { startBlock: "latest" },
+      },
+      interval: 1,
     },
   },
 });

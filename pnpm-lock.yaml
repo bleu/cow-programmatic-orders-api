@@ -11,15 +11,27 @@ importers:
       '@cowprotocol/cow-sdk':
         specifier: ^7.3.8
         version: 7.3.8(@openzeppelin/merkle-tree@1.0.8)(ajv@8.18.0)(cross-fetch@3.2.0)(ipfs-only-hash@4.0.0)(multiformats@9.9.0)
+      '@hono/swagger-ui':
+        specifier: ^0.5.3
+        version: 0.5.3(hono@4.12.3)
+      '@hono/zod-openapi':
+        specifier: ^0.19.10
+        version: 0.19.10(hono@4.12.3)(zod@3.25.76)
       hono:
         specifier: ^4.5.0
         version: 4.12.3
       ponder:
         specifier: ^0.16.2
-        version: 0.16.3(@opentelemetry/api@1.9.0)(@types/node@20.19.35)(hono@4.12.3)(typescript@5.9.3)(viem@2.46.3(typescript@5.9.3))
+        version: 0.16.3(@opentelemetry/api@1.9.0)(@types/node@20.19.35)(hono@4.12.3)(typescript@5.9.3)(viem@2.46.3(typescript@5.9.3)(zod@3.25.76))(zod@3.25.76)
+      ponder-enrich-gql-docs-middleware:
+        specifier: ^0.1.3
+        version: 0.1.3(graphql@16.8.2)(hono@4.12.3)
       viem:
         specifier: ^2.21.3
-        version: 2.46.3(typescript@5.9.3)
+        version: 2.46.3(typescript@5.9.3)(zod@3.25.76)
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
     devDependencies:
       '@types/node':
         specifier: ^20.9.0
@@ -35,10 +47,10 @@ importers:
         version: 5.9.3
       vite:
         specifier: ^6.0.0
-        version: 6.4.1(@types/node@20.19.35)
+        version: 6.4.1(@types/node@20.19.35)(yaml@2.8.3)
       vite-tsconfig-paths:
         specifier: ^5.0.0
-        version: 5.1.4(typescript@5.9.3)(vite@6.4.1(@types/node@20.19.35))
+        version: 5.1.4(typescript@5.9.3)(vite@6.4.1(@types/node@20.19.35)(yaml@2.8.3))
       vitest:
         specifier: ^2.0.0
         version: 2.1.9(@types/node@20.19.35)
@@ -50,6 +62,11 @@ packages:
 
   '@assemblyscript/loader@0.9.4':
     resolution: {integrity: sha512-HazVq9zwTVwGmqdwYzu7WyQ6FQVZ7SwET0KKQuKm55jD0IfUpZgN0OPIiZG3zV1iSrVYcN0bdwLRXI/VNCYsUA==}
+
+  '@asteasolutions/zod-to-openapi@7.3.4':
+    resolution: {integrity: sha512-/2rThQ5zPi9OzVwes6U7lK1+Yvug0iXu25olp7S0XsYmOqnyMfxH7gdSQjn/+DSOHRg7wnotwGJSyL+fBKdnEA==}
+    peerDependencies:
+      zod: ^3.20.2
 
   '@babel/code-frame@7.29.0':
     resolution: {integrity: sha512-9NhCeYjq9+3uxgdtp20LSiJXJvN0FeCtNGpJxuMFZ1Kv3cWUNb6DOhJwUvcVCzKGR66cw4njwM6hrJLqgOwbcw==}
@@ -518,6 +535,24 @@ packages:
     engines: {node: '>=18.14.1'}
     peerDependencies:
       hono: ^4
+
+  '@hono/swagger-ui@0.5.3':
+    resolution: {integrity: sha512-Hn90DOOJ62ICJQplQvCDVpi9Jcn6EhtRaiffyJIS53wA5RmRLtMCDQGVc0bor8vQD7JIwpkweWjs+3cycp+IvA==}
+    peerDependencies:
+      hono: '>=4.0.0'
+
+  '@hono/zod-openapi@0.19.10':
+    resolution: {integrity: sha512-dpoS6DenvoJyvxtQ7Kd633FRZ/Qf74+4+o9s+zZI8pEqnbjdF/DtxIib08WDpCaWabMEJOL5TXpMgNEZvb7hpA==}
+    engines: {node: '>=16.0.0'}
+    peerDependencies:
+      hono: '>=4.3.6'
+      zod: '>=3.0.0'
+
+  '@hono/zod-validator@0.7.6':
+    resolution: {integrity: sha512-Io1B6d011Gj1KknV4rXYz4le5+5EubcWEU/speUjuw9XMMIaP3n78yXLhjd2A3PXaXaUwEAluOiAyLqhBEJgsw==}
+    peerDependencies:
+      hono: '>=3.9.0'
+      zod: ^3.25.0 || ^4.0.0
 
   '@humanwhocodes/config-array@0.13.0':
     resolution: {integrity: sha512-DZLEEqFWQFiyK6h5YIeynKx7JlvCYWL0cImfSRXZ9l4Sg2efkFGTuFf6vzXjK1cq6IYkU+Eg/JizXw+TD2vRNw==}
@@ -1868,6 +1903,9 @@ packages:
     resolution: {integrity: sha512-kbpaSSGJTWdAY5KPVeMOKXSrPtr8C8C7wodJbcsd51jRnmD+GZu8Y0VoU6Dm5Z4vWr0Ig/1NKuWRKf7j5aaYSg==}
     engines: {node: '>=6'}
 
+  openapi3-ts@4.5.0:
+    resolution: {integrity: sha512-jaL+HgTq2Gj5jRcfdutgRGLosCy/hT8sQf6VOy+P+g36cZOjI1iukdPnijC+4CmeRzg/jEllJUboEic2FhxhtQ==}
+
   optionator@0.9.4:
     resolution: {integrity: sha512-6IpQ7mKUxRcZNLIObR0hz7lxsapSSIYNZJwXPGeF0mTVqGKFIXj1DQcMoT22S3ROcLyY/rz0PWaWZ9ayWmad9g==}
     engines: {node: '>= 0.8.0'}
@@ -2013,6 +2051,13 @@ packages:
   pino@8.21.0:
     resolution: {integrity: sha512-ip4qdzjkAyDDZklUaZkcRFb2iA118H9SgRh8yzTkSQK8HilsOJF7rSY8HoW5+I0M46AZgX/pxbprf2vvzQCE0Q==}
     hasBin: true
+
+  ponder-enrich-gql-docs-middleware@0.1.3:
+    resolution: {integrity: sha512-waTUKVPNk/A+A5cl83lUj0OYtrP6RxRfWzDX81UBt4K8wzzsZPb0F8Rm83Fx87zCEPFzgiAEMeN86XNWiKY/zQ==}
+    engines: {node: '>=12.0'}
+    peerDependencies:
+      graphql: ^16.10.0
+      hono: ^4.6.19
 
   ponder@0.16.3:
     resolution: {integrity: sha512-QwAg5eFUujWR87ZMeTTKmF17q9IVTew26tpdaTfQrrtJVf/oU8ZN1qu7ZcP2SPtK5oScblJMWQm9zfwst6tJcg==}
@@ -2607,6 +2652,11 @@ packages:
   yallist@4.0.0:
     resolution: {integrity: sha512-3wdGidZyq5PB084XLES5TpOSRA3wjXAlIWMhum2kRcv/41Sn2emQ0dycQW4uZXLejwKvg6EsvbdlVL+FYEct7A==}
 
+  yaml@2.8.3:
+    resolution: {integrity: sha512-AvbaCLOO2Otw/lW5bmh9d/WEdcDFdQp2Z2ZUH3pX9U2ihyUY0nvLv7J6TrWowklRGPYbB/IuIMfYgxaCPg5Bpg==}
+    engines: {node: '>= 14.6'}
+    hasBin: true
+
   yargs-parser@20.2.9:
     resolution: {integrity: sha512-y11nGElTIV+CT3Zv9t7VKl+Q3hTQoT9a1Qzezhhl6Rp21gJ/IVTW7Z3y9EWXhuUBC2Shnf+DX0antecpAwSP8w==}
     engines: {node: '>=10'}
@@ -2615,11 +2665,19 @@ packages:
     resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
     engines: {node: '>=10'}
 
+  zod@3.25.76:
+    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+
 snapshots:
 
   '@adraffy/ens-normalize@1.11.1': {}
 
   '@assemblyscript/loader@0.9.4': {}
+
+  '@asteasolutions/zod-to-openapi@7.3.4(zod@3.25.76)':
+    dependencies:
+      openapi3-ts: 4.5.0
+      zod: 3.25.76
 
   '@babel/code-frame@7.29.0':
     dependencies:
@@ -3013,6 +3071,23 @@ snapshots:
     dependencies:
       hono: 4.12.3
 
+  '@hono/swagger-ui@0.5.3(hono@4.12.3)':
+    dependencies:
+      hono: 4.12.3
+
+  '@hono/zod-openapi@0.19.10(hono@4.12.3)(zod@3.25.76)':
+    dependencies:
+      '@asteasolutions/zod-to-openapi': 7.3.4(zod@3.25.76)
+      '@hono/zod-validator': 0.7.6(hono@4.12.3)(zod@3.25.76)
+      hono: 4.12.3
+      openapi3-ts: 4.5.0
+      zod: 3.25.76
+
+  '@hono/zod-validator@0.7.6(hono@4.12.3)(zod@3.25.76)':
+    dependencies:
+      hono: 4.12.3
+      zod: 3.25.76
+
   '@humanwhocodes/config-array@0.13.0':
     dependencies:
       '@humanwhocodes/object-schema': 2.0.3
@@ -3110,9 +3185,9 @@ snapshots:
   '@pkgjs/parseargs@0.11.0':
     optional: true
 
-  '@ponder/utils@0.2.17(typescript@5.9.3)(viem@2.46.3(typescript@5.9.3))':
+  '@ponder/utils@0.2.17(typescript@5.9.3)(viem@2.46.3(typescript@5.9.3)(zod@3.25.76))':
     dependencies:
-      viem: 2.46.3(typescript@5.9.3)
+      viem: 2.46.3(typescript@5.9.3)(zod@3.25.76)
     optionalDependencies:
       typescript: 5.9.3
 
@@ -3430,13 +3505,15 @@ snapshots:
       '@whatwg-node/promise-helpers': 1.3.2
       tslib: 2.8.1
 
-  abitype@0.10.3(typescript@5.9.3):
+  abitype@0.10.3(typescript@5.9.3)(zod@3.25.76):
     optionalDependencies:
       typescript: 5.9.3
+      zod: 3.25.76
 
-  abitype@1.2.3(typescript@5.9.3):
+  abitype@1.2.3(typescript@5.9.3)(zod@3.25.76):
     optionalDependencies:
       typescript: 5.9.3
+      zod: 3.25.76
 
   abort-controller@3.0.0:
     dependencies:
@@ -4326,6 +4403,10 @@ snapshots:
     dependencies:
       mimic-fn: 2.1.0
 
+  openapi3-ts@4.5.0:
+    dependencies:
+      yaml: 2.8.3
+
   optionator@0.9.4:
     dependencies:
       deep-is: 0.1.4
@@ -4335,7 +4416,7 @@ snapshots:
       type-check: 0.4.0
       word-wrap: 1.2.5
 
-  ox@0.12.4(typescript@5.9.3):
+  ox@0.12.4(typescript@5.9.3)(zod@3.25.76):
     dependencies:
       '@adraffy/ens-normalize': 1.11.1
       '@noble/ciphers': 1.3.0
@@ -4343,7 +4424,7 @@ snapshots:
       '@noble/hashes': 1.8.0
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0
-      abitype: 1.2.3(typescript@5.9.3)
+      abitype: 1.2.3(typescript@5.9.3)(zod@3.25.76)
       eventemitter3: 5.0.1
     optionalDependencies:
       typescript: 5.9.3
@@ -4478,7 +4559,12 @@ snapshots:
       sonic-boom: 3.8.1
       thread-stream: 2.7.0
 
-  ponder@0.16.3(@opentelemetry/api@1.9.0)(@types/node@20.19.35)(hono@4.12.3)(typescript@5.9.3)(viem@2.46.3(typescript@5.9.3)):
+  ponder-enrich-gql-docs-middleware@0.1.3(graphql@16.8.2)(hono@4.12.3):
+    dependencies:
+      graphql: 16.8.2
+      hono: 4.12.3
+
+  ponder@0.16.3(@opentelemetry/api@1.9.0)(@types/node@20.19.35)(hono@4.12.3)(typescript@5.9.3)(viem@2.46.3(typescript@5.9.3)(zod@3.25.76))(zod@3.25.76):
     dependencies:
       '@babel/code-frame': 7.29.0
       '@commander-js/extra-typings': 12.1.0(commander@12.1.0)
@@ -4487,8 +4573,8 @@ snapshots:
       '@escape.tech/graphql-armor-max-depth': 2.4.2
       '@escape.tech/graphql-armor-max-tokens': 2.5.1
       '@hono/node-server': 1.19.5(hono@4.12.3)
-      '@ponder/utils': 0.2.17(typescript@5.9.3)(viem@2.46.3(typescript@5.9.3))
-      abitype: 0.10.3(typescript@5.9.3)
+      '@ponder/utils': 0.2.17(typescript@5.9.3)(viem@2.46.3(typescript@5.9.3)(zod@3.25.76))
+      abitype: 0.10.3(typescript@5.9.3)(zod@3.25.76)
       ansi-escapes: 7.3.0
       commander: 12.1.0
       conf: 12.0.0
@@ -4513,7 +4599,7 @@ snapshots:
       stacktrace-parser: 0.1.11
       superjson: 2.2.6
       terminal-size: 4.0.1
-      viem: 2.46.3(typescript@5.9.3)
+      viem: 2.46.3(typescript@5.9.3)(zod@3.25.76)
       vite: 5.4.21(@types/node@20.19.35)
       vite-node: 1.0.2(@types/node@20.19.35)
       vite-tsconfig-paths: 4.3.1(typescript@5.9.3)(vite@5.4.21(@types/node@20.19.35))
@@ -4920,15 +5006,15 @@ snapshots:
 
   varint@6.0.0: {}
 
-  viem@2.46.3(typescript@5.9.3):
+  viem@2.46.3(typescript@5.9.3)(zod@3.25.76):
     dependencies:
       '@noble/curves': 1.9.1
       '@noble/hashes': 1.8.0
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0
-      abitype: 1.2.3(typescript@5.9.3)
+      abitype: 1.2.3(typescript@5.9.3)(zod@3.25.76)
       isows: 1.0.7(ws@8.18.3)
-      ox: 0.12.4(typescript@5.9.3)
+      ox: 0.12.4(typescript@5.9.3)(zod@3.25.76)
       ws: 8.18.3
     optionalDependencies:
       typescript: 5.9.3
@@ -4984,13 +5070,13 @@ snapshots:
       - supports-color
       - typescript
 
-  vite-tsconfig-paths@5.1.4(typescript@5.9.3)(vite@6.4.1(@types/node@20.19.35)):
+  vite-tsconfig-paths@5.1.4(typescript@5.9.3)(vite@6.4.1(@types/node@20.19.35)(yaml@2.8.3)):
     dependencies:
       debug: 4.4.3
       globrex: 0.1.2
       tsconfck: 3.1.6(typescript@5.9.3)
     optionalDependencies:
-      vite: 6.4.1(@types/node@20.19.35)
+      vite: 6.4.1(@types/node@20.19.35)(yaml@2.8.3)
     transitivePeerDependencies:
       - supports-color
       - typescript
@@ -5004,7 +5090,7 @@ snapshots:
       '@types/node': 20.19.35
       fsevents: 2.3.3
 
-  vite@6.4.1(@types/node@20.19.35):
+  vite@6.4.1(@types/node@20.19.35)(yaml@2.8.3):
     dependencies:
       esbuild: 0.25.12
       fdir: 6.5.0(picomatch@4.0.3)
@@ -5015,6 +5101,7 @@ snapshots:
     optionalDependencies:
       '@types/node': 20.19.35
       fsevents: 2.3.3
+      yaml: 2.8.3
 
   vitest@2.1.9(@types/node@20.19.35):
     dependencies:
@@ -5093,6 +5180,10 @@ snapshots:
 
   yallist@4.0.0: {}
 
+  yaml@2.8.3: {}
+
   yargs-parser@20.2.9: {}
 
   yocto-queue@0.1.0: {}
+
+  zod@3.25.76: {}

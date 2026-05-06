@@ -138,6 +138,5 @@ Example query once blocks around `17883049` are indexed:
 
 ## References
 
-- Linear: COW-709
 - PoC: `/Users/jefferson/Projects/Bleu/cow/reference_repos/cow-programmatic-orders-indexer/`
 - Ponder docs: https://ponder.sh

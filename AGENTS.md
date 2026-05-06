@@ -2,7 +2,7 @@
 
 ## What This Project Is
 
-Ponder-based indexer and GraphQL API for Composable CoW programmatic orders. Indexes on-chain events from the ComposableCoW contract, decodes all order types (TWAP, Stop Loss, Perpetual Swap, Good After Time, Trade Above Threshold), and exposes queryable data via GraphQL. CoW Protocol grant project — infrastructure to be handed off to the CoW Protocol team after grant completion.
+Ponder-based indexer and GraphQL API for Composable CoW programmatic orders. Indexes on-chain events from the ComposableCoW contract, decodes all order types (TWAP, Stop Loss, Perpetual Swap, Good After Time, Trade Above Threshold), and exposes queryable data via GraphQL.
 
 **Tech**: Ponder 0.16.x · TypeScript · viem · Hono · PostgreSQL · pnpm
 
@@ -47,14 +47,14 @@ Start PostgreSQL with `docker compose up -d` to use it instead of the default SQ
 | `agent_docs/project-structure.md` | Current file map, schema tables, env vars, key commands |
 | `agent_docs/code-patterns.md` | Schema/naming conventions (snake_case, composite PK, eventId) — **check before schema or handler changes** |
 | `agent_docs/token-indexer-overview.md` | Full Ponder patterns (handlers, repos, services) — **read before writing any implementation plan** |
-| `agent_docs/decoder-reference.md` | All 5 order type ABI structs, handler addresses, PollResultErrors — **read before any decoder or M3 block-handler work** |
-| `agent_docs/slack_decisions_summary.md` | Technical decisions from CoW Protocol team (flash loans, CoWShed, orderbook, scope) — **read before planning M2/M3** |
-| `thoughts/tasks/` | Linear ticket context for each sprint task |
-| `thoughts/reference_docs/grant_proposal.md` | Full project scope across all milestones |
+| `docs/supported-order-types.md` | All 5 order type ABI structs, handler addresses, decoded fields, edge cases — **read before any decoder or M3 block-handler work** |
+| `agent_docs/slack_decisions_summary.md` | Technical decisions from CoW Protocol team (flash loans, CoWShed, orderbook, scope) |
+| `thoughts/` (local) | Local working notes, plans, task context (not in repo; see `.claude/commands/` for workflow) |
 
 ## Working Conventions
 
 - Run `pnpm codegen` after any change to `ponder.config.ts` or `ponder.schema.ts`
 - New event handlers go in `src/application/handlers/` (one file per contract)
 - Adding a chain: update `src/data.ts` first, then `ponder.config.ts`
-- M1 scope is mainnet + `ConditionalOrderCreated` only — do not carry forward PoC order-matching logic until S2.x
+- External HTTP / RPC calls in block handlers must use `withTimeout(...)` and be partial-failure tolerant — see `agent_docs/code-patterns.md` § External I/O in block handlers
+- Current scope: mainnet + gnosis; Arbitrum planned
