@@ -42,7 +42,7 @@ export const conditionalOrderGeneratorDocs: DocMap = {
   "conditionalOrderGenerator.lastPollResult":
     "Result of the last C1 poll (e.g. success, cancelled:SingleOrderNotAuthed, error:...). Useful for debugging.",
   "conditionalOrderGenerator.nextCheckTimestamp":
-    "For orders returning PollTryAtEpoch, the unix timestamp to wait for before the next poll.",
+    "For orders returning PollTryAtEpoch, the epoch to wait for before the next poll. Unix seconds (UTC), decimal string (BigInt scalar). See docs/api-reference.md#timestamp-fields.",
 
   ...generatePageDocs("conditionalOrderGenerator", "conditional order generator"),
   ...generateQueryDocs("conditionalOrderGenerator", "conditional order generator"),
