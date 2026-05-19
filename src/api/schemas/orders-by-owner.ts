@@ -24,8 +24,18 @@ export const OrderItem = z.object({
   sellAmount: z.string(),
   buyAmount: z.string(),
   feeAmount: z.string(),
-  validTo: z.number().int().nullable(),
-  creationDate: z.string(),
+  validTo: z
+    .number()
+    .int()
+    .nullable()
+    .describe(
+      "Unix seconds (UTC) when the order expires. Returned as a JSON number — the CoW protocol encodes validTo as uint32 in the order UID. Null if not yet known. See docs/api-reference.md#timestamp-fields.",
+    ),
+  creationDate: z
+    .string()
+    .describe(
+      "Unix seconds (UTC) when the discrete order was first observed, as a decimal string (BigInt scalar in GraphQL). Source depends on discovery path — see the GraphQL doc for discreteOrder.creationDate.",
+    ),
   executedSellAmount: z.string().nullable(),
   executedBuyAmount: z.string().nullable(),
   generatorId: z.string(),
