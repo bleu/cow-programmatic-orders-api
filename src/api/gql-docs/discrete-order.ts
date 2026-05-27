@@ -27,6 +27,8 @@ export const discreteOrderDocs: DocMap = {
     "Actual sell amount filled after settlement. Null before the order is fulfilled.",
   "discreteOrder.executedBuyAmount":
     "Actual buy amount received after settlement. Null before the order is fulfilled.",
+  "discreteOrder.promotedAt":
+    "Unix timestamp (seconds) when C2 promoted this row from candidateDiscreteOrder. Null means the row was created directly without going through the candidate stage (TWAP/StopLoss precomputation at creation time, or C4 historical bootstrap). Non-null means this order was first discovered on-chain by C1 or UID precomputation, held as a candidate until the orderbook API confirmed it (or until it expired).",
 
   candidateDiscreteOrder:
     "An unconfirmed discrete order discovered by the C1 block handler via getTradeableOrderWithSignature. Candidates are promoted to discreteOrder once confirmed against the orderbook API.",
