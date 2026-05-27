@@ -13,7 +13,7 @@ export const discreteOrderDocs: DocMap = {
   "discreteOrder.conditionalOrderGeneratorId":
     "References the parent generator's eventId.",
   "discreteOrder.status":
-    "open, fulfilled, unfilled, expired, or cancelled. Tracked via the CoW Protocol orderbook API.",
+    "open (in the orderbook, not yet settled), fulfilled (the order was settled; executedSellAmount and executedBuyAmount are populated), unfilled (left the orderbook without settling), expired (validTo passed without settlement), or cancelled (the orderbook API reported the order as cancelled, or the C5 reconciliation marked it cancelled because its parent generator was removed on-chain). Tracked via the CoW Protocol orderbook API.",
   "discreteOrder.sellAmount":
     "Sell amount requested, as a decimal string (uint256, raw token units).",
   "discreteOrder.buyAmount":
@@ -27,6 +27,8 @@ export const discreteOrderDocs: DocMap = {
     "Actual sell amount filled after settlement. Null before the order is fulfilled.",
   "discreteOrder.executedBuyAmount":
     "Actual buy amount received after settlement. Null before the order is fulfilled.",
+  "discreteOrder.conditionalOrderGenerator":
+    "The parent generator that produced this discrete order.",
 
   candidateDiscreteOrder:
     "An unconfirmed discrete order discovered by the C1 block handler via getTradeableOrderWithSignature. Candidates are promoted to discreteOrder once confirmed against the orderbook API.",
@@ -38,11 +40,13 @@ export const discreteOrderDocs: DocMap = {
   "candidateDiscreteOrder.buyAmount": "Buy amount as a decimal string.",
   "candidateDiscreteOrder.feeAmount": "Fee amount as a decimal string.",
   "candidateDiscreteOrder.validTo":
-    "Unix seconds (UTC) when this candidate order expires. JSON number (uint32 per CoW protocol). See docs/api-reference.md#timestamp-fields.",
+    "Predicted Unix seconds (UTC) when this candidate would expire if promoted. JSON number (uint32 per CoW protocol). Null when not yet known. See discreteOrder.validTo for the confirmed value and docs/api-reference.md#timestamp-fields for the timestamp policy.",
   "candidateDiscreteOrder.creationDate":
     "Unix seconds (UTC), decimal string (BigInt scalar). Block timestamp at C1 discovery.",
   "candidateDiscreteOrder.possibleValidAfterTimestamp":
     "For TWAP: t0 + partIndex*t. Earliest Unix seconds (UTC) the part can be valid — used to skip orderbook API calls before that timestamp. Decimal string (BigInt scalar).",
+  "candidateDiscreteOrder.conditionalOrderGenerator":
+    "The parent generator that produced this candidate.",
 
   ...generatePageDocs("discreteOrder", "discrete order"),
   ...generateQueryDocs("discreteOrder", "discrete order"),

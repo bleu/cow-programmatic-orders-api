@@ -13,6 +13,8 @@ export const transactionDocs: DocMap = {
   "transaction.blockNumber": "Block number where this transaction was mined.",
   "transaction.blockTimestamp":
     "Unix seconds (UTC) of the block. Returned as a decimal string (BigInt scalar). See docs/api-reference.md#timestamp-fields.",
+  "transaction.conditionalOrderGenerators":
+    "Conditional order generators created in this transaction.",
 
   ...generatePageDocs("transaction", "transaction"),
   ...generateQueryDocs("transaction", "transaction"),
