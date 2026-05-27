@@ -8,7 +8,7 @@ export const ordersByOwnerHandler: RouteHandler<
   typeof ordersByOwnerRoute
 > = async (c) => {
   const { owner } = c.req.valid("param");
-  const { chainId, status: statusFilter } = c.req.valid("query");
+  const { chainId, status: statusFilter, ownerAddressType: ownerAddressTypeFilter } = c.req.valid("query");
   const rawOwner = owner.toLowerCase() as `0x${string}`;
 
   const mappingConditions = [eq(schema.ownerMapping.owner, rawOwner)];
@@ -40,6 +40,11 @@ export const ordersByOwnerHandler: RouteHandler<
       eq(schema.conditionalOrderGenerator.chainId, chainId),
     );
   }
+  if (ownerAddressTypeFilter !== undefined) {
+    generatorConditions.push(
+      eq(schema.conditionalOrderGenerator.ownerAddressType, ownerAddressTypeFilter),
+    );
+  }
 
   const generators = await db
     .select({
@@ -49,6 +54,7 @@ export const ordersByOwnerHandler: RouteHandler<
       owner: schema.conditionalOrderGenerator.owner,
       resolvedOwner: schema.conditionalOrderGenerator.resolvedOwner,
       status: schema.conditionalOrderGenerator.status,
+      ownerAddressType: schema.conditionalOrderGenerator.ownerAddressType,
     })
     .from(schema.conditionalOrderGenerator)
     .where(and(...generatorConditions));

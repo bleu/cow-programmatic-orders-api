@@ -15,6 +15,8 @@ export const conditionalOrderGeneratorDocs: DocMap = {
     "Address that created the order on-chain. May be a CoWShed proxy or Aave flash loan adapter rather than the EOA.",
   "conditionalOrderGenerator.resolvedOwner":
     "The underlying EOA for this order, set once at insert time. Equals the mapped EOA if owner is a known CoWShed or Aave adapter at creation time; otherwise equals owner. Not updated retroactively if a proxy mapping is indexed later.",
+  "conditionalOrderGenerator.ownerAddressType":
+    "Proxy channel through which this order was created. 'flash_loan_helper' = Aave V3 adapter (FACTORY() introspection via settlement handler); 'cowshed_proxy' = CoWShed smart wallet proxy; null = direct EOA, or Aave adapter whose mapping has not yet been discovered (backfilled on first settlement). Distinct from orderType, which describes the handler contract logic — an Aave flash loan can wrap any order type.",
   "conditionalOrderGenerator.handler":
     "The IConditionalOrder handler contract address. Determines the order type.",
   "conditionalOrderGenerator.salt":

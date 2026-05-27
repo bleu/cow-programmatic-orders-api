@@ -6,6 +6,10 @@ export const OrdersByOwnerQuery = z.object({
   status: DiscreteOrderStatusQuery.optional().describe(
     "Filter discrete orders by status.",
   ),
+  ownerAddressType: z
+    .enum(["cowshed_proxy", "flash_loan_helper"])
+    .optional()
+    .describe("Filter orders to generators created through a specific proxy type."),
 });
 
 export const GeneratorSummary = z.object({
@@ -15,6 +19,12 @@ export const GeneratorSummary = z.object({
   owner: z.string(),
   resolvedOwner: z.string().nullable(),
   status: z.string(),
+  ownerAddressType: z
+    .enum(["cowshed_proxy", "flash_loan_helper"])
+    .nullable()
+    .describe(
+      "Proxy channel through which this order was created. 'flash_loan_helper' = Aave V3 adapter; 'cowshed_proxy' = CoWShed smart wallet; null = direct EOA (or Aave adapter not yet discovered — see docs/api-reference.md#owner-address-type).",
+    ),
 });
 
 export const OrderItem = z.object({

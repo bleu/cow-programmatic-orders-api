@@ -42,6 +42,36 @@ Open `/docs` for request/response shapes and to try them out.
 
 The `decodedParams` JSON field on `conditionalOrderGenerator` has a different shape per order type (TWAP, Stop Loss, Perpetual Swap, Good After Time, Trade Above Threshold). Full breakdown — handler addresses, Solidity structs, and field-by-field decoding — lives in [supported-order-types.md](./supported-order-types.md).
 
+## Owner address type
+
+`conditionalOrderGenerator.ownerAddressType` identifies the proxy channel through which the order was created. This is **distinct from `orderType`** (which describes the handler contract logic — TWAP, Stop Loss, etc.).
+
+| Value | Meaning |
+|---|---|
+| `"flash_loan_helper"` | Order was created through an Aave V3 flash loan adapter. Detected via `FACTORY()` introspection in the settlement handler. |
+| `"cowshed_proxy"` | Order was created through a CoWShed smart wallet proxy. |
+| `null` | Direct EOA (no proxy), or an Aave adapter whose mapping has not yet been discovered. |
+
+### Late discovery
+
+Aave adapter mappings are written reactively when the adapter first appears in a settlement transaction. If a generator was indexed before its adapter settled a trade, `ownerAddressType` will be `null` until the settlement handler runs and backfills it. Once backfilled, GraphQL filters and REST filters reflect the correct value.
+
+### Filtering examples
+
+**GraphQL**
+```graphql
+{
+  conditionalOrderGenerators(where: { ownerAddressType: { eq: "flash_loan_helper" } }) {
+    items { eventId owner orderType ownerAddressType }
+  }
+}
+```
+
+**REST**
+```
+GET /api/orders/by-owner/0x<address>?ownerAddressType=flash_loan_helper
+```
+
 ## Timestamp fields
 
 All timestamp-like values in this API are **Unix seconds (UTC)**. No milliseconds, no ISO 8601.
