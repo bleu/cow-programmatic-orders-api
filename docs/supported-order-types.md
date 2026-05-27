@@ -4,7 +4,7 @@ The indexer decodes five programmatic order types from the ComposableCoW contrac
 
 All handler addresses are identical across mainnet and Gnosis Chain (CREATE2 deployments). Arbitrum support is planned but handler mappings are not yet registered.
 
-A note on types in the API: all `bigint` values (uint256, int256) are converted to strings via `replaceBigInts(decoded, String)` before storage. When you query `decodedParams` through GraphQL or SQL, amounts, timestamps, and similar fields come back as decimal strings, not numbers.
+A note on types in the API: all `bigint` values (uint256, int256) are converted to strings via `replaceBigInts(decoded, String)` before storage. When you query `decodedParams` through GraphQL or SQL, amounts, timestamps, and similar fields come back as decimal strings, not numbers. `uint32` fields stay as JSON numbers. See [Timestamp fields](./api-reference.md#timestamp-fields) for the unit and shape policy that applies to every timestamp-like field below.
 
 ---
 
@@ -101,7 +101,7 @@ struct StopLossOrder {
 | `receiver` | receiver | string | Lowercased |
 | `isSellOrder` | isSellOrder | boolean | |
 | `isPartiallyFillable` | isPartiallyFillable | boolean | |
-| `validTo` | validTo | number | Seconds, stored as a number (uint32 fits in JS number) |
+| `validTo` | validTo | number | **Duration in seconds, not a Unix timestamp.** The watch-tower adds this to the block timestamp at strike trigger to produce the on-chain order's `validTo`. uint32 → JSON number. |
 | `sellTokenPriceOracle` | sellTokenPriceOracle | string | Chainlink aggregator address, lowercased |
 | `buyTokenPriceOracle` | buyTokenPriceOracle | string | Chainlink aggregator address, lowercased |
 | `strike` | strike | string | Signed value (can be negative). Stringified bigint |
@@ -145,7 +145,7 @@ struct PerpetualStableSwapOrder {
 |---|---|---|---|
 | `tokenA` | tokenA | string | Lowercased |
 | `tokenB` | tokenB | string | Lowercased |
-| `validityBucketSeconds` | validityBucketSeconds | number | uint32, fits in JS number |
+| `validityBucketSeconds` | validityBucketSeconds | number | Duration in seconds, not a Unix timestamp. uint32 → JSON number. |
 | `halfSpreadBps` | halfSpreadBps | string | Half the spread in basis points. A value of 50 means 0.5% half-spread (1% total spread) |
 | `appData` | appData | string | bytes32 hex |
 
@@ -239,7 +239,7 @@ struct TradeAboveThresholdOrder {
 | `sellToken` | sellToken | string | Lowercased |
 | `buyToken` | buyToken | string | Lowercased |
 | `receiver` | receiver | string | Lowercased |
-| `validityBucketSeconds` | validityBucketSeconds | number | uint32, fits in JS number |
+| `validityBucketSeconds` | validityBucketSeconds | number | Duration in seconds, not a Unix timestamp. uint32 → JSON number. |
 | `threshold` | threshold | string | Raw token units. The owner's sellToken balance must exceed this for the order to fire |
 | `appData` | appData | string | bytes32 hex |
 
