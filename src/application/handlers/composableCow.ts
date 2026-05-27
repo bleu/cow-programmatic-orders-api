@@ -184,7 +184,7 @@ async function insertGenerator(
   // Resolve EOA: look up owner_mapping in case owner is a known proxy (CoWShed).
   // For AAVE adapters the mapping won't exist yet; settlement.ts will backfill later.
   const mappingRows = await context.db.sql
-    .select({ owner: ownerMapping.owner })
+    .select({ owner: ownerMapping.owner, addressType: ownerMapping.addressType })
     .from(ownerMapping)
     .where(
       and(
@@ -196,6 +196,8 @@ async function insertGenerator(
 
   const resolvedOwner =
     mappingRows.length > 0 ? mappingRows[0]!.owner : ownerAddress;
+  const ownerAddressType =
+    mappingRows.length > 0 ? mappingRows[0]!.addressType : null;
 
   // Upsert transaction row (idempotent — multiple events may share a tx)
   await context.db
@@ -215,6 +217,7 @@ async function insertGenerator(
       chainId,
       owner: ownerAddress,
       resolvedOwner,
+      ownerAddressType,
       handler: handler.toLowerCase() as `0x${string}`,
       salt,
       staticInput,

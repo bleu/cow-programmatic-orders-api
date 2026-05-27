@@ -1,5 +1,5 @@
 import { ponder } from "ponder:registry";
-import { AddressType, ownerMapping, transaction } from "ponder:schema";
+import { AddressType, conditionalOrderGenerator, ownerMapping, transaction } from "ponder:schema";
 import { and, eq } from "ponder";
 import { decodeAbiParameters, keccak256, toBytes } from "viem";
 import { AaveV3AdapterHelperAbi } from "../../../abis/AaveV3AdapterHelperAbi";
@@ -180,6 +180,16 @@ ponder.on("GPv2Settlement:Settlement", async ({ event, context }) => {
         resolutionDepth: 1,
       })
       .onConflictDoNothing();
+
+    await context.db.sql
+      .update(conditionalOrderGenerator)
+      .set({ ownerAddressType: AddressType.FlashLoanHelper })
+      .where(
+        and(
+          eq(conditionalOrderGenerator.chainId, chainId),
+          eq(conditionalOrderGenerator.owner, ownerAddress),
+        ),
+      );
 
     // Decode non-indexed Trade log fields: sellToken, buyToken, amounts, orderUid
     const [sellToken, buyToken, sellAmount, buyAmount, , orderUid] =

@@ -15,7 +15,7 @@
  */
 
 import { ponder } from "ponder:registry";
-import { candidateDiscreteOrder, conditionalOrderGenerator, discreteOrder } from "ponder:schema";
+import { bootstrapRetryQueue, candidateDiscreteOrder, conditionalOrderGenerator, discreteOrder } from "ponder:schema";
 import { and, asc, eq, inArray, lte, or, sql } from "ponder";
 import type { Hex } from "viem";
 import {
@@ -369,6 +369,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
             creationDate: c.creationDate,
             executedSellAmount: null,
             executedBuyAmount: null,
+            promotedAt: event.block.timestamp,
           })),
         )
         .onConflictDoNothing();
@@ -447,6 +448,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
       creationDate: candidate.creationDate,
       executedSellAmount: orderbookEntry.executedSellAmount,
       executedBuyAmount: orderbookEntry.executedBuyAmount,
+      promotedAt: event.block.timestamp,
     });
     confirmedUids.push(candidate.orderUid);
   }
@@ -462,6 +464,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
           status: sql`excluded.status`,
           executedSellAmount: sql`excluded.executed_sell_amount`,
           executedBuyAmount: sql`excluded.executed_buy_amount`,
+          promotedAt: sql`excluded.promoted_at`,
         },
       });
   }
@@ -480,19 +483,73 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
       );
   }
 
-  // Clean up stale candidates past their validTo — watch-tower likely never submitted them
-  await context.db.sql
-    .delete(candidateDiscreteOrder)
+  // Promote expired candidates — do a final API check so submitted-but-expired orders
+  // land in discreteOrder rather than disappearing silently.
+  const stale = await context.db.sql
+    .select({
+      orderUid: candidateDiscreteOrder.orderUid,
+      generatorId: candidateDiscreteOrder.conditionalOrderGeneratorId,
+      sellAmount: candidateDiscreteOrder.sellAmount,
+      buyAmount: candidateDiscreteOrder.buyAmount,
+      feeAmount: candidateDiscreteOrder.feeAmount,
+      validTo: candidateDiscreteOrder.validTo,
+      creationDate: candidateDiscreteOrder.creationDate,
+    })
+    .from(candidateDiscreteOrder)
     .where(
       and(
         eq(candidateDiscreteOrder.chainId, chainId),
         lte(candidateDiscreteOrder.validTo, Number(event.block.timestamp)),
       ),
-    );
+    )
+    .limit(500) as {
+    orderUid: string;
+    generatorId: string;
+    sellAmount: string;
+    buyAmount: string;
+    feeAmount: string;
+    validTo: number | null;
+    creationDate: bigint;
+  }[];
 
-  if (confirmed > 0) {
+  if (stale.length > 0) {
+    const staleStatuses = await fetchOrderStatusByUids(context, chainId, stale.map((c) => c.orderUid));
+    const staleRows: (typeof discreteOrder.$inferInsert)[] = stale.map((c) => {
+      const entry = staleStatuses.get(c.orderUid);
+      return {
+        orderUid: c.orderUid,
+        chainId,
+        conditionalOrderGeneratorId: c.generatorId,
+        status: (entry?.status ?? "expired") as DiscreteStatus,
+        sellAmount: c.sellAmount,
+        buyAmount: c.buyAmount,
+        feeAmount: c.feeAmount,
+        validTo: c.validTo,
+        creationDate: c.creationDate,
+        executedSellAmount: entry?.executedSellAmount ?? null,
+        executedBuyAmount: entry?.executedBuyAmount ?? null,
+        promotedAt: event.block.timestamp,
+      };
+    });
+
+    await context.db.sql
+      .insert(discreteOrder)
+      .values(staleRows)
+      .onConflictDoNothing();
+
+    await context.db.sql
+      .delete(candidateDiscreteOrder)
+      .where(
+        and(
+          eq(candidateDiscreteOrder.chainId, chainId),
+          inArray(candidateDiscreteOrder.orderUid, stale.map((c) => c.orderUid)),
+        ),
+      );
+  }
+
+  if (confirmed > 0 || stale.length > 0) {
     console.log(
-      `[COW:C2] block=${event.block.number} chain=${chainId} candidates=${unconfirmed.length} confirmed=${confirmed}`,
+      `[COW:C2] block=${event.block.number} chain=${chainId} candidates=${unconfirmed.length} confirmed=${confirmed} expired=${stale.length}`,
     );
   }
 });
@@ -603,6 +660,48 @@ ponder.on("StatusUpdater:block", async ({ event, context }) => {
 
 ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
   const chainId = context.chain.id as SupportedChainId;
+  const currentBlock = event.block.number;
+
+  // Drain the retry queue first — owners that timed out in a previous run
+  const queued = await context.db.sql
+    .select({ owner: bootstrapRetryQueue.owner, retryCount: bootstrapRetryQueue.retryCount })
+    .from(bootstrapRetryQueue)
+    .where(eq(bootstrapRetryQueue.chainId, chainId));
+
+  console.log(
+    `[COW:C4] block=${currentBlock} chain=${chainId} pending_retry=${queued.length}`,
+  );
+
+  let totalDiscovered = 0;
+  const retriedOwners = new Set<Hex>();
+
+  for (const { owner, retryCount } of queued) {
+    retriedOwners.add(owner as Hex);
+    try {
+      const orders = await withTimeout(
+        fetchComposableOrders(context, chainId, owner as Hex),
+        BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
+        `c4:retry:${owner}`,
+      );
+      const count = await upsertDiscreteOrders(context, chainId, orders);
+      totalDiscovered += count;
+      await context.db.sql
+        .delete(bootstrapRetryQueue)
+        .where(and(eq(bootstrapRetryQueue.chainId, chainId), eq(bootstrapRetryQueue.owner, owner as Hex)));
+    } catch (err) {
+      if (err instanceof TimeoutError) {
+        console.warn(
+          `[COW:C4] owner retry timeout owner=${owner} chain=${chainId} retry_count=${retryCount + 1} after=${BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS}ms`,
+        );
+        await context.db.sql
+          .update(bootstrapRetryQueue)
+          .set({ retryCount: retryCount + 1, lastRetryAt: currentBlock })
+          .where(and(eq(bootstrapRetryQueue.chainId, chainId), eq(bootstrapRetryQueue.owner, owner as Hex)));
+        continue;
+      }
+      throw err;
+    }
+  }
 
   // Find Active non-deterministic generators with no discrete orders
   const generators = await context.db.sql
@@ -632,18 +731,21 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
     orderType: string;
   }[];
 
-  if (generators.length === 0) {
-    console.log(`[COW:C4] block=${event.block.number} chain=${chainId} no generators need bootstrap`);
+  // Exclude owners already retried above — they were just attempted this run
+  const freshOwners = new Set(generators.map((g) => g.owner).filter((o) => !retriedOwners.has(o)));
+
+  if (freshOwners.size === 0 && retriedOwners.size === 0) {
+    console.log(`[COW:C4] block=${currentBlock} chain=${chainId} no generators need bootstrap`);
     return;
   }
 
-  const owners = new Set(generators.map((g) => g.owner));
-  console.log(
-    `[COW:C4] block=${event.block.number} chain=${chainId} generators=${generators.length} owners=${owners.size}`,
-  );
+  if (freshOwners.size > 0) {
+    console.log(
+      `[COW:C4] block=${currentBlock} chain=${chainId} generators=${generators.length} fresh_owners=${freshOwners.size}`,
+    );
+  }
 
-  let totalDiscovered = 0;
-  for (const owner of owners) {
+  for (const owner of freshOwners) {
     try {
       const orders = await withTimeout(
         fetchComposableOrders(context, chainId, owner),
@@ -657,6 +759,10 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
         console.warn(
           `[COW:C4] owner timeout owner=${owner} chain=${chainId} after=${BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS}ms`,
         );
+        await context.db.sql
+          .insert(bootstrapRetryQueue)
+          .values({ chainId, owner, firstTimeoutAt: currentBlock, retryCount: 1, lastRetryAt: currentBlock })
+          .onConflictDoNothing();
         continue;
       }
       throw err;
@@ -664,7 +770,7 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
   }
 
   console.log(
-    `[COW:C4] DONE block=${event.block.number} chain=${chainId} discovered=${totalDiscovered}`,
+    `[COW:C4] DONE block=${currentBlock} chain=${chainId} discovered=${totalDiscovered}`,
   );
 });
 

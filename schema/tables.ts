@@ -61,6 +61,7 @@ export const conditionalOrderGenerator = onchainTable(
     chainId: t.integer().notNull(),
     owner: t.hex().notNull(),               // indexed address from event
     resolvedOwner: t.hex(),                 // mapped EOA at insert time; falls back to owner if no mapping exists yet
+    ownerAddressType: addressTypeEnum("owner_address_type"), // null = direct EOA or Aave adapter not yet discovered
     handler: t.hex().notNull(),             // IConditionalOrder handler address
     salt: t.hex().notNull(),                // bytes32
     staticInput: t.hex().notNull(),         // encoded handler params
@@ -84,6 +85,7 @@ export const conditionalOrderGenerator = onchainTable(
     hashIdx: index().on(table.hash),
     chainOwnerIdx: index().on(table.chainId, table.owner),
     resolvedOwnerIdx: index().on(table.resolvedOwner),
+    ownerAddressTypeIdx: index().on(table.ownerAddressType),
     checkBlockActiveIdx: index("generator_check_block_active_idx")
       .on(table.nextCheckBlock, table.status),
   })
@@ -103,6 +105,7 @@ export const discreteOrder = onchainTable(
     creationDate: t.bigint().notNull(),               // block timestamp (seconds)
     executedSellAmount: t.text(),                     // actual executed amount (from API, post-settlement)
     executedBuyAmount: t.text(),                      // actual executed amount (from API, post-settlement)
+    promotedAt: t.bigint(),                           // block timestamp when C2 promoted from candidate; null = created directly (precompute or C4)
   }),
   (table) => ({
     pk: primaryKey({ columns: [table.chainId, table.orderUid] }),
@@ -129,6 +132,20 @@ export const candidateDiscreteOrder = onchainTable(
     pk: primaryKey({ columns: [table.chainId, table.orderUid] }),
     generatorIdx: index("candidate_discrete_order_generator_idx")
       .on(table.chainId, table.conditionalOrderGeneratorId),
+  })
+);
+
+export const bootstrapRetryQueue = onchainTable(
+  "bootstrap_retry_queue",
+  (t) => ({
+    owner: t.hex().notNull(),
+    chainId: t.integer().notNull(),
+    firstTimeoutAt: t.bigint().notNull(),   // block number of first timeout
+    retryCount: t.integer().notNull().default(1),
+    lastRetryAt: t.bigint().notNull(),      // block number of most recent attempt
+  }),
+  (table) => ({
+    pk: primaryKey({ columns: [table.chainId, table.owner] }),
   })
 );
 
