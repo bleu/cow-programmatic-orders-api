@@ -105,6 +105,7 @@ export const discreteOrder = onchainTable(
     creationDate: t.bigint().notNull(),               // block timestamp (seconds)
     executedSellAmount: t.text(),                     // actual executed amount (from API, post-settlement)
     executedBuyAmount: t.text(),                      // actual executed amount (from API, post-settlement)
+    promotedAt: t.bigint(),                           // block timestamp when C2 promoted from candidate; null = created directly (precompute or C4)
   }),
   (table) => ({
     pk: primaryKey({ columns: [table.chainId, table.orderUid] }),
@@ -131,6 +132,20 @@ export const candidateDiscreteOrder = onchainTable(
     pk: primaryKey({ columns: [table.chainId, table.orderUid] }),
     generatorIdx: index("candidate_discrete_order_generator_idx")
       .on(table.chainId, table.conditionalOrderGeneratorId),
+  })
+);
+
+export const bootstrapRetryQueue = onchainTable(
+  "bootstrap_retry_queue",
+  (t) => ({
+    owner: t.hex().notNull(),
+    chainId: t.integer().notNull(),
+    firstTimeoutAt: t.bigint().notNull(),   // block number of first timeout
+    retryCount: t.integer().notNull().default(1),
+    lastRetryAt: t.bigint().notNull(),      // block number of most recent attempt
+  }),
+  (table) => ({
+    pk: primaryKey({ columns: [table.chainId, table.owner] }),
   })
 );
 

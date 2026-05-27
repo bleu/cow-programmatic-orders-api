@@ -72,6 +72,39 @@ Aave adapter mappings are written reactively when the adapter first appears in a
 GET /api/orders/by-owner/0x<address>?ownerAddressType=flash_loan_helper
 ```
 
+## Timestamp fields
+
+All timestamp-like values in this API are **Unix seconds (UTC)**. No milliseconds, no ISO 8601.
+
+The on-the-wire shape follows the underlying storage type:
+
+- Columns stored as `t.bigint()` are serialized as **decimal strings** — in GraphQL via the `BigInt` scalar, in REST via explicit `.toString()` coercion.
+- Columns stored as `t.integer()` are serialized as **JSON numbers** — in GraphQL via the `Int` scalar, in REST passed through directly.
+
+There is one principled exception to "everything as string": `discreteOrder.validTo` and `candidateDiscreteOrder.validTo` are stored as `t.integer()` and exposed as numbers. The CoW protocol's order UID is `abi.encodePacked(orderDigest, owner, uint32(validTo))` (`src/application/helpers/orderUid.ts`), so validity is structurally a `uint32` — a 32-bit integer column matches the protocol and avoids implying more range than exists.
+
+### Field matrix
+
+| Field | Wire shape | Nullable | Meaning |
+|---|---|---|---|
+| `transaction.blockTimestamp` | string | no | Unix seconds of the block where the transaction was mined. |
+| `conditionalOrderGenerator.nextCheckTimestamp` | string | yes | For `PollTryAtEpoch`, the Unix-seconds epoch to wait for before the next poll. |
+| `discreteOrder.validTo` | number | yes | Unix seconds when this discrete order expires. `uint32` per CoW protocol. |
+| `discreteOrder.creationDate` | string | no | Unix seconds when the discrete order was first observed. Source varies — see the GraphQL field doc. |
+| `candidateDiscreteOrder.validTo` | number | yes | Same as `discreteOrder.validTo`. |
+| `candidateDiscreteOrder.creationDate` | string | no | Block timestamp at C1 discovery. |
+| `candidateDiscreteOrder.possibleValidAfterTimestamp` | string | yes | TWAP only: `t0 + partIndex*t`. Earliest Unix-seconds time the part can be valid. |
+
+### Timestamp-like values inside `decodedParams`
+
+The `conditionalOrderGenerator.decodedParams` JSON encodes Solidity struct fields via `replaceBigInts(_, String)`. Concretely: `uint256` fields arrive as decimal strings, `uint32` fields arrive as numbers. The full per-order-type breakdown is in [supported-order-types.md](./supported-order-types.md). Two consumer-facing pitfalls worth noting here:
+
+- **Absolute timestamps**: TWAP `t0`, Good-After-Time `startTime` / `endTime`. Strings.
+- **Durations, not timestamps** — these *look* like timestamps but are seconds-from-some-other-event:
+  - StopLoss `validTo` (number) — duration in seconds added to the strike-trigger block time at execution. Reading this as a Unix timestamp gives January 1970.
+  - PerpetualSwap and TradeAboveThreshold `validityBucketSeconds` (number) — bucket size.
+  - StopLoss `maxTimeSinceLastOracleUpdate` (string) — oracle staleness window.
+
 ## Indexed chains
 
 | Chain | Chain ID |

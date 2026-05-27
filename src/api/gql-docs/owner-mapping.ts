@@ -12,7 +12,8 @@ export const ownerMappingDocs: DocMap = {
   "ownerMapping.chainId": "EVM chain ID.",
   "ownerMapping.owner":
     "Fully resolved EOA owner. Never an intermediate proxy address.",
-  "ownerMapping.addressType": "cowshed_proxy or flash_loan_helper.",
+  "ownerMapping.addressType":
+    "cowshed_proxy when address is a CoWShed proxy owned directly by an EOA. flash_loan_helper when address is an Aave flash loan adapter whose owner() points to the EOA.",
   "ownerMapping.txHash":
     "Transaction where this mapping was discovered.",
   "ownerMapping.blockNumber": "Block number of discovery.",
