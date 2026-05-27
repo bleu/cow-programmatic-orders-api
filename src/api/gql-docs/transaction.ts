@@ -11,7 +11,6 @@ export const transactionDocs: DocMap = {
     "Transaction hash. Part of the composite primary key with chainId.",
   "transaction.chainId": "EVM chain ID.",
   "transaction.blockNumber": "Block number where this transaction was mined.",
-<<<<<<< HEAD
   "transaction.blockTimestamp":
     "Unix seconds (UTC) of the block. Returned as a decimal string (BigInt scalar). See docs/api-reference.md#timestamp-fields.",
   "transaction.conditionalOrderGenerators":
