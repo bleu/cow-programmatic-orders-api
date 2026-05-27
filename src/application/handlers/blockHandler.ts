@@ -501,7 +501,8 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
         eq(candidateDiscreteOrder.chainId, chainId),
         lte(candidateDiscreteOrder.validTo, Number(event.block.timestamp)),
       ),
-    ) as {
+    )
+    .limit(500) as {
     orderUid: string;
     generatorId: string;
     sellAmount: string;
