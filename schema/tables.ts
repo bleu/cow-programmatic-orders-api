@@ -61,6 +61,7 @@ export const conditionalOrderGenerator = onchainTable(
     chainId: t.integer().notNull(),
     owner: t.hex().notNull(),               // indexed address from event
     resolvedOwner: t.hex(),                 // mapped EOA at insert time; falls back to owner if no mapping exists yet
+    ownerAddressType: addressTypeEnum("owner_address_type"), // null = direct EOA or Aave adapter not yet discovered
     handler: t.hex().notNull(),             // IConditionalOrder handler address
     salt: t.hex().notNull(),                // bytes32
     staticInput: t.hex().notNull(),         // encoded handler params
@@ -84,6 +85,7 @@ export const conditionalOrderGenerator = onchainTable(
     hashIdx: index().on(table.hash),
     chainOwnerIdx: index().on(table.chainId, table.owner),
     resolvedOwnerIdx: index().on(table.resolvedOwner),
+    ownerAddressTypeIdx: index().on(table.ownerAddressType),
     checkBlockActiveIdx: index("generator_check_block_active_idx")
       .on(table.nextCheckBlock, table.status),
   })
