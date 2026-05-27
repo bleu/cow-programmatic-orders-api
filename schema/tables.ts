@@ -103,6 +103,7 @@ export const discreteOrder = onchainTable(
     creationDate: t.bigint().notNull(),               // block timestamp (seconds)
     executedSellAmount: t.text(),                     // actual executed amount (from API, post-settlement)
     executedBuyAmount: t.text(),                      // actual executed amount (from API, post-settlement)
+    promotedAt: t.bigint(),                           // block timestamp when C2 promoted from candidate; null = created directly (precompute or C4)
   }),
   (table) => ({
     pk: primaryKey({ columns: [table.chainId, table.orderUid] }),

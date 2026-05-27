@@ -369,6 +369,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
             creationDate: c.creationDate,
             executedSellAmount: null,
             executedBuyAmount: null,
+            promotedAt: event.block.timestamp,
           })),
         )
         .onConflictDoNothing();
@@ -447,6 +448,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
       creationDate: candidate.creationDate,
       executedSellAmount: orderbookEntry.executedSellAmount,
       executedBuyAmount: orderbookEntry.executedBuyAmount,
+      promotedAt: event.block.timestamp,
     });
     confirmedUids.push(candidate.orderUid);
   }
@@ -462,6 +464,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
           status: sql`excluded.status`,
           executedSellAmount: sql`excluded.executed_sell_amount`,
           executedBuyAmount: sql`excluded.executed_buy_amount`,
+          promotedAt: sql`excluded.promoted_at`,
         },
       });
   }
@@ -480,19 +483,73 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
       );
   }
 
-  // Clean up stale candidates past their validTo — watch-tower likely never submitted them
-  await context.db.sql
-    .delete(candidateDiscreteOrder)
+  // Promote expired candidates — do a final API check so submitted-but-expired orders
+  // land in discreteOrder rather than disappearing silently.
+  const stale = await context.db.sql
+    .select({
+      orderUid: candidateDiscreteOrder.orderUid,
+      generatorId: candidateDiscreteOrder.conditionalOrderGeneratorId,
+      sellAmount: candidateDiscreteOrder.sellAmount,
+      buyAmount: candidateDiscreteOrder.buyAmount,
+      feeAmount: candidateDiscreteOrder.feeAmount,
+      validTo: candidateDiscreteOrder.validTo,
+      creationDate: candidateDiscreteOrder.creationDate,
+    })
+    .from(candidateDiscreteOrder)
     .where(
       and(
         eq(candidateDiscreteOrder.chainId, chainId),
         lte(candidateDiscreteOrder.validTo, Number(event.block.timestamp)),
       ),
-    );
+    )
+    .limit(500) as {
+    orderUid: string;
+    generatorId: string;
+    sellAmount: string;
+    buyAmount: string;
+    feeAmount: string;
+    validTo: number | null;
+    creationDate: bigint;
+  }[];
 
-  if (confirmed > 0) {
+  if (stale.length > 0) {
+    const staleStatuses = await fetchOrderStatusByUids(context, chainId, stale.map((c) => c.orderUid));
+    const staleRows: (typeof discreteOrder.$inferInsert)[] = stale.map((c) => {
+      const entry = staleStatuses.get(c.orderUid);
+      return {
+        orderUid: c.orderUid,
+        chainId,
+        conditionalOrderGeneratorId: c.generatorId,
+        status: (entry?.status ?? "expired") as DiscreteStatus,
+        sellAmount: c.sellAmount,
+        buyAmount: c.buyAmount,
+        feeAmount: c.feeAmount,
+        validTo: c.validTo,
+        creationDate: c.creationDate,
+        executedSellAmount: entry?.executedSellAmount ?? null,
+        executedBuyAmount: entry?.executedBuyAmount ?? null,
+        promotedAt: event.block.timestamp,
+      };
+    });
+
+    await context.db.sql
+      .insert(discreteOrder)
+      .values(staleRows)
+      .onConflictDoNothing();
+
+    await context.db.sql
+      .delete(candidateDiscreteOrder)
+      .where(
+        and(
+          eq(candidateDiscreteOrder.chainId, chainId),
+          inArray(candidateDiscreteOrder.orderUid, stale.map((c) => c.orderUid)),
+        ),
+      );
+  }
+
+  if (confirmed > 0 || stale.length > 0) {
     console.log(
-      `[COW:C2] block=${event.block.number} chain=${chainId} candidates=${unconfirmed.length} confirmed=${confirmed}`,
+      `[COW:C2] block=${event.block.number} chain=${chainId} candidates=${unconfirmed.length} confirmed=${confirmed} expired=${stale.length}`,
     );
   }
 });
