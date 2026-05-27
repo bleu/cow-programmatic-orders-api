@@ -20,9 +20,9 @@ export const discreteOrderDocs: DocMap = {
     "Minimum buy amount as a decimal string (uint256).",
   "discreteOrder.feeAmount": "Fee amount as a decimal string (uint256).",
   "discreteOrder.validTo":
-    "Unix timestamp (uint32) when this order expires. Null if not yet known.",
+    "Unix seconds (UTC) when this order expires. Returned as a JSON number — the CoW protocol encodes validTo as uint32 in the order UID, so the column is t.integer(). Null if not yet known. See docs/api-reference.md#timestamp-fields.",
   "discreteOrder.creationDate":
-    "Unix timestamp (seconds). Source depends on discovery path: C4-fetched orders use the orderbook API's order submission timestamp; pre-computed deterministic orders (TWAP, StopLoss) use the generator event's block timestamp; C1-discovered orders use the block timestamp at C1 discovery.",
+    "Unix seconds (UTC), decimal string (BigInt scalar). Source depends on discovery path: C4-fetched orders use the orderbook API's order submission timestamp; pre-computed deterministic orders (TWAP, StopLoss) use the generator event's block timestamp; C1-discovered orders use the block timestamp at C1 discovery.",
   "discreteOrder.executedSellAmount":
     "Actual sell amount filled after settlement. Null before the order is fulfilled.",
   "discreteOrder.executedBuyAmount":
@@ -42,9 +42,9 @@ export const discreteOrderDocs: DocMap = {
   "candidateDiscreteOrder.validTo":
     "Predicted Unix seconds (UTC) when this candidate would expire if promoted. JSON number (uint32 per CoW protocol). Null when not yet known. See discreteOrder.validTo for the confirmed value and docs/api-reference.md#timestamp-fields for the timestamp policy.",
   "candidateDiscreteOrder.creationDate":
-    "Block timestamp (unix seconds) of discovery.",
+    "Unix seconds (UTC), decimal string (BigInt scalar). Block timestamp at C1 discovery.",
   "candidateDiscreteOrder.possibleValidAfterTimestamp":
-    "For TWAP: t0 + partIndex*t. Earliest time the part can be valid — used to skip orderbook API calls before that timestamp.",
+    "For TWAP: t0 + partIndex*t. Earliest Unix seconds (UTC) the part can be valid — used to skip orderbook API calls before that timestamp. Decimal string (BigInt scalar).",
   "candidateDiscreteOrder.conditionalOrderGenerator":
     "The parent generator that produced this candidate.",
 
