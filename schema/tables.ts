@@ -132,6 +132,20 @@ export const candidateDiscreteOrder = onchainTable(
   })
 );
 
+export const bootstrapRetryQueue = onchainTable(
+  "bootstrap_retry_queue",
+  (t) => ({
+    owner: t.hex().notNull(),
+    chainId: t.integer().notNull(),
+    firstTimeoutAt: t.bigint().notNull(),   // block number of first timeout
+    retryCount: t.integer().notNull().default(1),
+    lastRetryAt: t.bigint().notNull(),      // block number of most recent attempt
+  }),
+  (table) => ({
+    pk: primaryKey({ columns: [table.chainId, table.owner] }),
+  })
+);
+
 export const ownerMapping = onchainTable(
   "owner_mapping",
   (t) => ({
