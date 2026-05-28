@@ -1,40 +1,64 @@
 import { createConfig } from "ponder";
-import {
-  ComposableCowContract,
-  COMPOSABLE_COW_DEPLOYMENTS,
-  CoWShedFactoryContract,
-  FLASH_LOAN_ROUTER_ADDRESSES,
-  GPv2SettlementContract,
-} from "./src/data";
+import { ACTIVE_CHAINS } from "./src/chains";
 import { ComposableCowAbi } from "./abis/ComposableCowAbi";
+import { CoWShedFactoryAbi } from "./abis/CoWShedFactoryAbi";
+import { GPv2SettlementAbi } from "./abis/GPv2SettlementAbi";
+
+// Build chain entries: { mainnet: { id: 1, rpc: "..." }, gnosis: { id: 100, rpc: "..." }, ... }
+const chains = Object.fromEntries(
+  ACTIVE_CHAINS.map((c) => [c.name, { id: c.chainId, rpc: process.env[c.rpcEnvVar]! }]),
+);
+
+// Chains that have GPv2Settlement indexed (non-null gpv2Settlement + flashLoanRouter)
+const settlementChains = ACTIVE_CHAINS.filter(
+  (c) => c.gpv2Settlement !== null && c.flashLoanRouter !== null,
+);
 
 export default createConfig({
-  chains: {
-    mainnet: {
-      id: 1,
-      rpc: process.env.MAINNET_RPC_URL!,
-    },
-    gnosis: {
-      id: 100,
-      rpc: process.env.GNOSIS_RPC_URL!,
-    },
-  },
+  chains,
   contracts: {
-    ComposableCow: ComposableCowContract,
+    ComposableCow: {
+      abi: ComposableCowAbi,
+      chain: Object.fromEntries(
+        ACTIVE_CHAINS.map((c) => [
+          c.name,
+          { address: c.composableCow.address, startBlock: c.composableCow.startBlock },
+        ]),
+      ),
+    },
     ComposableCowLive: {
       abi: ComposableCowAbi,
-      chain: {
-        mainnet: { ...COMPOSABLE_COW_DEPLOYMENTS.mainnet, startBlock: "latest" },
-        gnosis: { ...COMPOSABLE_COW_DEPLOYMENTS.gnosis, startBlock: "latest" },
-      },
+      chain: Object.fromEntries(
+        ACTIVE_CHAINS.map((c) => [
+          c.name,
+          { address: c.composableCowLive.address, startBlock: "latest" as const },
+        ]),
+      ),
     },
-    CoWShedFactory: CoWShedFactoryContract,
+    CoWShedFactory: {
+      abi: CoWShedFactoryAbi,
+      chain: Object.fromEntries(
+        ACTIVE_CHAINS.map((c) => [
+          c.name,
+          { address: c.cowShedFactory.address, startBlock: c.cowShedFactory.startBlock },
+        ]),
+      ),
+    },
     GPv2Settlement: {
-      ...GPv2SettlementContract,
-      filter: {
-        event: "Settlement",
-        args: { solver: FLASH_LOAN_ROUTER_ADDRESSES.mainnet },
-      },
+      abi: GPv2SettlementAbi,
+      chain: Object.fromEntries(
+        settlementChains.map((c) => [
+          c.name,
+          {
+            address: c.gpv2Settlement!.address,
+            startBlock: c.gpv2Settlement!.startBlock,
+            filter: {
+              event: "Settlement" as const,
+              args: { solver: c.flashLoanRouter! },
+            },
+          },
+        ]),
+      ),
     },
   },
   blocks: {
@@ -44,34 +68,39 @@ export default createConfig({
     // generators, a full cycle takes many blocks. Polling every 5s gnosis block
     // wastes RPC calls since state rarely changes between blocks.
     ContractPoller: {
-      chain: {
-        mainnet: { startBlock: "latest" },
-        gnosis: { startBlock: "latest", interval: 4 },
-      },
+      chain: Object.fromEntries(
+        ACTIVE_CHAINS.map((c) => [
+          c.name,
+          {
+            startBlock: "latest" as const,
+            ...(c.contractPollerInterval > 1 ? { interval: c.contractPollerInterval } : {}),
+          },
+        ]),
+      ),
       interval: 1,
     },
     // C2: Candidate Confirmer — checks API for unconfirmed candidates
     CandidateConfirmer: {
-      chain: {
-        mainnet: { startBlock: "latest" },
-        gnosis: { startBlock: "latest" },
-      },
+      chain: Object.fromEntries(
+        ACTIVE_CHAINS.map((c) => [c.name, { startBlock: "latest" as const }]),
+      ),
       interval: 1,
     },
     // C3: Status Updater — polls API for open discrete order status
     StatusUpdater: {
-      chain: {
-        mainnet: { startBlock: "latest" },
-        gnosis: { startBlock: "latest" },
-      },
+      chain: Object.fromEntries(
+        ACTIVE_CHAINS.map((c) => [c.name, { startBlock: "latest" as const }]),
+      ),
       interval: 1,
     },
     // C4: Historical Bootstrap — one-time owner fetch for non-deterministic backfill orders
     HistoricalBootstrap: {
-      chain: {
-        mainnet: { startBlock: "latest", endBlock: "latest" },
-        gnosis: { startBlock: "latest", endBlock: "latest" },
-      },
+      chain: Object.fromEntries(
+        ACTIVE_CHAINS.map((c) => [
+          c.name,
+          { startBlock: "latest" as const, endBlock: "latest" as const },
+        ]),
+      ),
       interval: 1,
     },
     // C5: Deterministic Cancellation Sweeper — singleOrders() mapping read for
@@ -79,10 +108,9 @@ export default createConfig({
     // DETERMINISTIC_CANCEL_SWEEP_INTERVAL blocks; the handler itself is cheap
     // when nothing is due.
     DeterministicCancellationSweeper: {
-      chain: {
-        mainnet: { startBlock: "latest" },
-        gnosis: { startBlock: "latest" },
-      },
+      chain: Object.fromEntries(
+        ACTIVE_CHAINS.map((c) => [c.name, { startBlock: "latest" as const }]),
+      ),
       interval: 1,
     },
   },
