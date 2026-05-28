@@ -13,7 +13,55 @@ The default local URL is `http://localhost:42069`.
 | `/api/*` | GET | Custom REST endpoints. Full reference in Swagger UI at `/docs`. |
 | `/docs` | GET | Swagger UI for the REST endpoints. |
 | `/openapi.json` | GET | OpenAPI 3.0 spec for the REST endpoints. |
-| `/healthz` | GET | Returns `{ "status": "ok" }` when the server is up. Does not reflect indexer sync progress. |
+| `/healthz` | GET | Liveness probe. Always returns `200 { "status": "ok" }` if the process is up. |
+| `/ready` | GET | Readiness probe. Returns `200` once historical sync is complete; `503` with `{ "message": "Historical indexing is not complete." }` while still backfilling. |
+| `/status` | GET | Sync progress per chain. Returns current indexed block, latest chain block, and a completion percentage. Useful for monitoring backfill progress. |
+| `/metrics` | GET | Prometheus metrics. Exposes Ponder internals (block lag, handler latency, RPC call counts). |
+
+### Health and readiness probes
+
+**Liveness** (`/healthz`): always returns `200` when the Node process is alive. Wire this to your container liveness probe.
+
+**Readiness** (`/ready`): returns `503` until the historical backfill is done, then `200`. Wire this to your container readiness probe — Kubernetes will hold traffic until the indexer is caught up.
+
+```yaml
+# Kubernetes probe config example
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 3000
+  initialDelaySeconds: 10
+  periodSeconds: 30
+
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 3000
+  initialDelaySeconds: 60
+  periodSeconds: 30
+  failureThreshold: 720   # allow up to 6 hours for initial sync
+```
+
+### Sync status and progress
+
+`GET /status` returns per-chain progress during both backfill and live sync. Example response:
+
+```json
+{
+  "mainnet": {
+    "ready": false,
+    "block": { "latest": 21000000, "checkpoint": 19500000 }
+  },
+  "gnosis": {
+    "ready": true,
+    "block": { "latest": 38000000, "checkpoint": 38000000 }
+  }
+}
+```
+
+`ready: false` and a `checkpoint` far behind `latest` means the chain is still backfilling — this is expected and can take several hours on first run. `ready: true` with matching blocks means the chain is live.
+
+`GET /metrics` serves Prometheus-format metrics. Useful for wiring up Grafana dashboards to track block lag and handler throughput.
 
 ## GraphQL
 
