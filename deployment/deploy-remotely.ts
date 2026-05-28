@@ -3,6 +3,10 @@
  * deploy-remotely.ts — rsync + SSH deploy or local deploy.
  * Replaces deploy-remotely.sh.
  *
+ * NOTE: This script is specific to Bleu's internal deployment workflow.
+ * It assumes a particular server layout and SSH setup. Adapt as needed for
+ * your own hosting environment.
+ *
  * Usage:
  *   npx tsx deployment/deploy-remotely.ts <deploy_target> [env_file_path]
  *

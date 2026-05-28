@@ -3,6 +3,9 @@
  * manage.ts — orchestrates `docker compose` up/down for the deploy stack.
  * Replaces manage.sh.
  *
+ * NOTE: This script is specific to Bleu's internal deployment workflow.
+ * Adapt the paths and docker compose arguments as needed for your own setup.
+ *
  * Usage:
  *   npx tsx deployment/manage.ts <up|down> --env-file <path> [--revision <rev>]
  */
