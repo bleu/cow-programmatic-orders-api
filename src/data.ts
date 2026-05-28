@@ -127,6 +127,16 @@ export const FLASH_LOAN_ROUTER_ADDRESSES = {
 export const ORDERBOOK_POLL_INTERVAL = 20;
 
 /**
+ * Human-readable chain names keyed by chain ID.
+ * Single source of truth for chain labels used in API descriptions and docs.
+ * Update here when adding or renaming a chain.
+ */
+export const CHAIN_NAMES: Record<SupportedChainId, string> = {
+  1: "Ethereum mainnet",
+  100: "Gnosis Chain",
+};
+
+/**
  * Approximate block time in seconds per chain ID.
  * Used by the block handler to estimate block numbers from epoch timestamps (PollTryAtEpoch).
  */
