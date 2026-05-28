@@ -1,11 +1,8 @@
 import { ALL_HANDLER_ADDRESSES } from "./utils/order-types";
-import { ACTIVE_CHAINS } from "./chains";
+import { ACTIVE_CHAINS, ALL_DEFINED_CHAINS } from "./chains";
+import { SupportedChainId } from "@cowprotocol/cow-sdk";
 
-/**
- * Supported chain IDs — update this type when adding a new chain.
- * All per-chain Record<> maps below use this type to enforce completeness.
- */
-export type SupportedChainId = 1 | 100;
+export { SupportedChainId };
 
 // CREATE2-deployed contracts share the same address across chains
 export const GPV2_SETTLEMENT_ADDRESS =
@@ -50,17 +47,12 @@ export const COMPOSABLE_COW_HANDLER_ADDRESSES = new Set(ALL_HANDLER_ADDRESSES);
 
 /**
  * CoW Protocol Orderbook API base URLs per chain ID.
- * Active chains are derived from ACTIVE_CHAINS; additional well-known chains are
- * included for completeness (e.g. Arbitrum, Base, Sepolia) even if not currently indexed.
+ * Derived from ALL_DEFINED_CHAINS so every configured chain is covered,
+ * including inactive ones used for API-only lookups.
  */
-export const ORDERBOOK_API_URLS: Record<number, string> = {
-  // Derive from ACTIVE_CHAINS first
-  ...Object.fromEntries(ACTIVE_CHAINS.map((c) => [c.chainId, c.orderbookApiUrl])),
-  // Additional well-known chains (not currently indexed, but useful for future expansion)
-  42161: "https://api.cow.fi/arbitrum_one",
-  8453: "https://api.cow.fi/base",
-  11155111: "https://api.cow.fi/sepolia",
-};
+export const ORDERBOOK_API_URLS: Record<number, string> = Object.fromEntries(
+  ALL_DEFINED_CHAINS.map((c) => [c.chainId, c.orderbookApiUrl]),
+);
 
 /**
  * AaveV3AdapterFactory addresses keyed by chain name.

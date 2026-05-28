@@ -9,7 +9,7 @@ const chains = Object.fromEntries(
   ACTIVE_CHAINS.map((c) => [c.name, { id: c.chainId, rpc: process.env[c.rpcEnvVar]! }]),
 );
 
-// Chains that have GPv2Settlement indexed (non-null gpv2Settlement + flashLoanRouter)
+const cowShedChains = ACTIVE_CHAINS.filter((c) => c.cowShedFactory !== null);
 const settlementChains = ACTIVE_CHAINS.filter(
   (c) => c.gpv2Settlement !== null && c.flashLoanRouter !== null,
 );
@@ -38,9 +38,9 @@ export default createConfig({
     CoWShedFactory: {
       abi: CoWShedFactoryAbi,
       chain: Object.fromEntries(
-        ACTIVE_CHAINS.map((c) => [
+        cowShedChains.map((c) => [
           c.name,
-          { address: c.cowShedFactory.address, startBlock: c.cowShedFactory.startBlock },
+          { address: c.cowShedFactory!.address, startBlock: c.cowShedFactory!.startBlock },
         ]),
       ),
     },

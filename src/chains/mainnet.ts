@@ -1,10 +1,13 @@
-import type { ChainConfig } from "./types";
+import { SupportedChainId } from "@cowprotocol/cow-sdk";
+import { pollerInterval, type ChainConfig } from "./types";
+
+const blockTime = 12;
 
 export const mainnet: ChainConfig = {
   name: "mainnet",
-  chainId: 1,
+  chainId: SupportedChainId.MAINNET,
   rpcEnvVar: "MAINNET_RPC_URL",
-  blockTime: 12,
+  blockTime,
   composableCow: {
     address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74",
     startBlock: 17883049,
@@ -22,6 +25,6 @@ export const mainnet: ChainConfig = {
   },
   flashLoanRouter: "0x9da8B48441583a2b93e2eF8213aAD0EC0b392C69",
   aaveV3AdapterFactory: "0xdeCc46a4b09162f5369c5c80383aaa9159bcf192",
-  contractPollerInterval: 1,
+  contractPollerInterval: pollerInterval(blockTime),
   orderbookApiUrl: "https://api.cow.fi/mainnet",
 };

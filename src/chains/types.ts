@@ -1,3 +1,16 @@
+import { SupportedChainId } from "@cowprotocol/cow-sdk";
+
+export type { SupportedChainId };
+
+/**
+ * Derive the ContractPoller block interval from block time so that polls
+ * happen approximately every 20 seconds regardless of chain speed.
+ * e.g. mainnet (12s) → 1 block, gnosis (5s) → 4 blocks, base (2s) → 10 blocks.
+ */
+export function pollerInterval(blockTimeSeconds: number): number {
+  return Math.max(1, Math.floor(20 / blockTimeSeconds));
+}
+
 /**
  * ChainConfig — everything needed to configure one chain in ponder.config.ts
  * and derive runtime constants (block time, RPC URL, API URL, etc.).
@@ -5,13 +18,12 @@
  * Add a new chain by:
  *   1. Creating src/chains/<name>.ts implementing this interface.
  *   2. Importing and appending it to ACTIVE_CHAINS in src/chains/index.ts.
- *   3. Updating SupportedChainId in src/data.ts.
  */
 export interface ChainConfig {
   /** Ponder chain key (e.g. "mainnet", "gnosis"). Must match ponder chain names. */
   name: string;
-  /** Numeric EIP-155 chain ID (e.g. 1, 100). */
-  chainId: number;
+  /** EIP-155 chain ID — must be a value from the cow-sdk SupportedChainId enum. */
+  chainId: SupportedChainId;
   /** Environment variable name holding the RPC URL for this chain. */
   rpcEnvVar: string;
   /** Approximate block time in seconds — used to estimate block numbers from epoch timestamps. */
@@ -25,11 +37,12 @@ export interface ChainConfig {
   /**
    * CoWShedFactory deployment(s) on this chain.
    * Gnosis has two factory addresses (current + legacy), so address may be an array.
+   * Null when the factory address hasn't been confirmed for this chain yet.
    */
   cowShedFactory: {
     address: `0x${string}` | readonly `0x${string}`[];
     startBlock: number;
-  };
+  } | null;
 
   /**
    * GPv2Settlement deployment — null if not indexed on this chain.
@@ -45,13 +58,13 @@ export interface ChainConfig {
 
   /**
    * AaveV3AdapterFactory address — used for view calls (not a Ponder-indexed contract).
-   * Null if not deployed on this chain.
+   * Null if not deployed/confirmed on this chain.
    */
   aaveV3AdapterFactory: `0x${string}` | null;
 
   /**
-   * ContractPoller block interval override for this chain.
-   * Defaults to 1; Gnosis uses 4 (~20s) to avoid wasteful RPC calls.
+   * ContractPoller block interval for this chain.
+   * Derive with pollerInterval(blockTime) — targets ~20s between polls.
    */
   contractPollerInterval: number;
 

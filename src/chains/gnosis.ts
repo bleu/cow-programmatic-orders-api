@@ -1,10 +1,13 @@
-import type { ChainConfig } from "./types";
+import { SupportedChainId } from "@cowprotocol/cow-sdk";
+import { pollerInterval, type ChainConfig } from "./types";
+
+const blockTime = 5;
 
 export const gnosis: ChainConfig = {
   name: "gnosis",
-  chainId: 100,
+  chainId: SupportedChainId.GNOSIS_CHAIN,
   rpcEnvVar: "GNOSIS_RPC_URL",
-  blockTime: 5,
+  blockTime,
   composableCow: {
     address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74",
     startBlock: 29389123,
@@ -25,6 +28,6 @@ export const gnosis: ChainConfig = {
   },
   flashLoanRouter: "0x9da8B48441583a2b93e2eF8213aAD0EC0b392C69", // confirmed via ROUTER() on Gnosis AaveV3AdapterFactory
   aaveV3AdapterFactory: "0xdeCc46a4b09162f5369c5c80383aaa9159bcf192", // verified on Gnosisscan
-  contractPollerInterval: 4, // ~20s — avoids wasteful RPC calls given 1,461+ generators
+  contractPollerInterval: pollerInterval(blockTime),
   orderbookApiUrl: "https://api.cow.fi/xdai",
 };
