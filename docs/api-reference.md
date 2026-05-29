@@ -141,13 +141,13 @@ The `conditionalOrderGenerator.decodedParams` JSON encodes Solidity struct field
 
 ## Indexed chains
 
-The active chain list is the `SupportedChainId` type and `CHAIN_NAMES` map in `src/data.ts`. Currently:
+The active chain list is `ACTIVE_CHAINS` in `src/chains/index.ts`. Currently active:
 
 | Chain | Chain ID |
 |-------|----------|
-| Ethereum mainnet | 1 |
-| Gnosis Chain | 100 |
+| Ethereum Mainnet | 1 |
+| Gnosis | 100 |
 
 Filter queries with `where: { chainId: 1 }` (GraphQL) or `?chainId=1` (REST).
 
-> Adding a chain: extend `SupportedChainId`, `CHAIN_NAMES`, and the per-chain config maps in `src/data.ts`. The API schema descriptions derive from `CHAIN_NAMES` automatically.
+> Adding a chain: create `src/chains/<name>.ts` following the existing chain files as a template, add it to `ACTIVE_CHAINS` in `src/chains/index.ts`, and add its RPC URL env var. See COW-986 for the full checklist.

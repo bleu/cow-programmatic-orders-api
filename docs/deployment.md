@@ -22,7 +22,7 @@ The indexer is RPC-heavy during initial sync. Rate-limited endpoints will work b
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `DATABASE_URL` | Yes | PostgreSQL connection string |
-| `DATABASE_SCHEMA` | Yes | PostgreSQL schema name. `manage.sh` defaults to `programmatic_orders`. |
+| `DATABASE_SCHEMA` | Yes | PostgreSQL schema name. `manage.ts` defaults to `programmatic_orders`. |
 
 Example: `DATABASE_URL=postgresql://cow_programmatic:secretpass@localhost:5433/cow_programmatic`
 
@@ -50,7 +50,7 @@ Used by `docker-compose.yml` (deploy profile) and `deployment/manage.ts`:
 | `POSTGRES_MEMORY_LIMIT` | No | Unused. Memory flags are now hardcoded inline in `docker-compose.yml` (tuned for 1G). Adjust the `command:` block proportionally if you allocate more RAM. |
 | `PONDER_EXPOSED_PORT` | No | Host port mapped to the Ponder API. Default: `40000`. Inside the container, Ponder listens on `3000`. |
 
-If you're using the `deploy-remotely.sh` workflow, these variables also need to be set as GitHub Actions secrets (or equivalent) in your CI environment.
+If you're using the `deploy-remotely.ts` workflow, these variables also need to be set as GitHub Actions secrets (or equivalent) in your CI environment.
 
 ## Database Setup
 
@@ -83,9 +83,8 @@ Production uses the `deploy` profile in the root `docker-compose.yml`, which run
 ```
 docker-compose.yml         # root compose file — dev postgres (default) + deploy profile
 deployment/
-  manage.sh                # Build image, bring up/down the stack
-  deploy-remotely.sh       # Rsync + SSH deploy to a remote host
-  static/start-db.sh       # PostgreSQL entrypoint with memory auto-tuning
+  manage.ts                # Build image, bring up/down the stack
+  deploy-remotely.ts       # Rsync + SSH deploy to a remote host
 ```
 
 The deploy services (`postgres-deploy` and `ponder`) live in the root `docker-compose.yml` under the `deploy` profile. Start them with:
@@ -112,14 +111,14 @@ Adjust these proportionally if you change the host's available memory.
 
 ### How it works in practice
 
-`deploy-remotely.sh` handles the full flow:
+`deploy-remotely.ts` handles the full flow:
 
 ```bash
 # Local deploy (builds and starts on this machine)
-./deployment/deploy-remotely.sh - /path/to/.env
+npx tsx deployment/deploy-remotely.ts - /path/to/.env
 
 # Remote deploy via SSH
-./deployment/deploy-remotely.sh user@host:/opt/cow-indexer /path/to/.env
+npx tsx deployment/deploy-remotely.ts user@host:/opt/cow-indexer /path/to/.env
 ```
 
 What it does:
@@ -136,16 +135,6 @@ To tear down: `npx tsx deployment/manage.ts down --env-file deployment/.env`
 For a production setup, run at least two containers: one dedicated to indexing and one (or more) serving the API. This way if a user overloads the API with queries, the indexer keeps working. And if the indexer crashes or restarts, the API stays up with the last-synced data.
 
 The current deploy profile in `docker-compose.yml` runs a single container doing both. Splitting indexer and API is a straightforward change: run two instances of the same image, one with indexing enabled and one configured as API-only (Ponder supports this via its `--api-only` flag or by disabling indexing).
-
-### API Endpoints
-
-Once running, the indexer exposes:
-
-- `GET /graphql` and `POST /graphql` -- GraphQL API
-- `/sql/*` -- Ponder SQL client (direct Drizzle-based queries)
-- `GET /healthz` -- returns `{"status":"ok"}`
-- `GET /ready` -- readiness check (used by the Docker health check)
-
 
 ## What's Not Implemented
 
