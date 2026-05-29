@@ -10,7 +10,7 @@ export const base: ChainConfig = {
   blockTime,
   composableCow: {
     address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74", // CREATE2 — same across chains
-    startBlock: 15_000_000, // TODO: verify exact ComposableCow deployment block on Base
+    startBlock: 21794150, // verified: tx 0xdfa9fded3b1743ce2556a245b17690b073cdd9d59739b60d5e4091e445d732b7 (basescan, 2024-10-31)
   },
   composableCowLive: {
     address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74",

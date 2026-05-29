@@ -10,7 +10,7 @@ export const sepolia: ChainConfig = {
   blockTime,
   composableCow: {
     address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74", // CREATE2 — same across chains
-    startBlock: 4_000_000, // TODO: verify exact ComposableCow deployment block on Sepolia
+    startBlock: 5072748, // verified: tx 0xed9625240dec4803ea76358bcac3d4c8678b81a6ffddd50c0326c12626d3f38e (cowprotocol/composable-cow networks.json + sepolia.etherscan.io, 2024-01-12)
   },
   composableCowLive: {
     address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74",

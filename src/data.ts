@@ -16,6 +16,14 @@ export const GPV2_SETTLEMENT_ADDRESS =
 export const ORDERBOOK_POLL_INTERVAL = 20;
 
 /**
+ * Human-readable chain names keyed by chain ID.
+ * Derived from ACTIVE_CHAINS — used for API schema descriptions and logging.
+ */
+export const CHAIN_NAMES: Record<SupportedChainId, string> = Object.fromEntries(
+  ACTIVE_CHAINS.map((c) => [c.chainId, c.name]),
+) as Record<SupportedChainId, string>;
+
+/**
  * Approximate block time in seconds per chain ID.
  * Derived from ACTIVE_CHAINS — update chain files to change block times.
  */

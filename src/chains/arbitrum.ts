@@ -10,7 +10,7 @@ export const arbitrum: ChainConfig = {
   blockTime,
   composableCow: {
     address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74", // CREATE2 — same across chains
-    startBlock: 162066830, // TODO: verify exact ComposableCow deployment block on Arbitrum
+    startBlock: 204751436, // verified: tx 0xede8f4305385f5df63d5221d1377380724c11781000b30a29cf636241abaa59f (cowprotocol/composable-cow networks.json + arbiscan)
   },
   composableCowLive: {
     address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74",

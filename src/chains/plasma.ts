@@ -10,7 +10,7 @@ export const plasma: ChainConfig = {
   blockTime,
   composableCow: {
     address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74", // CREATE2 — same across chains
-    startBlock: 0, // TODO: verify ComposableCow deployment block on Plasma (check plasmascan.to)
+    startBlock: 4810535, // verified: tx 0xa4db8e5f949f39af60460fc05979b363b01570970e94eb8397dc39cfbdcaed86 (cowprotocol/composable-cow networks.json + rpc.plasma.to)
   },
   composableCowLive: {
     address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74",
@@ -20,5 +20,5 @@ export const plasma: ChainConfig = {
   flashLoanRouter: null, // TODO: confirm via ROUTER() on Plasma AaveV3AdapterFactory
   aaveV3AdapterFactory: null, // TODO: verify on plasmascan.to
   contractPollerInterval: pollerInterval(blockTime),
-  orderbookApiUrl: "https://api.cow.fi/plasma", // TODO: verify CoW Protocol orderbook URL for Plasma
+  orderbookApiUrl: "https://api.cow.fi/plasma", // verified: api.cow.fi/plasma returns 200 (ORDER_BOOK_PROD_CONFIG in cow-sdk)
 };
