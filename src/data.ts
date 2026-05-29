@@ -1,3 +1,4 @@
+import { getChainInfo } from "@cowprotocol/cow-sdk";
 import { ComposableCowAbi } from "../abis/ComposableCowAbi";
 import { CoWShedFactoryAbi } from "../abis/CoWShedFactoryAbi";
 import { GPv2SettlementAbi } from "../abis/GPv2SettlementAbi";
@@ -126,14 +127,12 @@ export const FLASH_LOAN_ROUTER_ADDRESSES = {
  */
 export const ORDERBOOK_POLL_INTERVAL = 20;
 
-/**
- * Human-readable chain names keyed by chain ID.
- * Single source of truth for chain labels used in API descriptions and docs.
- * Update here when adding or renaming a chain.
- */
+// Derived from cow-sdk so chain labels stay in sync with the rest of CoW Protocol tooling.
 export const CHAIN_NAMES: Record<SupportedChainId, string> = {
-  1: "Ethereum mainnet",
-  100: "Gnosis Chain",
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+  1: getChainInfo(1)!.eip155Label,
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+  100: getChainInfo(100)!.eip155Label,
 };
 
 /**
