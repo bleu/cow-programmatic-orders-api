@@ -10,7 +10,7 @@ export const linea: ChainConfig = {
   blockTime,
   composableCow: {
     address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74", // CREATE2 — same across chains
-    startBlock: 0, // TODO: verify ComposableCow deployment block on Linea (check lineascan.build)
+    startBlock: 25028474, // verified: tx 0x61f2e7ecec07f7b5c93d491f460cca41eba991fbb022f6866ee17510c9e61151 (cowprotocol/composable-cow networks.json + lineascan.build)
   },
   composableCowLive: {
     address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74",

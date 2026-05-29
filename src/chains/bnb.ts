@@ -10,7 +10,7 @@ export const bnb: ChainConfig = {
   blockTime,
   composableCow: {
     address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74", // CREATE2 — same across chains
-    startBlock: 0, // TODO: verify ComposableCow deployment block on BNB (check bscscan.com)
+    startBlock: 48433175, // verified: tx 0x6595bc3c236157c5a164eb37267486b3c2f6eee02d2e6d9068550e939b18ed71 (cowprotocol/composable-cow networks.json + bscscan.com, 2025-04-17)
   },
   composableCowLive: {
     address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74",

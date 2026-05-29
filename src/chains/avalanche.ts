@@ -10,7 +10,7 @@ export const avalanche: ChainConfig = {
   blockTime,
   composableCow: {
     address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74", // CREATE2 — same across chains
-    startBlock: 0, // TODO: verify ComposableCow deployment block on Avalanche (check snowscan.xyz)
+    startBlock: 60434336, // verified: tx 0xaa800a7183e8313e11a0024a8fe189770c33aaf8fc1451a3a5c373898e25fefa (snowscan.xyz, 2025-04-17)
   },
   composableCowLive: {
     address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74",

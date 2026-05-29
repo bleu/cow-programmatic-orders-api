@@ -10,7 +10,7 @@ export const polygon: ChainConfig = {
   blockTime,
   composableCow: {
     address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74", // CREATE2 — same across chains
-    startBlock: 0, // TODO: verify ComposableCow deployment block on Polygon (check polygonscan.com)
+    startBlock: 70406888, // verified: tx 0xef1fdc60092220b9137d2b23189499d995119c281cad648710ac3636bbebf17a (polygonscan.com, 2025-04-17)
   },
   composableCowLive: {
     address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74",
