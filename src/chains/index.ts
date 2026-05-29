@@ -46,14 +46,14 @@ export const ALL_DEFINED_CHAINS = [
 export const ACTIVE_CHAINS = [
   mainnet,
   gnosis,
-  // arbitrum, // addresses verified — enable when ARBITRUM_RPC_URL is provisioned
-  // base,     // addresses verified — enable when BASE_RPC_URL is provisioned
-  // bnb,      // addresses verified — enable when BNB_RPC_URL is provisioned
-  // polygon,  // addresses verified — enable when POLYGON_RPC_URL is provisioned
-  // avalanche,// addresses verified — enable when AVALANCHE_RPC_URL is provisioned
-  // linea,    // addresses verified — enable when LINEA_RPC_URL is provisioned
-  // plasma,   // addresses verified — enable when PLASMA_RPC_URL is provisioned
-  // lens,     // addresses verified — enable when LENS_RPC_URL is provisioned (orderbook not live yet)
-  // sepolia,  // addresses verified — enable when SEPOLIA_RPC_URL is provisioned
-  // ink,      // cowShedFactory not deployed on Ink — enable when confirmed
+  // arbitrum, // fully verified — enable when ARBITRUM_RPC_URL is provisioned
+  // base,     // fully verified — enable when BASE_RPC_URL is provisioned
+  // bnb,      // fully verified — enable when BNB_RPC_URL is provisioned
+  // polygon,  // fully verified — enable when POLYGON_RPC_URL is provisioned
+  // avalanche,// fully verified — enable when AVALANCHE_RPC_URL is provisioned
+  // linea,    // fully verified — enable when LINEA_RPC_URL is provisioned
+  // plasma,   // fully verified — enable when PLASMA_RPC_URL is provisioned
+  // lens,     // enable when LENS_RPC_URL is provisioned; aaveV3AdapterFactory=null (no flash loan detection); orderbook not live yet
+  // sepolia,  // enable when SEPOLIA_RPC_URL is provisioned; aaveV3AdapterFactory=null (no flash loan detection)
+  // ink,      // enable when INK_RPC_URL is provisioned; cowShedFactory=null (no CoWShed indexing); aaveV3AdapterFactory=null (no flash loan detection)
 ];
