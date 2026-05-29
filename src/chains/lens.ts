@@ -15,9 +15,12 @@ export const lens: ChainConfig = {
   composableCowLive: {
     address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74",
   },
-  cowShedFactory: null, // TODO: confirm CoWShedFactory address on Lens
+  cowShedFactory: {
+    address: "0x312f92fe5f1710408b20d52a374fa29e099cfa86", // CREATE2 — same across chains
+    startBlock: 3519249, // verified: tx 0x53df62bc122ecb5bfa9770776bb54b3a81e5f7238e4b02c52ac7000eb36c86bd
+  },
   gpv2Settlement: null, // TODO: enable once AaveV3AdapterFactory is confirmed on Lens
   flashLoanRouter: null, // TODO: confirm via ROUTER() on Lens AaveV3AdapterFactory
   aaveV3AdapterFactory: null, // TODO: verify on explorer.lens.xyz
-  orderbookApiPath: "lens", // TODO: verify CoW Protocol orderbook URL for Lens
+  orderbookApiPath: "lens", // NOTE: api.cow.fi/lens returns 404 — CoW Protocol has not launched orderbook support for Lens yet
 };

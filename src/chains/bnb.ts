@@ -15,7 +15,10 @@ export const bnb: ChainConfig = {
   composableCowLive: {
     address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74",
   },
-  cowShedFactory: null, // TODO: confirm CoWShedFactory address on BNB
+  cowShedFactory: {
+    address: "0x312f92fe5f1710408b20d52a374fa29e099cfa86", // CREATE2 — same across chains
+    startBlock: 61362362, // verified: tx 0x76d25671fd1c31044a6cf481df15649fc3503cf5a492de92be8601fee02e259f
+  },
   gpv2Settlement: null, // TODO: enable once AaveV3AdapterFactory is confirmed on BNB
   flashLoanRouter: null, // TODO: confirm via ROUTER() on BNB AaveV3AdapterFactory
   aaveV3AdapterFactory: null, // TODO: verify on bscscan.com

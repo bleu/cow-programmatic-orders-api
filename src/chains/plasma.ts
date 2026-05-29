@@ -15,7 +15,10 @@ export const plasma: ChainConfig = {
   composableCowLive: {
     address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74",
   },
-  cowShedFactory: null, // TODO: confirm CoWShedFactory address on Plasma
+  cowShedFactory: {
+    address: "0x312f92fe5f1710408b20d52a374fa29e099cfa86", // CREATE2 — same across chains
+    startBlock: 4803028, // verified: tx 0x33d7ed32d433467d75373baf0bcbc99fec65df8a8fd6f67673efa8378f67ebcc
+  },
   gpv2Settlement: null, // TODO: enable once AaveV3AdapterFactory is confirmed on Plasma
   flashLoanRouter: null, // TODO: confirm via ROUTER() on Plasma AaveV3AdapterFactory
   aaveV3AdapterFactory: null, // TODO: verify on plasmascan.to

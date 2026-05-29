@@ -13,7 +13,10 @@ The default local URL is `http://localhost:42069`.
 | `/api/*` | GET | Custom REST endpoints. Full reference in Swagger UI at `/docs`. |
 | `/docs` | GET | Swagger UI for the REST endpoints. |
 | `/openapi.json` | GET | OpenAPI 3.0 spec for the REST endpoints. |
-| `/healthz` | GET | Returns `{ "status": "ok" }` when the server is up. Does not reflect indexer sync progress. |
+| `/healthz` | GET | Liveness probe. Always returns `200 { "status": "ok" }` if the process is up. |
+| `/ready` | GET | Readiness probe. Returns `200` once historical sync is complete; `503` with `{ "message": "Historical indexing is not complete." }` while still backfilling. |
+| `/status` | GET | Sync progress per chain. Returns current indexed block, latest chain block, and a completion percentage. Useful for monitoring backfill progress. |
+| `/metrics` | GET | Prometheus metrics. Exposes Ponder internals (block lag, handler latency, RPC call counts). |
 
 ## GraphQL
 
@@ -107,9 +110,13 @@ The `conditionalOrderGenerator.decodedParams` JSON encodes Solidity struct field
 
 ## Indexed chains
 
+The active chain list is the `SupportedChainId` type and `CHAIN_NAMES` map in `src/data.ts`. Currently:
+
 | Chain | Chain ID |
 |-------|----------|
 | Ethereum mainnet | 1 |
 | Gnosis Chain | 100 |
 
 Filter queries with `where: { chainId: 1 }` (GraphQL) or `?chainId=1` (REST).
+
+> Adding a chain: extend `SupportedChainId`, `CHAIN_NAMES`, and the per-chain config maps in `src/data.ts`. The API schema descriptions derive from `CHAIN_NAMES` automatically.

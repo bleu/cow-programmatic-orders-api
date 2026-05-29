@@ -30,7 +30,7 @@ Three contracts are indexed:
 ## Data Flow
 
 ```
-ComposableCoW contract (mainnet + gnosis)
+ComposableCoW contract (all chains in SupportedChainId — see src/data.ts)
     |
     |  ConditionalOrderCreated events
     v
@@ -173,15 +173,15 @@ Stats are accumulated and logged every 30 seconds to track throughput without pe
 
 Five live-only block handlers, all in a single file. They only run during live sync (startBlock: "latest") to avoid hammering the orderbook API during historical backfill. C1 and C5 share a per-chain batch cap (`MAX_GENERATORS_PER_BLOCK_<chainId>`, default 200) and pull from a priority queue ordered by oldest `lastCheckBlock` first. Generators past the cap defer to the next block.
 
-**C1 — ContractPoller** (every block, mainnet + gnosis): Multicalls `getTradeableOrderWithSignature` on ComposableCoW for each `Active` generator where `allCandidatesKnown=false`. A success result creates a `candidateDiscreteOrder` entry. A `SingleOrderNotAuthed` error marks the generator as `Cancelled` with `lastPollResult='cancelled:SingleOrderNotAuthed'`. Other errors (tryNextBlock, tryAtEpoch, etc.) advance the generator's `nextCheckBlock` accordingly. Single-shot non-deterministic types (GoodAfterTime, TradeAboveThreshold) set `allCandidatesKnown=true` after first success. Can be disabled with `DISABLE_POLL_RESULT_CHECK=true`.
+**C1 — ContractPoller** (every block): Multicalls `getTradeableOrderWithSignature` on ComposableCoW for each `Active` generator where `allCandidatesKnown=false`. A success result creates a `candidateDiscreteOrder` entry. A `SingleOrderNotAuthed` error marks the generator as `Cancelled` with `lastPollResult='cancelled:SingleOrderNotAuthed'`. Other errors (tryNextBlock, tryAtEpoch, etc.) advance the generator's `nextCheckBlock` accordingly. Single-shot non-deterministic types (GoodAfterTime, TradeAboveThreshold) set `allCandidatesKnown=true` after first success. Can be disabled with `DISABLE_POLL_RESULT_CHECK=true`.
 
-**C2 — CandidateConfirmer** (every block, mainnet + gnosis): First drains any `candidateDiscreteOrder` rows whose parent generator is `Cancelled` — promoting them into `discreteOrder` with `status='cancelled'` and deleting the candidate rows. Then checks remaining `candidateDiscreteOrder` rows against the orderbook API: when a candidate appears in the API, it's promoted to `discreteOrder` and deleted from candidates. Candidates past their `validTo` are also pruned.
+**C2 — CandidateConfirmer** (every block): First drains any `candidateDiscreteOrder` rows whose parent generator is `Cancelled` — promoting them into `discreteOrder` with `status='cancelled'` and deleting the candidate rows. Then checks remaining `candidateDiscreteOrder` rows against the orderbook API: when a candidate appears in the API, it's promoted to `discreteOrder` and deleted from candidates. Candidates past their `validTo` are also pruned.
 
-**C3 — StatusUpdater** (every block, mainnet + gnosis): Polls the orderbook API for all `open` discrete orders and updates their status from the API response. Then sweeps any remaining `open` rows whose parent generator is `Cancelled` to `status='cancelled'` (API-terminal statuses from the loop above still win for children that were traded before on-chain cancellation). Finally expires any orders past their `validTo` timestamp.
+**C3 — StatusUpdater** (every block): Polls the orderbook API for all `open` discrete orders and updates their status from the API response. Then sweeps any remaining `open` rows whose parent generator is `Cancelled` to `status='cancelled'` (API-terminal statuses from the loop above still win for children that were traded before on-chain cancellation). Finally expires any orders past their `validTo` timestamp.
 
-**C4 — HistoricalBootstrap** (fires once at latest block, mainnet + gnosis): One-time fetch of historical orders for non-deterministic generators (PerpetualSwap, GoodAfterTime, TradeAboveThreshold, Unknown) that were active during backfill but have no discrete orders yet. Queries the CoW Protocol `/orders?owner=` endpoint per owner.
+**C4 — HistoricalBootstrap** (fires once at latest block): One-time fetch of historical orders for non-deterministic generators (PerpetualSwap, GoodAfterTime, TradeAboveThreshold, Unknown) that were active during backfill but have no discrete orders yet. Queries the CoW Protocol `/orders?owner=` endpoint per owner.
 
-**C5 — DeterministicCancellationSweeper** (every block, mainnet + gnosis): Closes C1's blind spot. C1 skips `allCandidatesKnown=true` generators, so removals via `ComposableCoW.remove()` on deterministic types (TWAP, StopLoss, CirclesBackingOrder) would otherwise go undetected — `remove()` emits no event. C5 multicalls `singleOrders(owner, hash)` on a per-generator cadence of `DETERMINISTIC_CANCEL_SWEEP_INTERVAL` blocks (default 100). A `false` return means the owner called `remove()` on-chain: the generator is flipped to `Cancelled` with `lastPollResult='cancelled:removeMapping'`, after which C2 and C3's parent-cancelled cascades reconcile the children on the next block. `true` reschedules the next check. Can be disabled with `DISABLE_DETERMINISTIC_CANCEL_SWEEP=true`.
+**C5 — DeterministicCancellationSweeper** (every block): Closes C1's blind spot. C1 skips `allCandidatesKnown=true` generators, so removals via `ComposableCoW.remove()` on deterministic types (TWAP, StopLoss, CirclesBackingOrder) would otherwise go undetected — `remove()` emits no event. C5 multicalls `singleOrders(owner, hash)` on a per-generator cadence of `DETERMINISTIC_CANCEL_SWEEP_INTERVAL` blocks (default 100). A `false` return means the owner called `remove()` on-chain: the generator is flipped to `Cancelled` with `lastPollResult='cancelled:removeMapping'`, after which C2 and C3's parent-cancelled cascades reconcile the children on the next block. `true` reschedules the next check. Can be disabled with `DISABLE_DETERMINISTIC_CANCEL_SWEEP=true`.
 
 ## Order Types and Decoders
 
@@ -226,7 +226,7 @@ See [api-reference.md](./api-reference.md) for the full endpoint list.
 5. Add the RPC URL to `.env.local`.
 6. Run `pnpm codegen` to regenerate types.
 
-The block handlers (C1–C5) already run on both mainnet and gnosis. Adding a new chain requires adding entries to each block handler's `chain` config in `ponder.config.ts`.
+The block handlers (C1–C5) run on all chains in `ACTIVE_CHAINS` (see `src/data.ts`). Adding a new chain: extend `SupportedChainId`, add the per-chain config maps in `src/data.ts`, and add the chain to `ponder.config.ts`.
 
 ## Known Limitations
 

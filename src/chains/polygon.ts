@@ -15,7 +15,10 @@ export const polygon: ChainConfig = {
   composableCowLive: {
     address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74",
   },
-  cowShedFactory: null, // TODO: confirm CoWShedFactory address on Polygon
+  cowShedFactory: {
+    address: "0x312f92fe5f1710408b20d52a374fa29e099cfa86", // CREATE2 — same across chains
+    startBlock: 74072686, // verified: tx 0x9d877eaa06776c30a409fc31db365e8441f982598586345d53ffaee4f9d2da6d
+  },
   gpv2Settlement: null, // TODO: enable once AaveV3AdapterFactory is confirmed on Polygon
   flashLoanRouter: null, // TODO: confirm via ROUTER() on Polygon AaveV3AdapterFactory
   aaveV3AdapterFactory: null, // TODO: verify on polygonscan.com
