@@ -1,3 +1,4 @@
+import { getChainInfo } from "@cowprotocol/cow-sdk";
 import { ComposableCowAbi } from "../abis/ComposableCowAbi";
 import { CoWShedFactoryAbi } from "../abis/CoWShedFactoryAbi";
 import { GPv2SettlementAbi } from "../abis/GPv2SettlementAbi";
@@ -125,6 +126,14 @@ export const FLASH_LOAN_ROUTER_ADDRESSES = {
  * Used in ponder.config.ts for block handler intervals and in constants.ts for RECHECK_INTERVAL.
  */
 export const ORDERBOOK_POLL_INTERVAL = 20;
+
+// Derived from cow-sdk so chain labels stay in sync with the rest of CoW Protocol tooling.
+export const CHAIN_NAMES: Record<SupportedChainId, string> = {
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+  1: getChainInfo(1)!.eip155Label,
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+  100: getChainInfo(100)!.eip155Label,
+};
 
 /**
  * Approximate block time in seconds per chain ID.
