@@ -20,20 +20,13 @@ import { linea } from "./linea";
  * src/chains/<name>.ts here. Populate contract addresses from the block explorer
  * (ComposableCow is CREATE2 at 0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74;
  * CoWShedFactory and AaveV3AdapterFactory addresses vary per chain and must be verified).
- *
- * Chains with unconfirmed addresses should have null fields and be kept out of
- * ACTIVE_CHAINS until all required addresses are verified.
  */
 export const ALL_DEFINED_CHAINS = [
-  // --- Fully configured ---
   mainnet,
   gnosis,
-  // --- Partially configured (addresses confirmed, not yet active) ---
   arbitrum,
   base,
   sepolia,
-  // --- Stubs: added to mirror cow-sdk's ALL_SUPPORTED_CHAIN_IDS; contract
-  //     addresses must be verified before enabling in ACTIVE_CHAINS (COW-986) ---
   bnb,
   polygon,
   lens,
@@ -46,22 +39,21 @@ export const ALL_DEFINED_CHAINS = [
 /**
  * ACTIVE_CHAINS — the chains this indexer instance actually processes.
  *
- * To enable a chain: move it here from the stub list above (ensure all contract
- * addresses in its ChainConfig are confirmed — no null fields that are required
- * at runtime). To disable a chain: remove it from this array.
+ * To enable a chain: add it here and supply its RPC URL env var in docker-compose.yml
+ * and the deployment .env file. To disable: remove it from this array.
  * ponder.config.ts derives all RPC/contract config from this array.
  */
 export const ACTIVE_CHAINS = [
   mainnet,
   gnosis,
-  // arbitrum, // TODO: confirm cowShedFactory address before enabling
-  // base,     // TODO: confirm cowShedFactory address before enabling
-  // sepolia,  // TODO: confirm cowShedFactory address before enabling
-  // bnb,      // TODO: verify all contract addresses (COW-986)
-  // polygon,  // TODO: verify all contract addresses (COW-986)
-  // lens,     // TODO: verify all contract addresses (COW-986)
-  // plasma,   // TODO: verify all contract addresses (COW-986)
-  // avalanche,// TODO: verify all contract addresses (COW-986)
-  // ink,      // TODO: verify all contract addresses (COW-986)
-  // linea,    // TODO: verify all contract addresses (COW-986)
+  // arbitrum, // addresses verified — enable when ARBITRUM_RPC_URL is provisioned
+  // base,     // addresses verified — enable when BASE_RPC_URL is provisioned
+  // bnb,      // addresses verified — enable when BNB_RPC_URL is provisioned
+  // polygon,  // addresses verified — enable when POLYGON_RPC_URL is provisioned
+  // avalanche,// addresses verified — enable when AVALANCHE_RPC_URL is provisioned
+  // linea,    // addresses verified — enable when LINEA_RPC_URL is provisioned
+  // plasma,   // addresses verified — enable when PLASMA_RPC_URL is provisioned
+  // lens,     // addresses verified — enable when LENS_RPC_URL is provisioned (orderbook not live yet)
+  // sepolia,  // addresses verified — enable when SEPOLIA_RPC_URL is provisioned
+  // ink,      // cowShedFactory not deployed on Ink — enable when confirmed
 ];
