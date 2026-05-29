@@ -34,12 +34,43 @@ For schema details (columns, indexes, relations), see [architecture.md](./archit
 
 ## REST endpoints
 
-Two custom endpoints mounted at `/api`, documented in Swagger UI at `/docs`:
+Custom endpoints mounted at `/api`, documented in Swagger UI at `/docs`:
 
 - `GET /api/orders/by-owner/{owner}` — discrete orders for a wallet, with automatic proxy resolution.
 - `GET /api/generator/{eventId}/execution-summary` — part-count breakdown by status for a generator.
+- `GET /api/sync-progress` — per-chain historical sync progress (total blocks, processed blocks, percentage, realtime mode flag).
 
 Open `/docs` for request/response shapes and to try them out.
+
+### `GET /api/sync-progress`
+
+Returns the indexer's historical backfill progress per chain, parsed from Ponder's built-in Prometheus metrics. Useful for monitoring first-run sync without reading raw metrics.
+
+Example response:
+
+```json
+{
+  "mainnet": {
+    "totalBlocks": 7000000,
+    "processedBlocks": 3000000,
+    "progressPct": 42.9,
+    "isRealtime": false,
+    "isComplete": false
+  },
+  "gnosis": {
+    "totalBlocks": 17000000,
+    "processedBlocks": 17000000,
+    "progressPct": 100.0,
+    "isRealtime": true,
+    "isComplete": true
+  }
+}
+```
+
+- `progressPct` is rounded to one decimal place (0–100).
+- `isRealtime` flips to `true` once the chain enters live-sync mode.
+- `isComplete` flips to `true` once all historical blocks are processed.
+- Returns `{}` if the `/metrics` endpoint is unreachable.
 
 ## Order type decoding
 
