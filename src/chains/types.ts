@@ -63,11 +63,8 @@ export interface ChainConfig {
   aaveV3AdapterFactory: `0x${string}` | null;
 
   /**
-   * ContractPoller block interval for this chain.
-   * Derive with pollerInterval(blockTime) — targets ~20s between polls.
+   * CoW Protocol Orderbook API path for this chain (the part after https://api.cow.fi/).
+   * e.g. "mainnet", "xdai", "arbitrum_one". Combined with the base URL at call sites.
    */
-  contractPollerInterval: number;
-
-  /** CoW Protocol Orderbook API base URL for this chain. */
-  orderbookApiUrl: string;
+  orderbookApiPath: string;
 }

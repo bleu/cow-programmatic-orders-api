@@ -1,5 +1,5 @@
 import { SupportedChainId } from "@cowprotocol/cow-sdk";
-import { pollerInterval, type ChainConfig } from "./types";
+import { type ChainConfig } from "./types";
 
 const blockTime = 12; // ~12s per block on Sepolia (same as mainnet)
 
@@ -19,6 +19,5 @@ export const sepolia: ChainConfig = {
   gpv2Settlement: null, // TODO: enable once AaveV3AdapterFactory is confirmed on Sepolia
   flashLoanRouter: null, // TODO: confirm via ROUTER() on Sepolia AaveV3AdapterFactory
   aaveV3AdapterFactory: null, // TODO: verify on Sepolia
-  contractPollerInterval: pollerInterval(blockTime),
-  orderbookApiUrl: "https://api.cow.fi/sepolia",
+  orderbookApiPath: "sepolia",
 };

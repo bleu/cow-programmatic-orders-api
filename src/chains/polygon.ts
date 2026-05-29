@@ -1,5 +1,5 @@
 import { SupportedChainId } from "@cowprotocol/cow-sdk";
-import { pollerInterval, type ChainConfig } from "./types";
+import { type ChainConfig } from "./types";
 
 const blockTime = 2; // ~2s per block on Polygon
 
@@ -19,6 +19,5 @@ export const polygon: ChainConfig = {
   gpv2Settlement: null, // TODO: enable once AaveV3AdapterFactory is confirmed on Polygon
   flashLoanRouter: null, // TODO: confirm via ROUTER() on Polygon AaveV3AdapterFactory
   aaveV3AdapterFactory: null, // TODO: verify on polygonscan.com
-  contractPollerInterval: pollerInterval(blockTime),
-  orderbookApiUrl: "https://api.cow.fi/polygon", // TODO: verify CoW Protocol orderbook URL for Polygon
+  orderbookApiPath: "polygon", // TODO: verify CoW Protocol orderbook URL for Polygon
 };

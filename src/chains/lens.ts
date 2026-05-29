@@ -1,5 +1,5 @@
 import { SupportedChainId } from "@cowprotocol/cow-sdk";
-import { pollerInterval, type ChainConfig } from "./types";
+import { type ChainConfig } from "./types";
 
 const blockTime = 1; // ~1s per block on Lens Chain (zkSync-based L2)
 
@@ -19,6 +19,5 @@ export const lens: ChainConfig = {
   gpv2Settlement: null, // TODO: enable once AaveV3AdapterFactory is confirmed on Lens
   flashLoanRouter: null, // TODO: confirm via ROUTER() on Lens AaveV3AdapterFactory
   aaveV3AdapterFactory: null, // TODO: verify on explorer.lens.xyz
-  contractPollerInterval: pollerInterval(blockTime),
-  orderbookApiUrl: "https://api.cow.fi/lens", // TODO: verify CoW Protocol orderbook URL for Lens
+  orderbookApiPath: "lens", // TODO: verify CoW Protocol orderbook URL for Lens
 };

@@ -1,5 +1,5 @@
 import { SupportedChainId } from "@cowprotocol/cow-sdk";
-import { pollerInterval, type ChainConfig } from "./types";
+import { type ChainConfig } from "./types";
 
 const blockTime = 3; // ~3s per block on Linea
 
@@ -19,6 +19,5 @@ export const linea: ChainConfig = {
   gpv2Settlement: null, // TODO: enable once AaveV3AdapterFactory is confirmed on Linea
   flashLoanRouter: null, // TODO: confirm via ROUTER() on Linea AaveV3AdapterFactory
   aaveV3AdapterFactory: null, // TODO: verify on lineascan.build
-  contractPollerInterval: pollerInterval(blockTime),
-  orderbookApiUrl: "https://api.cow.fi/linea", // TODO: verify CoW Protocol orderbook URL for Linea
+  orderbookApiPath: "linea", // TODO: verify CoW Protocol orderbook URL for Linea
 };

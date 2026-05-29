@@ -1,5 +1,5 @@
 import { SupportedChainId } from "@cowprotocol/cow-sdk";
-import { pollerInterval, type ChainConfig } from "./types";
+import { type ChainConfig } from "./types";
 
 const blockTime = 3; // ~3s per block on BNB Chain
 
@@ -19,6 +19,5 @@ export const bnb: ChainConfig = {
   gpv2Settlement: null, // TODO: enable once AaveV3AdapterFactory is confirmed on BNB
   flashLoanRouter: null, // TODO: confirm via ROUTER() on BNB AaveV3AdapterFactory
   aaveV3AdapterFactory: null, // TODO: verify on bscscan.com
-  contractPollerInterval: pollerInterval(blockTime),
-  orderbookApiUrl: "https://api.cow.fi/bnb", // TODO: verify CoW Protocol orderbook URL for BNB
+  orderbookApiPath: "bnb", // TODO: verify CoW Protocol orderbook URL for BNB
 };

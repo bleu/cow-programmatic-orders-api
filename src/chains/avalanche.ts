@@ -1,5 +1,5 @@
 import { SupportedChainId } from "@cowprotocol/cow-sdk";
-import { pollerInterval, type ChainConfig } from "./types";
+import { type ChainConfig } from "./types";
 
 const blockTime = 2; // ~2s per block on Avalanche C-Chain
 
@@ -19,6 +19,5 @@ export const avalanche: ChainConfig = {
   gpv2Settlement: null, // TODO: enable once AaveV3AdapterFactory is confirmed on Avalanche
   flashLoanRouter: null, // TODO: confirm via ROUTER() on Avalanche AaveV3AdapterFactory
   aaveV3AdapterFactory: null, // TODO: verify on snowscan.xyz
-  contractPollerInterval: pollerInterval(blockTime),
-  orderbookApiUrl: "https://api.cow.fi/avalanche", // TODO: verify CoW Protocol orderbook URL for Avalanche
+  orderbookApiPath: "avalanche", // TODO: verify CoW Protocol orderbook URL for Avalanche
 };

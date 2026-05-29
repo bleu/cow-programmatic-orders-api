@@ -1,5 +1,5 @@
 import { SupportedChainId } from "@cowprotocol/cow-sdk";
-import { pollerInterval, type ChainConfig } from "./types";
+import { type ChainConfig } from "./types";
 
 const blockTime = 1; // ~1s per block on Plasma (L2)
 
@@ -19,6 +19,5 @@ export const plasma: ChainConfig = {
   gpv2Settlement: null, // TODO: enable once AaveV3AdapterFactory is confirmed on Plasma
   flashLoanRouter: null, // TODO: confirm via ROUTER() on Plasma AaveV3AdapterFactory
   aaveV3AdapterFactory: null, // TODO: verify on plasmascan.to
-  contractPollerInterval: pollerInterval(blockTime),
-  orderbookApiUrl: "https://api.cow.fi/plasma", // TODO: verify CoW Protocol orderbook URL for Plasma
+  orderbookApiPath: "plasma", // TODO: verify CoW Protocol orderbook URL for Plasma
 };

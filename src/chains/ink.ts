@@ -1,5 +1,5 @@
 import { SupportedChainId } from "@cowprotocol/cow-sdk";
-import { pollerInterval, type ChainConfig } from "./types";
+import { type ChainConfig } from "./types";
 
 const blockTime = 2; // ~2s per block on Ink Chain (OP-based L2)
 
@@ -19,6 +19,5 @@ export const ink: ChainConfig = {
   gpv2Settlement: null, // TODO: enable once AaveV3AdapterFactory is confirmed on Ink
   flashLoanRouter: null, // TODO: confirm via ROUTER() on Ink AaveV3AdapterFactory
   aaveV3AdapterFactory: null, // TODO: verify on explorer.inkonchain.com
-  contractPollerInterval: pollerInterval(blockTime),
-  orderbookApiUrl: "https://api.cow.fi/ink", // TODO: verify CoW Protocol orderbook URL for Ink
+  orderbookApiPath: "ink", // TODO: verify CoW Protocol orderbook URL for Ink
 };

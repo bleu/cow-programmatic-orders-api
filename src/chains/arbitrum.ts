@@ -1,5 +1,5 @@
 import { SupportedChainId } from "@cowprotocol/cow-sdk";
-import { pollerInterval, type ChainConfig } from "./types";
+import { type ChainConfig } from "./types";
 
 const blockTime = 1; // ~0.25s avg; use 1s as a conservative estimate for polling math
 
@@ -19,6 +19,5 @@ export const arbitrum: ChainConfig = {
   gpv2Settlement: null, // TODO: enable once AaveV3AdapterFactory is confirmed on Arbitrum
   flashLoanRouter: null, // TODO: confirm via ROUTER() on Arbitrum AaveV3AdapterFactory
   aaveV3AdapterFactory: null, // TODO: verify on Arbiscan
-  contractPollerInterval: pollerInterval(blockTime),
-  orderbookApiUrl: "https://api.cow.fi/arbitrum_one",
+  orderbookApiPath: "arbitrum_one",
 };

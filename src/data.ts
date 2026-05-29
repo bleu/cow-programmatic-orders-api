@@ -51,7 +51,7 @@ export const COMPOSABLE_COW_HANDLER_ADDRESSES = new Set(ALL_HANDLER_ADDRESSES);
  * including inactive ones used for API-only lookups.
  */
 export const ORDERBOOK_API_URLS: Record<number, string> = Object.fromEntries(
-  ALL_DEFINED_CHAINS.map((c) => [c.chainId, c.orderbookApiUrl]),
+  ALL_DEFINED_CHAINS.map((c) => [c.chainId, `https://api.cow.fi/${c.orderbookApiPath}`]),
 );
 
 /**
