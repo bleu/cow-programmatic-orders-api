@@ -1,0 +1,24 @@
+import { SupportedChainId } from "@cowprotocol/cow-sdk";
+import { pollerInterval, type ChainConfig } from "./types";
+
+const blockTime = 3; // ~3s per block on BNB Chain
+
+export const bnb: ChainConfig = {
+  name: "bnb",
+  chainId: SupportedChainId.BNB,
+  rpcEnvVar: "BNB_RPC_URL",
+  blockTime,
+  composableCow: {
+    address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74", // CREATE2 — same across chains
+    startBlock: 0, // TODO: verify ComposableCow deployment block on BNB (check bscscan.com)
+  },
+  composableCowLive: {
+    address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74",
+  },
+  cowShedFactory: null, // TODO: confirm CoWShedFactory address on BNB
+  gpv2Settlement: null, // TODO: enable once AaveV3AdapterFactory is confirmed on BNB
+  flashLoanRouter: null, // TODO: confirm via ROUTER() on BNB AaveV3AdapterFactory
+  aaveV3AdapterFactory: null, // TODO: verify on bscscan.com
+  contractPollerInterval: pollerInterval(blockTime),
+  orderbookApiUrl: "https://api.cow.fi/bnb", // TODO: verify CoW Protocol orderbook URL for BNB
+};
