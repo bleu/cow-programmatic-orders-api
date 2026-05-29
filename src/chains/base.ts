@@ -19,8 +19,11 @@ export const base: ChainConfig = {
     address: "0x312f92fe5f1710408b20d52a374fa29e099cfa86", // CREATE2 — same across chains
     startBlock: 32986811, // verified: tx 0x29c63a32edbf7b29ae73e6a8e5293b65c65906943ad41092205a473e4bbf56d0
   },
-  gpv2Settlement: null, // TODO: enable once AaveV3AdapterFactory is confirmed on Base
-  flashLoanRouter: null, // TODO: confirm via ROUTER() on Base AaveV3AdapterFactory
-  aaveV3AdapterFactory: null, // TODO: verify on Basescan
+  gpv2Settlement: {
+    address: "0x9008D19f58AAbD9eD0D60971565AA8510560ab41",
+    startBlock: 38260337, // AaveV3AdapterFactory deployment block on Base
+  },
+  flashLoanRouter: "0x9da8B48441583a2b93e2eF8213aAD0EC0b392C69", // verified: ROUTER() on Base AaveV3AdapterFactory
+  aaveV3AdapterFactory: "0xdeCC46a4b09162F5369c5C80383AAa9159bCf192", // CREATE2 — same across chains
   orderbookApiPath: "base",
 };
