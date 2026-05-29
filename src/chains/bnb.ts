@@ -19,8 +19,11 @@ export const bnb: ChainConfig = {
     address: "0x312f92fe5f1710408b20d52a374fa29e099cfa86", // CREATE2 — same across chains
     startBlock: 61362362, // verified: tx 0x76d25671fd1c31044a6cf481df15649fc3503cf5a492de92be8601fee02e259f
   },
-  gpv2Settlement: null, // TODO: enable once AaveV3AdapterFactory is confirmed on BNB
-  flashLoanRouter: null, // TODO: confirm via ROUTER() on BNB AaveV3AdapterFactory
-  aaveV3AdapterFactory: null, // TODO: verify on bscscan.com
+  gpv2Settlement: {
+    address: "0x9008D19f58AAbD9eD0D60971565AA8510560ab41",
+    startBlock: 68412820, // AaveV3AdapterFactory deployment block on BNB
+  },
+  flashLoanRouter: "0x9da8B48441583a2b93e2eF8213aAD0EC0b392C69", // verified: ROUTER() on BNB AaveV3AdapterFactory
+  aaveV3AdapterFactory: "0xdeCC46a4b09162F5369c5C80383AAa9159bCf192", // CREATE2 — same across chains
   orderbookApiPath: "bnb", // TODO: verify CoW Protocol orderbook URL for BNB
 };
