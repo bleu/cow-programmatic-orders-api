@@ -1,13 +1,21 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { Hono } from "hono";
 import { syncProgressHandler } from "../../src/api/endpoints/sync-progress";
 
+type ChainProgress = {
+  totalBlocks: number;
+  processedBlocks: number;
+  progressPct: number;
+  isRealtime: boolean;
+  isComplete: boolean;
+};
+
 function buildApp() {
   const app = new Hono();
-  app.get("/api/sync-progress", async (c) => {
+  app.get("/api/sync-progress", (c) =>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return syncProgressHandler(c as any);
-  });
+    syncProgressHandler(c as any, async () => {}),
+  );
   return app;
 }
 
@@ -61,7 +69,7 @@ describe("GET /api/sync-progress", () => {
     mockFetch(SAMPLE_METRICS);
     const app = buildApp();
     const res = await app.request("http://localhost/api/sync-progress");
-    const body = await res.json();
+    const body = (await res.json()) as Record<string, ChainProgress>;
     expect(Object.keys(body)).toEqual(expect.arrayContaining(["mainnet", "gnosis"]));
   });
 
@@ -69,33 +77,33 @@ describe("GET /api/sync-progress", () => {
     mockFetch(SAMPLE_METRICS);
     const app = buildApp();
     const res = await app.request("http://localhost/api/sync-progress");
-    const body = await res.json();
+    const body = (await res.json()) as Record<string, ChainProgress>;
     // mainnet: 500_000 completed + 2_500_000 cached = 3_000_000
-    expect(body.mainnet.processedBlocks).toBe(3_000_000);
+    expect(body["mainnet"]!.processedBlocks).toBe(3_000_000);
     // gnosis: 1_000_000 + 1_400_000 = 2_400_000
-    expect(body.gnosis.processedBlocks).toBe(2_400_000);
+    expect(body["gnosis"]!.processedBlocks).toBe(2_400_000);
   });
 
   it("computes progressPct correctly (rounded to 1 decimal)", async () => {
     mockFetch(SAMPLE_METRICS);
     const app = buildApp();
     const res = await app.request("http://localhost/api/sync-progress");
-    const body = await res.json();
+    const body = (await res.json()) as Record<string, ChainProgress>;
     // mainnet: 3_000_000 / 7_000_000 = 42.857... → 42.9
-    expect(body.mainnet.progressPct).toBe(42.9);
+    expect(body["mainnet"]!.progressPct).toBe(42.9);
     // gnosis: 2_400_000 / 17_000_000 = 14.117... → 14.1
-    expect(body.gnosis.progressPct).toBe(14.1);
+    expect(body["gnosis"]!.progressPct).toBe(14.1);
   });
 
   it("sets isRealtime and isComplete from metrics flags", async () => {
     mockFetch(SAMPLE_METRICS);
     const app = buildApp();
     const res = await app.request("http://localhost/api/sync-progress");
-    const body = await res.json();
-    expect(body.mainnet.isRealtime).toBe(false);
-    expect(body.mainnet.isComplete).toBe(false);
-    expect(body.gnosis.isRealtime).toBe(true);
-    expect(body.gnosis.isComplete).toBe(true);
+    const body = (await res.json()) as Record<string, ChainProgress>;
+    expect(body["mainnet"]!.isRealtime).toBe(false);
+    expect(body["mainnet"]!.isComplete).toBe(false);
+    expect(body["gnosis"]!.isRealtime).toBe(true);
+    expect(body["gnosis"]!.isComplete).toBe(true);
   });
 
   it("returns empty object and 200 when metrics endpoint is unreachable", async () => {
@@ -103,7 +111,7 @@ describe("GET /api/sync-progress", () => {
     const app = buildApp();
     const res = await app.request("http://localhost/api/sync-progress");
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as Record<string, ChainProgress>;
     expect(body).toEqual({});
   });
 });
