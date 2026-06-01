@@ -70,7 +70,7 @@ const SINGLE_ORDERS_ABI = [
 // allCandidatesKnown=false. Normally only non-deterministic types, but also
 // serves as fallback for deterministic types whose precompute failed.
 
-ponder.on("composableCow.OrderDiscoveryPoller:block", async ({ event, context }) => {
+ponder.on("OrderDiscoveryPoller:block", async ({ event, context }) => {
   if (process.env.DISABLE_POLL_RESULT_CHECK) return;
 
   const chainId = context.chain.id as SupportedChainId;
@@ -296,7 +296,7 @@ ponder.on("composableCow.OrderDiscoveryPoller:block", async ({ event, context })
 // Checks if candidate discrete orders exist on the Orderbook API.
 // When confirmed, promotes them to discreteOrder.
 
-ponder.on("composableCow.CandidateConfirmer:block", async ({ event, context }) => {
+ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
   const chainId = context.chain.id as SupportedChainId;
 
   // Parent-cancelled cascade: candidates whose parent generator flipped to
@@ -565,7 +565,7 @@ ponder.on("composableCow.CandidateConfirmer:block", async ({ event, context }) =
 // ─── composableCow.OrderStatusTracker ────────────────────────────────────────
 // Polls the API for status updates on open discrete orders. Expires past validTo.
 
-ponder.on("composableCow.OrderStatusTracker:block", async ({ event, context }) => {
+ponder.on("OrderStatusTracker:block", async ({ event, context }) => {
   const chainId = context.chain.id as SupportedChainId;
   const currentTimestamp = event.block.timestamp;
 
@@ -664,7 +664,7 @@ ponder.on("composableCow.OrderStatusTracker:block", async ({ event, context }) =
 // One-time discovery of historical discrete orders for non-deterministic
 // generators created during backfill. Fires once at startBlock=endBlock="latest".
 
-ponder.on("composableCow.OwnerBackfill:block", async ({ event, context }) => {
+ponder.on("OwnerBackfill:block", async ({ event, context }) => {
   const chainId = context.chain.id as SupportedChainId;
   const currentBlock = event.block.number;
 
@@ -779,7 +779,7 @@ ponder.on("composableCow.OwnerBackfill:block", async ({ event, context }) => {
 // Cancelled, which lets the CandidateConfirmer/OrderStatusTracker parent-cancelled
 // cascade (COW-918) reconcile the child discrete / candidate rows on the next block.
 
-ponder.on("composableCow.CancellationWatcher:block", async ({ event, context }) => {
+ponder.on("CancellationWatcher:block", async ({ event, context }) => {
   if (process.env.DISABLE_DETERMINISTIC_CANCEL_SWEEP) return;
 
   const chainId = context.chain.id as SupportedChainId;
