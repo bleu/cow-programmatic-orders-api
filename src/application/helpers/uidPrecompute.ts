@@ -21,6 +21,7 @@ import { candidateDiscreteOrder, conditionalOrderGenerator, discreteOrder } from
 import { computeOrderUid, type GPv2OrderData } from "./orderUid";
 import { fetchOrderStatusByUids } from "./orderbookClient";
 import { isDeterministicOrderType } from "../../utils/order-types";
+import { MAX_TWAP_PRECOMPUTE_PARTS } from "../../constants";
 
 // GPv2Order.sol constant hashes
 const KIND_SELL = "0xf3b277728b3fee749481eb3e0b3b48980dbbab78658fc419025cb16eee346775" as Hex;
@@ -235,7 +236,7 @@ function precomputeTwapUids(
     console.warn(`[COW:PRECOMPUTE] SKIP type=TWAP owner=${owner} chain=${chainId} reason=invalid_math nParts=${nParts} tSeconds=${tSeconds}`);
     return null;
   }
-  if (nParts > 100000) {
+  if (nParts > MAX_TWAP_PRECOMPUTE_PARTS) {
     console.warn(`[COW:PRECOMPUTE] SKIP type=TWAP owner=${owner} chain=${chainId} reason=too_many_parts nParts=${nParts}`);
     return null;
   }

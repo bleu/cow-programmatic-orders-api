@@ -4,7 +4,7 @@ This document covers how the indexer works, from on-chain events to the GraphQL 
 
 ## Overview
 
-The system is a Ponder 0.16.x indexer that watches the ComposableCoW contract on Ethereum mainnet and Gnosis Chain. When a user creates a programmatic order (TWAP, Stop Loss, etc.), the contract emits a `ConditionalOrderCreated` event. The indexer picks that up, decodes the order parameters, resolves the actual owner (which may be behind a proxy), and writes the result to Postgres. A Hono HTTP server exposes the data through GraphQL and a SQL passthrough endpoint.
+The system is a Ponder 0.16.x indexer that watches the ComposableCoW contract on all active chains (see `ponder.config.ts`). When a user creates a programmatic order (TWAP, Stop Loss, etc.), the contract emits a `ConditionalOrderCreated` event. The indexer picks that up, decodes the order parameters, resolves the actual owner (which may be behind a proxy), and writes the result to Postgres. A Hono HTTP server exposes the data through GraphQL and a SQL passthrough endpoint.
 
 Ponder registers nine top-level handlers: four contract event handlers (`ComposableCow` backfill, `ComposableCowLive`, `CoWShedFactory`, `GPv2Settlement`) plus five live-only block handlers in `blockHandler.ts` (C1–C5). The contract handlers react to on-chain events; C1–C5 poll contract state and the orderbook API during live sync. `settlement.ts` inspects `Settlement` receipts to detect Aave adapters from Trade logs.
 
@@ -226,7 +226,7 @@ See [api-reference.md](./api-reference.md) for the full endpoint list.
 5. Add the RPC URL to `.env.local`.
 6. Run `pnpm codegen` to regenerate types.
 
-The block handlers (C1–C5) already run on both mainnet and gnosis. Adding a new chain requires adding entries to each block handler's `chain` config in `ponder.config.ts`.
+The block handlers (C1–C5) run on all active chains (see `ponder.config.ts` for the current list). Adding a new chain requires adding entries to each block handler's `chain` config there.
 
 ## Known Limitations
 

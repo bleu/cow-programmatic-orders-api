@@ -8,7 +8,7 @@ export interface PerpetualSwapDecodedParams {
   appData: string;
 }
 
-const PERPETUAL_SWAP_ABI = [
+export const PERPETUAL_SWAP_ABI = [
   {
     type: "tuple",
     components: [

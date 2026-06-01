@@ -78,3 +78,11 @@ export const BLOCK_HANDLER_RPC_TIMEOUT_MS = 15_000;
  * the normal C1 / C2 path picks them up on subsequent blocks.
  */
 export const BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS = 30_000;
+
+/**
+ * Maximum number of TWAP parts that precomputeOrderUids will attempt to enumerate.
+ * Pathological orders with n > this value skip precompute and fall back to the C1
+ * ContractPoller discovery path (allCandidatesKnown=false). Logged as
+ * [COW:PRECOMPUTE] SKIP reason=too_many_parts when triggered.
+ */
+export const MAX_TWAP_PRECOMPUTE_PARTS = 100_000;

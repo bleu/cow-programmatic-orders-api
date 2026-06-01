@@ -13,7 +13,7 @@ export interface TwapDecodedParams {
   appData: string;  // bytes32
 }
 
-const TWAP_ABI = [
+export const TWAP_ABI = [
   {
     type: "tuple",
     components: [

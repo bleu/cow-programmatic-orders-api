@@ -9,7 +9,7 @@ export interface TradeAboveThresholdDecodedParams {
   appData: string;
 }
 
-const TRADE_ABOVE_THRESHOLD_ABI = [
+export const TRADE_ABOVE_THRESHOLD_ABI = [
   {
     type: "tuple",
     components: [
