@@ -88,6 +88,42 @@ deployment/
 
 The `Dockerfile` in the project root builds the Ponder image: two-stage Node 22 Alpine, installs dependencies with `--frozen-lockfile`, exposes port 3000, runs `pnpm start`. The health check hits `/ready` with a 24-hour start period (initial sync takes hours).
 
+### Kubernetes Probes
+
+The indexer exposes two health endpoints with distinct semantics:
+
+| Endpoint | Semantic | Returns 200 when |
+|----------|----------|-----------------|
+| `/healthz` | **Liveness** — is the process alive? | Always, once the server starts |
+| `/ready` | **Readiness** — is the index fully synced? | Only when fully synced |
+
+Map these to different K8s probe types:
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 3000
+  periodSeconds: 30
+  failureThreshold: 3
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 3000
+  periodSeconds: 10
+  failureThreshold: 18   # 3-minute window before marking unready
+```
+
+**Do not** use `/ready` as the liveness probe. A pod that is still indexing (which takes hours on a cold start) returns 200 on `/healthz` but not on `/ready`. Using `/ready` for liveness would kill the pod before it ever finishes syncing.
+
+The Docker Compose health check uses `/ready` with a 24-hour start period as a pragmatic fallback for single-container deployments, not as a K8s-style probe.
+
+### Structured Logging
+
+`pnpm start` runs with `--log-format json`, which makes both Ponder's internal log lines and the handler log lines (via `cowLog`) emit newline-delimited JSON. Each handler log line includes `chainId` and `block` as top-level fields, enabling log aggregators (Datadog, CloudWatch, Loki) to filter and alert by chain.
+
+`pnpm dev` uses Ponder's default pretty format for readability during local development.
+
 ### PostgreSQL Auto-Tuning
 
 `start-db.sh` tunes memory settings from `POSTGRES_MEMORY_LIMIT`. With the default 1G:
