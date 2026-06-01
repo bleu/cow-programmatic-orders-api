@@ -77,7 +77,7 @@ export function getOrderTypeFromHandler(
 
 // Single source of truth for which order types have UIDs computable from staticInput
 // alone (no on-chain calls). Keep in sync with the switch in `precomputeOrderUids`.
-export const DETERMINISTIC_ORDER_TYPES = new Set<OrderType>(["TWAP", "StopLoss"]);
+export const DETERMINISTIC_ORDER_TYPES = new Set<OrderType>(["TWAP", "StopLoss", "CirclesBackingOrder"]);
 
 export function isDeterministicOrderType(orderType: string): boolean {
   return DETERMINISTIC_ORDER_TYPES.has(orderType as OrderType);

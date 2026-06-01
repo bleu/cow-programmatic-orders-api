@@ -24,9 +24,9 @@
  *
  *   This affects only EIP-1271 composable orders where the user cancels through
  *   the API rather than calling ComposableCoW.remove() on-chain. In practice
- *   this is rare — the standard cancellation path for composable orders is
- *   on-chain, which emits ConditionalOrderCancelled (handled elsewhere) or
- *   triggers PollNever in the block handler.
+ *   this is rare — the standard on-chain cancellation path is detected via
+ *   SingleOrderNotAuthed (C1 block handler) and the C5 singleOrders() sweep,
+ *   both of which work correctly.
  *
  *   If this gap proves significant in production, a lightweight periodic check
  *   can be added for owners with open orders. Track via issue tracker if needed.
