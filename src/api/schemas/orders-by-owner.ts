@@ -19,6 +19,11 @@ export const GeneratorSummary = z.object({
   owner: z.string(),
   resolvedOwner: z.string().nullable(),
   status: z.string(),
+  hash: z
+    .string()
+    .describe(
+      "On-chain canonical identifier: keccak256(abi.encode(handler, salt, staticInput)). Used by ComposableCow.singleOrders(owner, hash) and remove(owner, hash).",
+    ),
   ownerAddressType: z
     .enum(["cowshed_proxy", "flash_loan_helper"])
     .nullable()
