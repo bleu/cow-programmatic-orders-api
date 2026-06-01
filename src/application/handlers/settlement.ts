@@ -1,12 +1,14 @@
 import { ponder } from "ponder:registry";
 import { AddressType, conditionalOrderGenerator, ownerMapping, transaction } from "ponder:schema";
 import { and, eq } from "ponder";
-import { decodeAbiParameters, keccak256, toBytes } from "viem";
+import { keccak256, toBytes } from "viem";
 import { AaveV3AdapterHelperAbi } from "../../../abis/AaveV3AdapterHelperAbi";
 import {
   AAVE_V3_ADAPTER_FACTORY_ADDRESSES,
   GPV2_SETTLEMENT_DEPLOYMENTS,
 } from "../../data";
+import { BLOCK_HANDLER_RPC_TIMEOUT_MS } from "../../constants";
+import { TimeoutError, withTimeout } from "../helpers/withTimeout";
 
 // Trade(address,address,address,uint256,uint256,uint256,bytes) — topic0 hash
 const TRADE_TOPIC = keccak256(
@@ -73,11 +75,19 @@ ponder.on("GPv2Settlement:Settlement", async ({ event, context }) => {
   stats.total++;
 
   // Fetch the full receipt to access all logs in the transaction.
-  // Volume is negligible (FlashLoanRouter settlements only), so the extra RPC
-  // call per settlement is acceptable and much cheaper than the old per-trade approach.
-  const receipt = await context.client.getTransactionReceipt({
-    hash: event.transaction.hash,
-  });
+  // FlashLoanRouter settlements only, but 27k+ adapters were resolved in practice —
+  // the RPC call is meaningful and must be timeout-guarded.
+  let receipt: Awaited<ReturnType<typeof context.client.getTransactionReceipt>>;
+  try {
+    receipt = await withTimeout(
+      context.client.getTransactionReceipt({ hash: event.transaction.hash }),
+      BLOCK_HANDLER_RPC_TIMEOUT_MS,
+      "settlement:getTransactionReceipt",
+    );
+  } catch (err) {
+    if (err instanceof TimeoutError) return;
+    throw err;
+  }
 
   for (const log of receipt.logs) {
     // Only Trade logs emitted by GPv2Settlement in this same transaction
@@ -109,7 +119,17 @@ ponder.on("GPv2Settlement:Settlement", async ({ event, context }) => {
     }
 
     // Skip if EOA (no bytecode)
-    const code = await context.client.getCode({ address: owner });
+    let code: `0x${string}` | undefined;
+    try {
+      code = await withTimeout(
+        context.client.getCode({ address: owner }),
+        BLOCK_HANDLER_RPC_TIMEOUT_MS,
+        "settlement:getCode",
+      );
+    } catch (err) {
+      if (err instanceof TimeoutError) continue;
+      throw err;
+    }
     if (!code || code === "0x") {
       stats.skippedEOA++;
       logStatsIfIntervalPassed();
@@ -122,10 +142,11 @@ ponder.on("GPv2Settlement:Settlement", async ({ event, context }) => {
     const t1 = Date.now();
     let factoryData: `0x${string}` | undefined;
     try {
-      const result = await context.client.call({
-        to: owner,
-        data: FACTORY_SELECTOR,
-      });
+      const result = await withTimeout(
+        context.client.call({ to: owner, data: FACTORY_SELECTOR }),
+        BLOCK_HANDLER_RPC_TIMEOUT_MS,
+        "settlement:call:FACTORY",
+      );
       factoryData = result.data;
     } catch {
       stats.msFactory += Date.now() - t1;
@@ -152,11 +173,21 @@ ponder.on("GPv2Settlement:Settlement", async ({ event, context }) => {
     }
 
     // Resolve EOA via owner() — this call should always succeed at this point
-    const eoaOwner = await context.client.readContract({
-      address: owner,
-      abi: AaveV3AdapterHelperAbi,
-      functionName: "owner",
-    });
+    let eoaOwner: `0x${string}`;
+    try {
+      eoaOwner = await withTimeout(
+        context.client.readContract({
+          address: owner,
+          abi: AaveV3AdapterHelperAbi,
+          functionName: "owner",
+        }),
+        BLOCK_HANDLER_RPC_TIMEOUT_MS,
+        "settlement:readContract:owner",
+      );
+    } catch (err) {
+      if (err instanceof TimeoutError) continue;
+      throw err;
+    }
 
     await context.db
       .insert(transaction)
@@ -191,20 +222,6 @@ ponder.on("GPv2Settlement:Settlement", async ({ event, context }) => {
         ),
       );
 
-    // Decode non-indexed Trade log fields: sellToken, buyToken, amounts, orderUid
-    const [sellToken, buyToken, sellAmount, buyAmount, , orderUid] =
-      decodeAbiParameters(
-        [
-          { type: "address" },
-          { type: "address" },
-          { type: "uint256" },
-          { type: "uint256" },
-          { type: "uint256" },
-          { type: "bytes" },
-        ],
-        log.data,
-      );
-
     stats.mapped++;
     logStatsIfIntervalPassed();
 
@@ -212,11 +229,6 @@ ponder.on("GPv2Settlement:Settlement", async ({ event, context }) => {
       `[COW:SETTLEMENT:TRADE] AAVE_ADAPTER_MAPPED` +
         ` adapter=${ownerAddress}` +
         ` eoa=${eoaOwner.toLowerCase()}` +
-        ` orderUid=${orderUid}` +
-        ` sellToken=${sellToken.toLowerCase()}` +
-        ` buyToken=${buyToken.toLowerCase()}` +
-        ` sellAmount=${sellAmount}` +
-        ` buyAmount=${buyAmount}` +
         ` block=${event.block.number}` +
         ` chain=${chainId}`,
     );
