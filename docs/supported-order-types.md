@@ -2,7 +2,7 @@
 
 The indexer decodes five programmatic order types from the ComposableCoW contract. Each order is created on-chain as a `ConditionalOrderCreated` event containing a handler address, a salt, and an opaque `staticInput` blob. The handler address determines the order type, and the `staticInput` is ABI-decoded into typed parameters stored in the `decodedParams` JSON field on `conditional_order_generator`.
 
-All handler addresses are identical across mainnet and Gnosis Chain (CREATE2 deployments). Arbitrum support is planned but handler mappings are not yet registered.
+Most handler addresses are identical across all active chains (CREATE2 deployments — see `src/utils/order-types.ts` for chain-specific overrides). Arbitrum support is planned but handler mappings are not yet registered.
 
 A note on types in the API: all `bigint` values (uint256, int256) are converted to strings via `replaceBigInts(decoded, String)` before storage. When you query `decodedParams` through GraphQL or SQL, amounts, timestamps, and similar fields come back as decimal strings, not numbers. `uint32` fields stay as JSON numbers. See [Timestamp fields](./api-reference.md#timestamp-fields) for the unit and shape policy that applies to every timestamp-like field below.
 
@@ -60,6 +60,7 @@ TWAP generates `n` discrete orders, one per time slice. Each part covers `[t0 + 
 - When `t0` is 0, the contract uses the block timestamp of the creation transaction as the start time. The `decodedParams` will still show `"0"` -- the actual resolved start time is not stored.
 - If a part's validity window passes without execution, that part is simply skipped. There is no retry or rollover.
 - Setting `span` shorter than `t` creates gaps where no part is active. Setting `span` longer than `t` creates overlapping validity windows.
+- TWAP orders with `n` exceeding `MAX_TWAP_PRECOMPUTE_PARTS` (100 000) skip UID pre-computation and fall back to the C1 ContractPoller discovery path (`allCandidatesKnown=false`). This is logged as `[COW:PRECOMPUTE] SKIP reason=too_many_parts`. Such pathological orders are valid on-chain but are impractical in practice.
 
 ---
 
@@ -210,6 +211,7 @@ GAT produces a single discrete order that is valid within the `[startTime, endTi
 - `priceCheckerPayload` is a `bytes` field (dynamic length). The decoder stores it as raw hex. Interpreting its contents requires knowledge of which price checker contract the order was configured with, which is not part of the struct itself.
 - If `startTime` is in the past at creation time, the order is immediately eligible (assuming the balance check passes).
 - If the owner's balance of `sellToken` drops below `minSellBalance` after the order becomes active, the handler will revert until the balance is restored.
+- **Note:** As of the last update, no GoodAfterTime orders have been observed on-chain (live count = 0). The decoder has been unit-tested with synthetic inputs but has not been validated against a real on-chain order. If a GAT order appears in production, verify the decoded output against the raw `staticInput` as a sanity check.
 
 ---
 
