@@ -27,6 +27,7 @@ import {
   BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
   DEFAULT_MAX_GENERATORS_PER_BLOCK,
   DETERMINISTIC_CANCEL_SWEEP_INTERVAL,
+  ORDERBOOK_HTTP_TIMEOUT_MS,
   RECHECK_INTERVAL,
   TRY_NEXT_BLOCK_WARMUP_THRESHOLD,
   TRY_NEXT_BLOCK_COOLDOWN_THRESHOLD,
@@ -354,23 +355,42 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
     }[];
 
     if (orphanCandidates.length > 0) {
+      // COW-990: preflight /by_uids before writing cancelled. A candidate could have
+      // been posted by the watch-tower and filled/expired between generator creation
+      // and the cancellation cascade (~0.17% observed rate). Use the API status when
+      // available; fall back to 'cancelled' for UIDs not yet on the orderbook.
+      type DiscreteStatus = "open" | "fulfilled" | "unfilled" | "expired" | "cancelled";
+      let preflightStatuses: Awaited<ReturnType<typeof fetchOrderStatusByUids>>;
+      try {
+        preflightStatuses = await withTimeout(
+          fetchOrderStatusByUids(context, chainId, orphanCandidates.map((c) => c.orderUid)),
+          ORDERBOOK_HTTP_TIMEOUT_MS,
+          "c2:cascade:preflight",
+        );
+      } catch {
+        preflightStatuses = new Map();
+      }
+
       await context.db.sql
         .insert(discreteOrder)
         .values(
-          orphanCandidates.map((c) => ({
-            orderUid: c.orderUid,
-            chainId,
-            conditionalOrderGeneratorId: c.generatorId,
-            status: "cancelled" as const,
-            sellAmount: c.sellAmount,
-            buyAmount: c.buyAmount,
-            feeAmount: c.feeAmount,
-            validTo: c.validTo,
-            creationDate: c.creationDate,
-            executedSellAmount: null,
-            executedBuyAmount: null,
-            promotedAt: event.block.timestamp,
-          })),
+          orphanCandidates.map((c) => {
+            const apiEntry = preflightStatuses.get(c.orderUid);
+            return {
+              orderUid: c.orderUid,
+              chainId,
+              conditionalOrderGeneratorId: c.generatorId,
+              status: (apiEntry?.status ?? "cancelled") as DiscreteStatus,
+              sellAmount: c.sellAmount,
+              buyAmount: c.buyAmount,
+              feeAmount: c.feeAmount,
+              validTo: c.validTo,
+              creationDate: c.creationDate,
+              executedSellAmount: apiEntry?.executedSellAmount ?? null,
+              executedBuyAmount: apiEntry?.executedBuyAmount ?? null,
+              promotedAt: event.block.timestamp,
+            };
+          }),
         )
         .onConflictDoNothing();
 
@@ -386,8 +406,9 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
           ),
         );
 
+      const preflightHits = preflightStatuses.size;
       console.log(
-        `[COW:C2] block=${event.block.number} chain=${chainId} parent-cancelled=${orphanCandidates.length}`,
+        `[COW:C2] block=${event.block.number} chain=${chainId} parent-cancelled=${orphanCandidates.length} preflight-hits=${preflightHits}`,
       );
     }
   }
