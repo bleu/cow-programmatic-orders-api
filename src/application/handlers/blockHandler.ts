@@ -42,6 +42,7 @@ import {
   parsePollError,
 } from "../helpers/pollResultErrors";
 import { computeOrderUid, type GPv2OrderData } from "../helpers/orderUid";
+import { cowLog } from "../helpers/cowLogger";
 
 const NON_DETERMINISTIC_TYPES = ["PerpetualSwap", "GoodAfterTime", "TradeAboveThreshold", "Unknown"] as const;
 const SINGLE_SHOT_NON_DETERMINISTIC = ["GoodAfterTime", "TradeAboveThreshold"] as const;
@@ -120,9 +121,7 @@ ponder.on("composableCow.OrderDiscoveryPoller:block", async ({ event, context })
 
   if (dueOrders.length === 0) return;
 
-  console.log(
-    `[COW:OrderDiscoveryPoller] ENTER block=${currentBlock} chain=${chainId} due=${dueOrders.length}`,
-  );
+  cowLog("info", "OrderDiscoveryPoller:ENTER", { block: String(currentBlock), chainId, due: dueOrders.length });
 
   const c1MulticallPromise = context.client.multicall({
     contracts: dueOrders.map((order) => ({
@@ -148,9 +147,7 @@ ponder.on("composableCow.OrderDiscoveryPoller:block", async ({ event, context })
     );
   } catch (err) {
     if (err instanceof TimeoutError) {
-      console.warn(
-        `[COW:OrderDiscoveryPoller] multicall timeout block=${currentBlock} chain=${chainId} due=${dueOrders.length}`,
-      );
+      cowLog("warn", "OrderDiscoveryPoller:multicall_timeout", { block: String(currentBlock), chainId, due: dueOrders.length });
       return;
     }
     throw err;
@@ -264,9 +261,7 @@ ponder.on("composableCow.OrderDiscoveryPoller:block", async ({ event, context })
                 eq(conditionalOrderGenerator.eventId, order.generatorId),
               ),
             );
-          console.log(
-            `[COW:OrderDiscoveryPoller] NEVER generatorId=${order.generatorId} reason=${pollResult.reason} block=${currentBlock} chain=${chainId}`,
-          );
+          cowLog("info", "OrderDiscoveryPoller:NEVER", { block: String(currentBlock), chainId, generatorId: order.generatorId, reason: pollResult.reason });
           neverCount++;
           break;
 
@@ -285,9 +280,7 @@ ponder.on("composableCow.OrderDiscoveryPoller:block", async ({ event, context })
                 eq(conditionalOrderGenerator.eventId, order.generatorId),
               ),
             );
-          console.log(
-            `[COW:OrderDiscoveryPoller] CANCELLED generatorId=${order.generatorId} block=${currentBlock} chain=${chainId}`,
-          );
+          cowLog("info", "OrderDiscoveryPoller:CANCELLED", { block: String(currentBlock), chainId, generatorId: order.generatorId });
           break;
       }
     }
@@ -296,9 +289,7 @@ ponder.on("composableCow.OrderDiscoveryPoller:block", async ({ event, context })
   await Promise.all(successPromises);
 
   const capped = dueOrders.length === maxGeneratorsPerBlock;
-  console.log(
-    `[COW:OrderDiscoveryPoller] DONE block=${currentBlock} chain=${chainId} due=${dueOrders.length} success=${successCount} never=${neverCount} backedOff=${backedOffCount}${capped ? " CAPPED" : ""}`,
-  );
+  cowLog("info", "OrderDiscoveryPoller:DONE", { block: String(currentBlock), chainId, due: dueOrders.length, success: successCount, never: neverCount, backedOff: backedOffCount, capped });
 });
 
 // ─── composableCow.CandidateConfirmer ────────────────────────────────────────
@@ -407,9 +398,7 @@ ponder.on("composableCow.CandidateConfirmer:block", async ({ event, context }) =
         );
 
       const preflightHits = preflightStatuses.size;
-      console.log(
-        `[COW:CandidateConfirmer] block=${event.block.number} chain=${chainId} parent-cancelled=${orphanCandidates.length} preflight-hits=${preflightHits}`,
-      );
+      cowLog("info", "CandidateConfirmer:parent_cancelled", { block: String(event.block.number), chainId, parentCancelled: orphanCandidates.length, preflightHits });
     }
   }
 
@@ -569,9 +558,7 @@ ponder.on("composableCow.CandidateConfirmer:block", async ({ event, context }) =
   }
 
   if (confirmed > 0 || stale.length > 0) {
-    console.log(
-      `[COW:CandidateConfirmer] block=${event.block.number} chain=${chainId} candidates=${unconfirmed.length} confirmed=${confirmed} expired=${stale.length}`,
-    );
+    cowLog("info", "CandidateConfirmer:DONE", { block: String(event.block.number), chainId, candidates: unconfirmed.length, confirmed, expired: stale.length });
   }
 });
 
@@ -623,9 +610,7 @@ ponder.on("composableCow.OrderStatusTracker:block", async ({ event, context }) =
     }
 
     if (updated > 0) {
-      console.log(
-        `[COW:OrderStatusTracker] block=${event.block.number} chain=${chainId} open=${openOrders.length} updated=${updated}`,
-      );
+      cowLog("info", "OrderStatusTracker:DONE", { block: String(event.block.number), chainId, open: openOrders.length, updated });
     }
   }
 
@@ -689,9 +674,7 @@ ponder.on("composableCow.OwnerBackfill:block", async ({ event, context }) => {
     .from(bootstrapRetryQueue)
     .where(eq(bootstrapRetryQueue.chainId, chainId));
 
-  console.log(
-    `[COW:OwnerBackfill] block=${currentBlock} chain=${chainId} pending_retry=${queued.length}`,
-  );
+  cowLog("info", "OwnerBackfill:START", { block: String(currentBlock), chainId, pendingRetry: queued.length });
 
   let totalDiscovered = 0;
   const retriedOwners = new Set<Hex>();
@@ -711,9 +694,7 @@ ponder.on("composableCow.OwnerBackfill:block", async ({ event, context }) => {
         .where(and(eq(bootstrapRetryQueue.chainId, chainId), eq(bootstrapRetryQueue.owner, owner as Hex)));
     } catch (err) {
       if (err instanceof TimeoutError) {
-        console.warn(
-          `[COW:OwnerBackfill] owner retry timeout owner=${owner} chain=${chainId} retry_count=${retryCount + 1} after=${BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS}ms`,
-        );
+        cowLog("warn", "OwnerBackfill:owner_retry_timeout", { block: String(currentBlock), chainId, owner, retryCount: retryCount + 1, timeoutMs: BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS });
         await context.db.sql
           .update(bootstrapRetryQueue)
           .set({ retryCount: retryCount + 1, lastRetryAt: currentBlock })
@@ -756,14 +737,12 @@ ponder.on("composableCow.OwnerBackfill:block", async ({ event, context }) => {
   const freshOwners = new Set(generators.map((g) => g.owner).filter((o) => !retriedOwners.has(o)));
 
   if (freshOwners.size === 0 && retriedOwners.size === 0) {
-    console.log(`[COW:OwnerBackfill] block=${currentBlock} chain=${chainId} no generators need bootstrap`);
+    cowLog("info", "OwnerBackfill:no_bootstrap_needed", { block: String(currentBlock), chainId });
     return;
   }
 
   if (freshOwners.size > 0) {
-    console.log(
-      `[COW:OwnerBackfill] block=${currentBlock} chain=${chainId} generators=${generators.length} fresh_owners=${freshOwners.size}`,
-    );
+    cowLog("info", "OwnerBackfill:bootstrap_start", { block: String(currentBlock), chainId, generators: generators.length, freshOwners: freshOwners.size });
   }
 
   for (const owner of freshOwners) {
@@ -777,9 +756,7 @@ ponder.on("composableCow.OwnerBackfill:block", async ({ event, context }) => {
       totalDiscovered += count;
     } catch (err) {
       if (err instanceof TimeoutError) {
-        console.warn(
-          `[COW:OwnerBackfill] owner timeout owner=${owner} chain=${chainId} after=${BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS}ms`,
-        );
+        cowLog("warn", "OwnerBackfill:owner_timeout", { block: String(currentBlock), chainId, owner, timeoutMs: BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS });
         await context.db.sql
           .insert(bootstrapRetryQueue)
           .values({ chainId, owner, firstTimeoutAt: currentBlock, retryCount: 1, lastRetryAt: currentBlock })
@@ -790,9 +767,7 @@ ponder.on("composableCow.OwnerBackfill:block", async ({ event, context }) => {
     }
   }
 
-  console.log(
-    `[COW:OwnerBackfill] DONE block=${currentBlock} chain=${chainId} discovered=${totalDiscovered}`,
-  );
+  cowLog("info", "OwnerBackfill:DONE", { block: String(currentBlock), chainId, discovered: totalDiscovered });
 });
 
 // ─── composableCow.CancellationWatcher ───────────────────────────────────────
@@ -846,9 +821,7 @@ ponder.on("composableCow.CancellationWatcher:block", async ({ event, context }) 
 
   if (dueGenerators.length === 0) return;
 
-  console.log(
-    `[COW:CancellationWatcher] ENTER block=${currentBlock} chain=${chainId} due=${dueGenerators.length}`,
-  );
+  cowLog("info", "CancellationWatcher:ENTER", { block: String(currentBlock), chainId, due: dueGenerators.length });
 
   const c5MulticallPromise = context.client.multicall({
     contracts: dueGenerators.map((g) => ({
@@ -869,9 +842,7 @@ ponder.on("composableCow.CancellationWatcher:block", async ({ event, context }) 
     );
   } catch (err) {
     if (err instanceof TimeoutError) {
-      console.warn(
-        `[COW:CancellationWatcher] multicall timeout block=${currentBlock} chain=${chainId} due=${dueGenerators.length}`,
-      );
+      cowLog("warn", "CancellationWatcher:multicall_timeout", { block: String(currentBlock), chainId, due: dueGenerators.length });
       return;
     }
     throw err;
@@ -908,9 +879,7 @@ ponder.on("composableCow.CancellationWatcher:block", async ({ event, context }) 
             eq(conditionalOrderGenerator.eventId, gen.generatorId),
           ),
         );
-      console.log(
-        `[COW:CancellationWatcher] CANCELLED generatorId=${gen.generatorId} orderType=${gen.orderType} block=${currentBlock} chain=${chainId}`,
-      );
+      cowLog("info", "CancellationWatcher:CANCELLED", { block: String(currentBlock), chainId, generatorId: gen.generatorId, orderType: gen.orderType });
       cancelledCount++;
     } else {
       await context.db.sql
@@ -930,9 +899,7 @@ ponder.on("composableCow.CancellationWatcher:block", async ({ event, context }) 
     }
   }
 
-  console.log(
-    `[COW:CancellationWatcher] DONE block=${currentBlock} chain=${chainId} due=${dueGenerators.length} cancelled=${cancelledCount} stillActive=${stillActiveCount} errors=${errorCount}`,
-  );
+  cowLog("info", "CancellationWatcher:DONE", { block: String(currentBlock), chainId, due: dueGenerators.length, cancelled: cancelledCount, stillActive: stillActiveCount, errors: errorCount });
 });
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────

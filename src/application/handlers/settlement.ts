@@ -2,6 +2,7 @@ import { ponder } from "ponder:registry";
 import { AddressType, conditionalOrderGenerator, ownerMapping, transaction } from "ponder:schema";
 import { and, eq } from "ponder";
 import { keccak256, toBytes } from "viem";
+import { cowLog } from "../helpers/cowLogger";
 import { AaveV3AdapterHelperAbi } from "../../../abis/AaveV3AdapterHelperAbi";
 import {
   AAVE_V3_ADAPTER_FACTORY_ADDRESSES,
@@ -33,15 +34,15 @@ function logStatsIfIntervalPassed() {
   if (Date.now() - statsLastLogAt < LOG_INTERVAL_MS) return;
   const contractAddresses =
     stats.tradeLogsFound - stats.skippedAlreadyMapped - stats.skippedEOA;
-  console.log(
-    `[SETTLEMENT:STATS] settlements=${stats.total}` +
-      ` tradeLogs=${stats.tradeLogsFound}` +
-      ` alreadyMapped=${stats.skippedAlreadyMapped}` +
-      ` eoa=${stats.skippedEOA}` +
-      ` notAdapter=${stats.skippedNotAdapter}` +
-      ` mapped=${stats.mapped}` +
-      ` | avgFactory=${contractAddresses > 0 ? (stats.msFactory / contractAddresses).toFixed(1) : 0}ms`,
-  );
+  cowLog("info", "settlement:stats", {
+    settlements: stats.total,
+    tradeLogs: stats.tradeLogsFound,
+    alreadyMapped: stats.skippedAlreadyMapped,
+    eoa: stats.skippedEOA,
+    notAdapter: stats.skippedNotAdapter,
+    mapped: stats.mapped,
+    avgFactoryMs: contractAddresses > 0 ? Number((stats.msFactory / contractAddresses).toFixed(1)) : 0,
+  });
   statsLastLogAt = Date.now();
 }
 
@@ -225,13 +226,17 @@ ponder.on("GPv2Settlement:Settlement", async ({ event, context }) => {
     stats.mapped++;
     logStatsIfIntervalPassed();
 
-    console.log(
-      `[COW:SETTLEMENT:TRADE] AAVE_ADAPTER_MAPPED` +
-        ` adapter=${ownerAddress}` +
-        ` eoa=${eoaOwner.toLowerCase()}` +
-        ` block=${event.block.number}` +
-        ` chain=${chainId}`,
-    );
+    cowLog("info", "settlement:aave_adapter_mapped", {
+      block: String(event.block.number),
+      chainId,
+      adapter: ownerAddress,
+      eoa: eoaOwner.toLowerCase(),
+      orderUid: String(orderUid),
+      sellToken: sellToken.toLowerCase(),
+      buyToken: buyToken.toLowerCase(),
+      sellAmount: String(sellAmount),
+      buyAmount: String(buyAmount),
+    });
   }
 
   logStatsIfIntervalPassed();
