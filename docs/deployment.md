@@ -50,6 +50,50 @@ Used by `deployment/docker-compose.yml` and `deployment/manage.sh`:
 
 If you're using the `deploy-remotely.sh` workflow, these variables also need to be set as GitHub Actions secrets (or equivalent) in your CI environment.
 
+## pnpm dev vs pnpm start
+
+| | `pnpm dev` | `pnpm start` |
+|---|---|---|
+| Port | **42069** | **3000** (mapped by Docker via `PONDER_EXPOSED_PORT`) |
+| Restart | **Full re-index from scratch** — no checkpoint; re-starts from the configured start blocks | **Resumes from last checkpoint** — picks up where it left off |
+| Hot-reload | Yes (schema/handler/config changes auto-restart) | No |
+| Use case | Local development | Production |
+
+Use `pnpm start` (or the Docker image) in production. Restarting `pnpm dev` silently triggers a full multi-hour re-index every time.
+
+Config or schema changes always force a full re-index regardless of which command you use, because Ponder detects the change and clears the checkpoint.
+
+## Multichain Ordering
+
+Ponder defaults to `ordering: "multichain"` (also called "parallel" mode), which processes each chain's historical backlog independently. In practice during a cold start this means one chain's blocks are indexed before the other gets meaningful progress — e.g. Gnosis may reach 20% while mainnet sits at 0%.
+
+If you need cross-chain consistency (e.g. an API endpoint that joins mainnet + gnosis rows in real-time), set `ordering: "omnichain"` in `ponder.config.ts`. Omnichain mode interleaves blocks across chains by timestamp so both chains advance together, at the cost of slower overall throughput.
+
+For this indexer the default multichain mode is fine: the REST endpoints and GraphQL queries are per-chain.
+
+## RPC Provider Limits and ethGetLogsBlockRange
+
+Many RPC providers cap `eth_getLogs` to 1000–2000 blocks per request. Without an explicit `ethGetLogsBlockRange` in `ponder.config.ts`, Ponder uses a larger internal default, which causes repeated `InvalidInputRpcError: query block range exceeds server limit` warnings and retry storms during backfill.
+
+`ponder.config.ts` sets `ethGetLogsBlockRange: 1000` for both mainnet and gnosis as a safe conservative default. If your provider allows higher limits (e.g. Alchemy allows 10 000), you can increase it:
+
+```ts
+// ponder.config.ts
+chains: {
+  mainnet: { id: 1, rpc: ..., ethGetLogsBlockRange: 10_000 },
+  gnosis:  { id: 100, rpc: ..., ethGetLogsBlockRange: 10_000 },
+}
+```
+
+Common provider limits:
+
+| Provider | Typical eth_getLogs limit |
+|----------|--------------------------|
+| Alchemy | 10 000 blocks |
+| Infura | 10 000 blocks |
+| QuickNode | 1 000–10 000 blocks (plan-dependent) |
+| Public RPCs (Pocket, etc.) | 1 000 blocks |
+
 ## Database Setup
 
 ### Local Development

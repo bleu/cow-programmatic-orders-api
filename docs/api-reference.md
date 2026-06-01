@@ -2,7 +2,7 @@
 
 The indexer exposes three ways to query indexed data: a Ponder-generated GraphQL endpoint, a read-only SQL passthrough, and two custom REST endpoints for queries that require cross-table logic.
 
-The default local URL is `http://localhost:42069`.
+The default local URL is `http://localhost:42069` when using `pnpm dev`. The production server (`pnpm start`, Docker) listens on port **3000** (mapped to the host via `PONDER_EXPOSED_PORT`, default 40000).
 
 ## Endpoints
 
