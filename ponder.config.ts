@@ -38,47 +38,46 @@ export default createConfig({
     },
   },
   blocks: {
-    // C1: Contract Poller — RPC multicall for non-deterministic generators
+    // composableCow.OrderDiscoveryPoller — RPC multicall for non-deterministic generators.
     // Gnosis interval=4 (~20s) vs mainnet interval=1 (~12s).
     // The CoW watch-tower processes orders sequentially — with 1,461+ gnosis
     // generators, a full cycle takes many blocks. Polling every 5s gnosis block
     // wastes RPC calls since state rarely changes between blocks.
-    ContractPoller: {
+    "composableCow.OrderDiscoveryPoller": {
       chain: {
         mainnet: { startBlock: "latest" },
         gnosis: { startBlock: "latest", interval: 4 },
       },
       interval: 1,
     },
-    // C2: Candidate Confirmer — checks API for unconfirmed candidates
-    CandidateConfirmer: {
+    // composableCow.CandidateConfirmer — checks API for unconfirmed candidates.
+    "composableCow.CandidateConfirmer": {
       chain: {
         mainnet: { startBlock: "latest" },
         gnosis: { startBlock: "latest" },
       },
       interval: 1,
     },
-    // C3: Status Updater — polls API for open discrete order status
-    StatusUpdater: {
+    // composableCow.OrderStatusTracker — polls API for open discrete order status.
+    "composableCow.OrderStatusTracker": {
       chain: {
         mainnet: { startBlock: "latest" },
         gnosis: { startBlock: "latest" },
       },
       interval: 1,
     },
-    // C4: Historical Bootstrap — one-time owner fetch for non-deterministic backfill orders
-    HistoricalBootstrap: {
+    // composableCow.OwnerBackfill — one-time owner fetch for non-deterministic backfill orders.
+    "composableCow.OwnerBackfill": {
       chain: {
         mainnet: { startBlock: "latest", endBlock: "latest" },
         gnosis: { startBlock: "latest", endBlock: "latest" },
       },
       interval: 1,
     },
-    // C5: Deterministic Cancellation Sweeper — singleOrders() mapping read for
-    // generators C1 skips (allCandidatesKnown=true). Cadence per generator is
-    // DETERMINISTIC_CANCEL_SWEEP_INTERVAL blocks; the handler itself is cheap
-    // when nothing is due.
-    DeterministicCancellationSweeper: {
+    // composableCow.CancellationWatcher — singleOrders() mapping read for deterministic
+    // generators (allCandidatesKnown=true). Cadence per generator is
+    // DETERMINISTIC_CANCEL_SWEEP_INTERVAL blocks; the handler itself is cheap when nothing is due.
+    "composableCow.CancellationWatcher": {
       chain: {
         mainnet: { startBlock: "latest" },
         gnosis: { startBlock: "latest" },
