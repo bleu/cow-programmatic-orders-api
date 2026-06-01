@@ -25,6 +25,7 @@ import {
 import {
   BLOCK_HANDLER_RPC_TIMEOUT_MS,
   BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
+  DEFAULT_MAX_DISCRETE_ORDERS_PER_BLOCK,
   DEFAULT_MAX_GENERATORS_PER_BLOCK,
   DETERMINISTIC_CANCEL_SWEEP_INTERVAL,
   RECHECK_INTERVAL,
@@ -561,9 +562,20 @@ ponder.on("StatusUpdater:block", async ({ event, context }) => {
   const chainId = context.chain.id as SupportedChainId;
   const currentTimestamp = event.block.timestamp;
 
+  const maxOrdersPerBlock =
+    Number(process.env[`MAX_DISCRETE_ORDERS_PER_BLOCK_${chainId}`]) ||
+    DEFAULT_MAX_DISCRETE_ORDERS_PER_BLOCK;
+
   const openOrders = await context.db.sql
     .select({
       orderUid: discreteOrder.orderUid,
+      conditionalOrderGeneratorId: discreteOrder.conditionalOrderGeneratorId,
+      sellAmount: discreteOrder.sellAmount,
+      buyAmount: discreteOrder.buyAmount,
+      feeAmount: discreteOrder.feeAmount,
+      validTo: discreteOrder.validTo,
+      creationDate: discreteOrder.creationDate,
+      promotedAt: discreteOrder.promotedAt,
     })
     .from(discreteOrder)
     .where(
@@ -571,39 +583,60 @@ ponder.on("StatusUpdater:block", async ({ event, context }) => {
         eq(discreteOrder.chainId, chainId),
         eq(discreteOrder.status, "open"),
       ),
-    ) as { orderUid: string }[];
+    )
+    .limit(maxOrdersPerBlock) as {
+    orderUid: string;
+    conditionalOrderGeneratorId: string;
+    sellAmount: string;
+    buyAmount: string;
+    feeAmount: string;
+    validTo: number | null;
+    creationDate: bigint;
+    promotedAt: bigint | null;
+  }[];
 
   if (openOrders.length > 0) {
     const uids = openOrders.map((o) => o.orderUid);
     const statuses = await fetchOrderStatusByUids(context, chainId, uids);
 
-    let updated = 0;
-    for (const [uid, info] of statuses) {
-      if (VALID_DISCRETE_STATUSES.has(info.status)) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const setFields: Record<string, any> = {
-          status: info.status as "fulfilled" | "unfilled" | "expired" | "cancelled",
-        };
-        if (info.executedSellAmount != null) {
-          setFields.executedSellAmount = info.executedSellAmount;
-          setFields.executedBuyAmount = info.executedBuyAmount;
-        }
-        await context.db.sql
-          .update(discreteOrder)
-          .set(setFields)
-          .where(
-            and(
-              eq(discreteOrder.chainId, chainId),
-              eq(discreteOrder.orderUid, uid),
-            ),
-          );
-        updated++;
-      }
+    type DiscreteStatus = "open" | "fulfilled" | "unfilled" | "expired" | "cancelled";
+    const rowsToUpdate: (typeof discreteOrder.$inferInsert)[] = [];
+
+    for (const order of openOrders) {
+      const info = statuses.get(order.orderUid);
+      if (!info || !VALID_DISCRETE_STATUSES.has(info.status)) continue;
+      rowsToUpdate.push({
+        orderUid: order.orderUid,
+        chainId,
+        conditionalOrderGeneratorId: order.conditionalOrderGeneratorId,
+        status: info.status as DiscreteStatus,
+        sellAmount: order.sellAmount,
+        buyAmount: order.buyAmount,
+        feeAmount: order.feeAmount,
+        validTo: order.validTo,
+        creationDate: order.creationDate,
+        executedSellAmount: info.executedSellAmount ?? null,
+        executedBuyAmount: info.executedBuyAmount ?? null,
+        promotedAt: order.promotedAt,
+      });
     }
 
-    if (updated > 0) {
+    // One multi-row upsert keeps the block TX open for one round-trip instead of N.
+    if (rowsToUpdate.length > 0) {
+      await context.db.sql
+        .insert(discreteOrder)
+        .values(rowsToUpdate)
+        .onConflictDoUpdate({
+          target: [discreteOrder.chainId, discreteOrder.orderUid],
+          set: {
+            status: sql`excluded.status`,
+            executedSellAmount: sql`excluded.executed_sell_amount`,
+            executedBuyAmount: sql`excluded.executed_buy_amount`,
+          },
+        });
+
       console.log(
-        `[COW:C3] block=${event.block.number} chain=${chainId} open=${openOrders.length} updated=${updated}`,
+        `[COW:C3] block=${event.block.number} chain=${chainId} open=${openOrders.length} updated=${rowsToUpdate.length}`,
       );
     }
   }

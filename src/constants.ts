@@ -78,3 +78,13 @@ export const BLOCK_HANDLER_RPC_TIMEOUT_MS = 15_000;
  * the normal C1 / C2 path picks them up on subsequent blocks.
  */
 export const BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS = 30_000;
+
+/**
+ * COW-988: Hard per-block ceiling on how many open discrete orders the C3
+ * StatusUpdater will check in a single block. Caps the /by_uids batch size
+ * and keeps block handler transactions short.
+ *
+ * Override per chain with env var MAX_DISCRETE_ORDERS_PER_BLOCK_<chainId>, e.g.
+ * MAX_DISCRETE_ORDERS_PER_BLOCK_1=200, MAX_DISCRETE_ORDERS_PER_BLOCK_100=500.
+ */
+export const DEFAULT_MAX_DISCRETE_ORDERS_PER_BLOCK = 200;
