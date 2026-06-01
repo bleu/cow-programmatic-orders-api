@@ -1,17 +1,17 @@
 /**
  * Block handlers — five responsibilities split into separate Ponder block entries.
  *
- * C1 (ContractPoller):      RPC multicall for non-deterministic generators. Every block.
- * C2 (CandidateConfirmer):  API batch check for unconfirmed candidates. Every block.
- * C3 (StatusUpdater):       API batch check for open discrete orders + expiry. Every block.
- * C4 (HistoricalBootstrap): One-time owner fetch for non-deterministic backfill orders.
- * C5 (DeterministicCancellationSweeper): singleOrders() mapping read for
- *                           deterministic generators (allCandidatesKnown=true) that
- *                           C1 skips. Runs every block but re-checks each generator
- *                           only every DETERMINISTIC_CANCEL_SWEEP_INTERVAL blocks.
+ * OrderDiscoveryPoller:  RPC multicall for non-deterministic generators. Every block.
+ * CandidateConfirmer:    API batch check for unconfirmed candidates. Every block.
+ * OrderStatusTracker:    API batch check for open discrete orders + expiry. Every block.
+ * OwnerBackfill:         One-time owner fetch for non-deterministic backfill orders.
+ * CancellationWatcher:   singleOrders() mapping read for deterministic generators
+ *                        (allCandidatesKnown=true) that OrderDiscoveryPoller skips.
+ *                        Runs every block but re-checks each generator only every
+ *                        DETERMINISTIC_CANCEL_SWEEP_INTERVAL blocks.
  *
  * All handlers start at "latest" — only run during live sync.
- * C4 additionally has endBlock: "latest", so it fires exactly once.
+ * OwnerBackfill additionally has endBlock: "latest", so it fires exactly once.
  */
 
 import { ponder } from "ponder:registry";
@@ -47,7 +47,7 @@ const SINGLE_SHOT_NON_DETERMINISTIC = ["GoodAfterTime", "TradeAboveThreshold"] a
 const BLOCK_NEVER = 2n ** 63n - 1n; // sentinel for epoch-scheduled generators (PollTryAtEpoch)
 const VALID_DISCRETE_STATUSES = new Set(["fulfilled", "unfilled", "expired", "cancelled"]);
 
-// Minimal ABI for C5: reads the singleOrders(owner, hash) mapping on ComposableCoW.
+// Minimal ABI for CancellationWatcher: reads the singleOrders(owner, hash) mapping on ComposableCoW.
 // `false` means the owner called remove() — generator is cancelled on-chain.
 const SINGLE_ORDERS_ABI = [
   {
@@ -63,12 +63,12 @@ const SINGLE_ORDERS_ABI = [
 ] as const;
 
 
-// ─── C1: Contract Poller ─────────────────────────────────────────────────────
+// ─── composableCow.OrderDiscoveryPoller ──────────────────────────────────────
 // Polls getTradeableOrderWithSignature for any active generator where
 // allCandidatesKnown=false. Normally only non-deterministic types, but also
 // serves as fallback for deterministic types whose precompute failed.
 
-ponder.on("ContractPoller:block", async ({ event, context }) => {
+ponder.on("composableCow.OrderDiscoveryPoller:block", async ({ event, context }) => {
   if (process.env.DISABLE_POLL_RESULT_CHECK) return;
 
   const chainId = context.chain.id as SupportedChainId;
@@ -120,7 +120,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
   if (dueOrders.length === 0) return;
 
   console.log(
-    `[COW:C1] ENTER block=${currentBlock} chain=${chainId} due=${dueOrders.length}`,
+    `[COW:OrderDiscoveryPoller] ENTER block=${currentBlock} chain=${chainId} due=${dueOrders.length}`,
   );
 
   const c1MulticallPromise = context.client.multicall({
@@ -148,7 +148,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
   } catch (err) {
     if (err instanceof TimeoutError) {
       console.warn(
-        `[COW:C1] multicall timeout block=${currentBlock} chain=${chainId} due=${dueOrders.length}`,
+        `[COW:OrderDiscoveryPoller] multicall timeout block=${currentBlock} chain=${chainId} due=${dueOrders.length}`,
       );
       return;
     }
@@ -264,7 +264,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
               ),
             );
           console.log(
-            `[COW:C1] NEVER generatorId=${order.generatorId} reason=${pollResult.reason} block=${currentBlock} chain=${chainId}`,
+            `[COW:OrderDiscoveryPoller] NEVER generatorId=${order.generatorId} reason=${pollResult.reason} block=${currentBlock} chain=${chainId}`,
           );
           neverCount++;
           break;
@@ -285,7 +285,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
               ),
             );
           console.log(
-            `[COW:C1] CANCELLED generatorId=${order.generatorId} block=${currentBlock} chain=${chainId}`,
+            `[COW:OrderDiscoveryPoller] CANCELLED generatorId=${order.generatorId} block=${currentBlock} chain=${chainId}`,
           );
           break;
       }
@@ -296,15 +296,15 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
 
   const capped = dueOrders.length === maxGeneratorsPerBlock;
   console.log(
-    `[COW:C1] DONE block=${currentBlock} chain=${chainId} due=${dueOrders.length} success=${successCount} never=${neverCount} backedOff=${backedOffCount}${capped ? " CAPPED" : ""}`,
+    `[COW:OrderDiscoveryPoller] DONE block=${currentBlock} chain=${chainId} due=${dueOrders.length} success=${successCount} never=${neverCount} backedOff=${backedOffCount}${capped ? " CAPPED" : ""}`,
   );
 });
 
-// ─── C2: Candidate Confirmer ─────────────────────────────────────────────────
+// ─── composableCow.CandidateConfirmer ────────────────────────────────────────
 // Checks if candidate discrete orders exist on the Orderbook API.
 // When confirmed, promotes them to discreteOrder.
 
-ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
+ponder.on("composableCow.CandidateConfirmer:block", async ({ event, context }) => {
   const chainId = context.chain.id as SupportedChainId;
 
   // Parent-cancelled cascade: candidates whose parent generator flipped to
@@ -387,7 +387,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
         );
 
       console.log(
-        `[COW:C2] block=${event.block.number} chain=${chainId} parent-cancelled=${orphanCandidates.length}`,
+        `[COW:CandidateConfirmer] block=${event.block.number} chain=${chainId} parent-cancelled=${orphanCandidates.length}`,
       );
     }
   }
@@ -549,15 +549,15 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
 
   if (confirmed > 0 || stale.length > 0) {
     console.log(
-      `[COW:C2] block=${event.block.number} chain=${chainId} candidates=${unconfirmed.length} confirmed=${confirmed} expired=${stale.length}`,
+      `[COW:CandidateConfirmer] block=${event.block.number} chain=${chainId} candidates=${unconfirmed.length} confirmed=${confirmed} expired=${stale.length}`,
     );
   }
 });
 
-// ─── C3: Status Updater ──────────────────────────────────────────────────────
+// ─── composableCow.OrderStatusTracker ────────────────────────────────────────
 // Polls the API for status updates on open discrete orders. Expires past validTo.
 
-ponder.on("StatusUpdater:block", async ({ event, context }) => {
+ponder.on("composableCow.OrderStatusTracker:block", async ({ event, context }) => {
   const chainId = context.chain.id as SupportedChainId;
   const currentTimestamp = event.block.timestamp;
 
@@ -603,7 +603,7 @@ ponder.on("StatusUpdater:block", async ({ event, context }) => {
 
     if (updated > 0) {
       console.log(
-        `[COW:C3] block=${event.block.number} chain=${chainId} open=${openOrders.length} updated=${updated}`,
+        `[COW:OrderStatusTracker] block=${event.block.number} chain=${chainId} open=${openOrders.length} updated=${updated}`,
       );
     }
   }
@@ -654,11 +654,11 @@ ponder.on("StatusUpdater:block", async ({ event, context }) => {
     );
 });
 
-// ─── C4: Historical Bootstrap ────────────────────────────────────────────────
+// ─── composableCow.OwnerBackfill ─────────────────────────────────────────────
 // One-time discovery of historical discrete orders for non-deterministic
 // generators created during backfill. Fires once at startBlock=endBlock="latest".
 
-ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
+ponder.on("composableCow.OwnerBackfill:block", async ({ event, context }) => {
   const chainId = context.chain.id as SupportedChainId;
   const currentBlock = event.block.number;
 
@@ -669,7 +669,7 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
     .where(eq(bootstrapRetryQueue.chainId, chainId));
 
   console.log(
-    `[COW:C4] block=${currentBlock} chain=${chainId} pending_retry=${queued.length}`,
+    `[COW:OwnerBackfill] block=${currentBlock} chain=${chainId} pending_retry=${queued.length}`,
   );
 
   let totalDiscovered = 0;
@@ -691,7 +691,7 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
     } catch (err) {
       if (err instanceof TimeoutError) {
         console.warn(
-          `[COW:C4] owner retry timeout owner=${owner} chain=${chainId} retry_count=${retryCount + 1} after=${BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS}ms`,
+          `[COW:OwnerBackfill] owner retry timeout owner=${owner} chain=${chainId} retry_count=${retryCount + 1} after=${BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS}ms`,
         );
         await context.db.sql
           .update(bootstrapRetryQueue)
@@ -735,13 +735,13 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
   const freshOwners = new Set(generators.map((g) => g.owner).filter((o) => !retriedOwners.has(o)));
 
   if (freshOwners.size === 0 && retriedOwners.size === 0) {
-    console.log(`[COW:C4] block=${currentBlock} chain=${chainId} no generators need bootstrap`);
+    console.log(`[COW:OwnerBackfill] block=${currentBlock} chain=${chainId} no generators need bootstrap`);
     return;
   }
 
   if (freshOwners.size > 0) {
     console.log(
-      `[COW:C4] block=${currentBlock} chain=${chainId} generators=${generators.length} fresh_owners=${freshOwners.size}`,
+      `[COW:OwnerBackfill] block=${currentBlock} chain=${chainId} generators=${generators.length} fresh_owners=${freshOwners.size}`,
     );
   }
 
@@ -757,7 +757,7 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
     } catch (err) {
       if (err instanceof TimeoutError) {
         console.warn(
-          `[COW:C4] owner timeout owner=${owner} chain=${chainId} after=${BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS}ms`,
+          `[COW:OwnerBackfill] owner timeout owner=${owner} chain=${chainId} after=${BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS}ms`,
         );
         await context.db.sql
           .insert(bootstrapRetryQueue)
@@ -770,20 +770,20 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
   }
 
   console.log(
-    `[COW:C4] DONE block=${currentBlock} chain=${chainId} discovered=${totalDiscovered}`,
+    `[COW:OwnerBackfill] DONE block=${currentBlock} chain=${chainId} discovered=${totalDiscovered}`,
   );
 });
 
-// ─── C5: Deterministic Cancellation Sweeper ──────────────────────────────────
-// C1 skips generators with allCandidatesKnown=true (deterministic types: TWAP,
-// StopLoss, CirclesBackingOrder), so SingleOrderNotAuthed is never observed
-// for them. This handler closes that gap by reading
+// ─── composableCow.CancellationWatcher ───────────────────────────────────────
+// OrderDiscoveryPoller skips generators with allCandidatesKnown=true (deterministic
+// types: TWAP, StopLoss, CirclesBackingOrder), so SingleOrderNotAuthed is never
+// observed for them. This handler closes that gap by reading
 // ComposableCoW.singleOrders(owner, hash) on a DETERMINISTIC_CANCEL_SWEEP_INTERVAL
 // cadence. A `false` result means the owner called remove() on-chain → flip to
-// Cancelled, which lets the C2/C3 parent-cancelled cascade (COW-918) reconcile
-// the child discrete / candidate rows on the next block.
+// Cancelled, which lets the CandidateConfirmer/OrderStatusTracker parent-cancelled
+// cascade (COW-918) reconcile the child discrete / candidate rows on the next block.
 
-ponder.on("DeterministicCancellationSweeper:block", async ({ event, context }) => {
+ponder.on("composableCow.CancellationWatcher:block", async ({ event, context }) => {
   if (process.env.DISABLE_DETERMINISTIC_CANCEL_SWEEP) return;
 
   const chainId = context.chain.id as SupportedChainId;
@@ -826,7 +826,7 @@ ponder.on("DeterministicCancellationSweeper:block", async ({ event, context }) =
   if (dueGenerators.length === 0) return;
 
   console.log(
-    `[COW:C5] ENTER block=${currentBlock} chain=${chainId} due=${dueGenerators.length}`,
+    `[COW:CancellationWatcher] ENTER block=${currentBlock} chain=${chainId} due=${dueGenerators.length}`,
   );
 
   const c5MulticallPromise = context.client.multicall({
@@ -849,7 +849,7 @@ ponder.on("DeterministicCancellationSweeper:block", async ({ event, context }) =
   } catch (err) {
     if (err instanceof TimeoutError) {
       console.warn(
-        `[COW:C5] multicall timeout block=${currentBlock} chain=${chainId} due=${dueGenerators.length}`,
+        `[COW:CancellationWatcher] multicall timeout block=${currentBlock} chain=${chainId} due=${dueGenerators.length}`,
       );
       return;
     }
@@ -888,7 +888,7 @@ ponder.on("DeterministicCancellationSweeper:block", async ({ event, context }) =
           ),
         );
       console.log(
-        `[COW:C5] CANCELLED generatorId=${gen.generatorId} orderType=${gen.orderType} block=${currentBlock} chain=${chainId}`,
+        `[COW:CancellationWatcher] CANCELLED generatorId=${gen.generatorId} orderType=${gen.orderType} block=${currentBlock} chain=${chainId}`,
       );
       cancelledCount++;
     } else {
@@ -910,7 +910,7 @@ ponder.on("DeterministicCancellationSweeper:block", async ({ event, context }) =
   }
 
   console.log(
-    `[COW:C5] DONE block=${currentBlock} chain=${chainId} due=${dueGenerators.length} cancelled=${cancelledCount} stillActive=${stillActiveCount} errors=${errorCount}`,
+    `[COW:CancellationWatcher] DONE block=${currentBlock} chain=${chainId} due=${dueGenerators.length} cancelled=${cancelledCount} stillActive=${stillActiveCount} errors=${errorCount}`,
   );
 });
 
