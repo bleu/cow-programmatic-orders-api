@@ -483,13 +483,11 @@ async function getCachedUidStatuses(
     const batchSize = 500;
     for (let i = 0; i < uids.length; i += batchSize) {
       const batch = uids.slice(i, i + batchSize);
-      const placeholders = batch.map((uid) => `'${uid.replace(/'/g, "''")}'`).join(",");
+      const uidList = sql.join(batch.map((uid) => sql`${uid}`), sql`, `);
       const rows = (await context.db.sql.execute(
-        sql.raw(
-          `SELECT order_uid, status, executed_sell_amount, executed_buy_amount
-           FROM cow_cache.order_uid_cache
-           WHERE chain_id = ${chainId} AND order_uid IN (${placeholders})`,
-        ),
+        sql`SELECT order_uid, status, executed_sell_amount, executed_buy_amount
+            FROM cow_cache.order_uid_cache
+            WHERE chain_id = ${chainId} AND order_uid IN (${uidList})`,
       )) as { order_uid: string; status: string; executed_sell_amount: string | null; executed_buy_amount: string | null }[];
       for (const row of rows) {
         result.set(row.order_uid, {
