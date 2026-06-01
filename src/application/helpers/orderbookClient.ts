@@ -294,6 +294,30 @@ export async function fetchOrderStatusByUids(
   return result;
 }
 
+/**
+ * Fallback status lookup via GET /account/{owner}/orders.
+ * Used when /orders/by_uids returns nothing for UIDs that may have aged out
+ * of the API's retention window (e.g. TWAP parts near or past validTo).
+ * Returns a Map of uid -> OrderStatusInfo for all orders found for this owner.
+ */
+export async function fetchOwnerOrderStatuses(
+  chainId: number,
+  owner: Hex,
+): Promise<Map<string, OrderStatusInfo>> {
+  const result = new Map<string, OrderStatusInfo>();
+  const apiBaseUrl = ORDERBOOK_API_URLS[chainId];
+  if (!apiBaseUrl) return result;
+  const orders = await fetchAccountOrders(apiBaseUrl, owner);
+  for (const order of orders) {
+    result.set(order.uid, {
+      status: order.status,
+      executedSellAmount: order.executedSellAmount,
+      executedBuyAmount: order.executedBuyAmount,
+    });
+  }
+  return result;
+}
+
 // ─── API calls ───────────────────────────────────────────────────────────────
 
 /** Fetch all orders for an owner with pagination. */
