@@ -11,6 +11,13 @@ import {
   decodeErc4626CowSwapFeeBurnerStaticInput,
   decodeStaticInput,
 } from "../../src/decoders/index";
+import { TWAP_ABI } from "../../src/decoders/twap";
+import { STOP_LOSS_ABI } from "../../src/decoders/stop-loss";
+import { PERPETUAL_SWAP_ABI } from "../../src/decoders/perpetual-swap";
+import { GOOD_AFTER_TIME_ABI } from "../../src/decoders/good-after-time";
+import { TRADE_ABOVE_THRESHOLD_ABI } from "../../src/decoders/trade-above-threshold";
+import { CIRCLES_BACKING_ORDER_ABI } from "../../src/decoders/circles-backing-order";
+import { SWAP_ORDER_HANDLER_ABI } from "../../src/decoders/swap-order-handler";
 
 const ADDR_A = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as const;
 const ADDR_B = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" as const;
@@ -20,18 +27,7 @@ const APP_DATA = ("0x" + "ab".repeat(32)) as `0x${string}`;
 describe("decodeTwapStaticInput", () => {
   it("round-trips all fields", () => {
     const encoded = encodeAbiParameters(
-      [{ type: "tuple", components: [
-        { name: "sellToken",      type: "address" },
-        { name: "buyToken",       type: "address" },
-        { name: "receiver",       type: "address" },
-        { name: "partSellAmount", type: "uint256" },
-        { name: "minPartLimit",   type: "uint256" },
-        { name: "t0",             type: "uint256" },
-        { name: "n",              type: "uint256" },
-        { name: "t",              type: "uint256" },
-        { name: "span",           type: "uint256" },
-        { name: "appData",        type: "bytes32" },
-      ]}],
+      TWAP_ABI,
       [{ sellToken: ADDR_A, buyToken: ADDR_B, receiver: ADDR_C,
          partSellAmount: 1000n, minPartLimit: 900n, t0: 1700000000n,
          n: 6n, t: 3600n, span: 0n, appData: APP_DATA }]
@@ -53,21 +49,7 @@ describe("decodeTwapStaticInput", () => {
 describe("decodeStopLossStaticInput", () => {
   it("round-trips all fields including signed strike", () => {
     const encoded = encodeAbiParameters(
-      [{ type: "tuple", components: [
-        { name: "sellToken",                    type: "address" },
-        { name: "buyToken",                     type: "address" },
-        { name: "sellAmount",                   type: "uint256" },
-        { name: "buyAmount",                    type: "uint256" },
-        { name: "appData",                      type: "bytes32" },
-        { name: "receiver",                     type: "address" },
-        { name: "isSellOrder",                  type: "bool"    },
-        { name: "isPartiallyFillable",          type: "bool"    },
-        { name: "validTo",                      type: "uint32"  },
-        { name: "sellTokenPriceOracle",         type: "address" },
-        { name: "buyTokenPriceOracle",          type: "address" },
-        { name: "strike",                       type: "int256"  },
-        { name: "maxTimeSinceLastOracleUpdate", type: "uint256" },
-      ]}],
+      STOP_LOSS_ABI,
       [{ sellToken: ADDR_A, buyToken: ADDR_B, sellAmount: 500n, buyAmount: 400n,
          appData: APP_DATA, receiver: ADDR_C, isSellOrder: true,
          isPartiallyFillable: false, validTo: 86400, sellTokenPriceOracle: ADDR_A,
@@ -86,13 +68,7 @@ describe("decodeStopLossStaticInput", () => {
 describe("decodePerpetualSwapStaticInput", () => {
   it("round-trips all fields", () => {
     const encoded = encodeAbiParameters(
-      [{ type: "tuple", components: [
-        { name: "tokenA",                type: "address" },
-        { name: "tokenB",                type: "address" },
-        { name: "validityBucketSeconds", type: "uint32"  },
-        { name: "halfSpreadBps",         type: "uint256" },
-        { name: "appData",               type: "bytes32" },
-      ]}],
+      PERPETUAL_SWAP_ABI,
       [{ tokenA: ADDR_A, tokenB: ADDR_B, validityBucketSeconds: 900,
          halfSpreadBps: 5n, appData: APP_DATA }]
     );
@@ -108,18 +84,7 @@ describe("decodeGoodAfterTimeStaticInput", () => {
   it("round-trips including dynamic bytes field", () => {
     const payload = "0xdeadbeef" as `0x${string}`;
     const encoded = encodeAbiParameters(
-      [{ type: "tuple", components: [
-        { name: "sellToken",           type: "address" },
-        { name: "buyToken",            type: "address" },
-        { name: "receiver",            type: "address" },
-        { name: "sellAmount",          type: "uint256" },
-        { name: "minSellBalance",      type: "uint256" },
-        { name: "startTime",           type: "uint256" },
-        { name: "endTime",             type: "uint256" },
-        { name: "allowPartialFill",    type: "bool"    },
-        { name: "priceCheckerPayload", type: "bytes"   },
-        { name: "appData",             type: "bytes32" },
-      ]}],
+      GOOD_AFTER_TIME_ABI,
       [{ sellToken: ADDR_A, buyToken: ADDR_B, receiver: ADDR_C,
          sellAmount: 200n, minSellBalance: 50n,
          startTime: 1700000000n, endTime: 1700086400n,
@@ -137,14 +102,7 @@ describe("decodeGoodAfterTimeStaticInput", () => {
 describe("decodeTradeAboveThresholdStaticInput", () => {
   it("round-trips all fields", () => {
     const encoded = encodeAbiParameters(
-      [{ type: "tuple", components: [
-        { name: "sellToken",             type: "address" },
-        { name: "buyToken",              type: "address" },
-        { name: "receiver",              type: "address" },
-        { name: "validityBucketSeconds", type: "uint32"  },
-        { name: "threshold",             type: "uint256" },
-        { name: "appData",               type: "bytes32" },
-      ]}],
+      TRADE_ABOVE_THRESHOLD_ABI,
       [{ sellToken: ADDR_A, buyToken: ADDR_B, receiver: ADDR_C,
          validityBucketSeconds: 1800, threshold: 1000000n,
          appData: APP_DATA }]
@@ -159,12 +117,7 @@ describe("decodeTradeAboveThresholdStaticInput", () => {
 describe("decodeCirclesBackingOrderStaticInput", () => {
   it("round-trips all four fields", () => {
     const encoded = encodeAbiParameters(
-      [{ type: "tuple", components: [
-        { name: "buyToken",  type: "address" },
-        { name: "buyAmount", type: "uint256" },
-        { name: "validTo",   type: "uint32"  },
-        { name: "appData",   type: "bytes32" },
-      ]}],
+      CIRCLES_BACKING_ORDER_ABI,
       [{ buyToken: ADDR_A, buyAmount: 12345n, validTo: 1800000000, appData: APP_DATA }],
     );
     const result = decodeCirclesBackingOrderStaticInput(encoded);
@@ -182,13 +135,7 @@ describe("decodeCirclesBackingOrderStaticInput", () => {
 describe("decodeSwapOrderHandlerStaticInput", () => {
   it("round-trips all five fields", () => {
     const encoded = encodeAbiParameters(
-      [{ type: "tuple", components: [
-        { name: "sellToken",      type: "address" },
-        { name: "buyToken",       type: "address" },
-        { name: "receiver",       type: "address" },
-        { name: "validityPeriod", type: "uint32"  },
-        { name: "appData",        type: "bytes32" },
-      ]}],
+      SWAP_ORDER_HANDLER_ABI,
       [{ sellToken: ADDR_A, buyToken: ADDR_B, receiver: ADDR_C,
          validityPeriod: 86400, appData: APP_DATA }],
     );

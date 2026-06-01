@@ -226,7 +226,7 @@ See [api-reference.md](./api-reference.md) for the full endpoint list.
 5. Add the RPC URL to `.env.local`.
 6. Run `pnpm codegen` to regenerate types.
 
-The block handlers (C1–C5) already run on both mainnet and gnosis. Adding a new chain requires adding entries to each block handler's `chain` config in `ponder.config.ts`.
+The block handlers (C1–C5) run on all active chains (see `ponder.config.ts` for the current list). Adding a new chain requires adding entries to each block handler's `chain` config there.
 
 ## Known Limitations
 

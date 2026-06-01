@@ -13,7 +13,7 @@ export interface GoodAfterTimeDecodedParams {
   appData: string;
 }
 
-const GOOD_AFTER_TIME_ABI = [
+export const GOOD_AFTER_TIME_ABI = [
   {
     type: "tuple",
     components: [
