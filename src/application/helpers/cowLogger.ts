@@ -15,5 +15,10 @@ export function cowLog(
   msg: string,
   fields: Record<string, unknown> = {},
 ): void {
-  console.log(JSON.stringify({ time: Date.now(), level, msg, ...fields }));
+  const line = JSON.stringify({ time: Date.now(), level, msg, ...fields });
+  if (level === "warn" || level === "error") {
+    console.error(line);
+  } else {
+    console.log(line);
+  }
 }
