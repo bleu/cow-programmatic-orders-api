@@ -25,7 +25,7 @@
  *   This affects only EIP-1271 composable orders where the user cancels through
  *   the API rather than calling ComposableCoW.remove() on-chain. In practice
  *   this is rare — the standard on-chain cancellation path is detected via
- *   SingleOrderNotAuthed (C1 block handler) and the C5 singleOrders() sweep,
+ *   SingleOrderNotAuthed (OrderDiscoveryPoller) and the CancellationWatcher,
  *   both of which work correctly.
  *
  *   If this gap proves significant in production, a lightweight periodic check
