@@ -126,7 +126,7 @@ There is one principled exception to "everything as string": `discreteOrder.vali
 | `discreteOrder.validTo` | number | yes | Unix seconds when this discrete order expires. `uint32` per CoW protocol. |
 | `discreteOrder.creationDate` | string | no | Unix seconds when the discrete order was first observed. Source varies — see the GraphQL field doc. |
 | `candidateDiscreteOrder.validTo` | number | yes | Same as `discreteOrder.validTo`. |
-| `candidateDiscreteOrder.creationDate` | string | no | Block timestamp at C1 discovery. |
+| `candidateDiscreteOrder.creationDate` | string | no | Block timestamp at **OrderDiscoveryPoller** discovery. |
 | `candidateDiscreteOrder.possibleValidAfterTimestamp` | string | yes | TWAP only: `t0 + partIndex*t`. Earliest Unix-seconds time the part can be valid. |
 
 ### Timestamp-like values inside `decodedParams`
