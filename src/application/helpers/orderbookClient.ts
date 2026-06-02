@@ -364,8 +364,8 @@ async function fetchOrdersByUids(
         console.warn(`[COW:OB] Batch fetch ${response.status} uids=${chunk.length} offset=${i}`);
         continue;
       }
-      const batch = (await response.json()) as OrderbookOrder[];
-      results.push(...batch);
+      const raw = (await response.json()) as { order: OrderbookOrder }[];
+      results.push(...raw.map((item) => item.order));
     } catch (err) {
       if (err instanceof TimeoutError) {
         console.warn(
