@@ -79,9 +79,9 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
   const currentBlock = event.block.number;
   const currentTimestamp = event.block.timestamp;
 
+  const rawGeneratorCap = Number(process.env[`MAX_GENERATORS_PER_BLOCK_${chainId}`]);
   const maxGeneratorsPerBlock =
-    Number(process.env[`MAX_GENERATORS_PER_BLOCK_${chainId}`]) ||
-    DEFAULT_MAX_GENERATORS_PER_BLOCK;
+    Number.isFinite(rawGeneratorCap) && rawGeneratorCap > 0 ? rawGeneratorCap : DEFAULT_MAX_GENERATORS_PER_BLOCK;
 
   const dueOrders = await context.db.sql
     .select({
@@ -562,9 +562,9 @@ ponder.on("StatusUpdater:block", async ({ event, context }) => {
   const chainId = context.chain.id as SupportedChainId;
   const currentTimestamp = event.block.timestamp;
 
+  const rawOrderCap = Number(process.env[`MAX_DISCRETE_ORDERS_PER_BLOCK_${chainId}`]);
   const maxOrdersPerBlock =
-    Number(process.env[`MAX_DISCRETE_ORDERS_PER_BLOCK_${chainId}`]) ||
-    DEFAULT_MAX_DISCRETE_ORDERS_PER_BLOCK;
+    Number.isFinite(rawOrderCap) && rawOrderCap > 0 ? rawOrderCap : DEFAULT_MAX_DISCRETE_ORDERS_PER_BLOCK;
 
   const openOrders = await context.db.sql
     .select({
@@ -584,6 +584,7 @@ ponder.on("StatusUpdater:block", async ({ event, context }) => {
         eq(discreteOrder.status, "open"),
       ),
     )
+    .orderBy(asc(discreteOrder.promotedAt))
     .limit(maxOrdersPerBlock) as {
     orderUid: string;
     conditionalOrderGeneratorId: string;
@@ -626,6 +627,7 @@ ponder.on("StatusUpdater:block", async ({ event, context }) => {
       await context.db.sql
         .insert(discreteOrder)
         .values(rowsToUpdate)
+        // promotedAt is intentionally omitted — preserve the original promotion timestamp across status updates.
         .onConflictDoUpdate({
           target: [discreteOrder.chainId, discreteOrder.orderUid],
           set: {
@@ -825,9 +827,9 @@ ponder.on("DeterministicCancellationSweeper:block", async ({ event, context }) =
 
   const currentBlock = event.block.number;
 
+  const rawGeneratorCap2 = Number(process.env[`MAX_GENERATORS_PER_BLOCK_${chainId}`]);
   const maxGeneratorsPerBlock =
-    Number(process.env[`MAX_GENERATORS_PER_BLOCK_${chainId}`]) ||
-    DEFAULT_MAX_GENERATORS_PER_BLOCK;
+    Number.isFinite(rawGeneratorCap2) && rawGeneratorCap2 > 0 ? rawGeneratorCap2 : DEFAULT_MAX_GENERATORS_PER_BLOCK;
 
   const dueGenerators = await context.db.sql
     .select({
