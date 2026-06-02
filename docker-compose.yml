@@ -57,6 +57,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     logging:
       driver: json-file
       options:
