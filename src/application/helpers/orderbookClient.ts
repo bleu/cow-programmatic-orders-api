@@ -365,7 +365,7 @@ async function fetchOrdersByUids(
         continue;
       }
       const raw = (await response.json()) as { order: OrderbookOrder }[];
-      results.push(...raw.map((item) => item.order));
+      results.push(...raw.flatMap((item) => (item?.order != null ? [item.order] : [])));
     } catch (err) {
       if (err instanceof TimeoutError) {
         console.warn(
