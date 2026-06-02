@@ -8,7 +8,7 @@ import {
   AAVE_V3_ADAPTER_FACTORY_ADDRESSES,
   GPV2_SETTLEMENT_DEPLOYMENTS,
 } from "../../data";
-import { BLOCK_HANDLER_RPC_TIMEOUT_MS } from "../../constants";
+import { BLOCK_HANDLER_RPC_TIMEOUT_MS, SETTLEMENT_INNER_RPC_TIMEOUT_MS } from "../../constants";
 import { TimeoutError, withTimeout } from "../helpers/withTimeout";
 
 // Trade(address,address,address,uint256,uint256,uint256,bytes) — topic0 hash
@@ -124,7 +124,7 @@ ponder.on("GPv2Settlement:Settlement", async ({ event, context }) => {
     try {
       code = await withTimeout(
         context.client.getCode({ address: owner }),
-        BLOCK_HANDLER_RPC_TIMEOUT_MS,
+        SETTLEMENT_INNER_RPC_TIMEOUT_MS,
         "settlement:getCode",
       );
     } catch (err) {
@@ -145,7 +145,7 @@ ponder.on("GPv2Settlement:Settlement", async ({ event, context }) => {
     try {
       const result = await withTimeout(
         context.client.call({ to: owner, data: FACTORY_SELECTOR }),
-        BLOCK_HANDLER_RPC_TIMEOUT_MS,
+        SETTLEMENT_INNER_RPC_TIMEOUT_MS,
         "settlement:call:FACTORY",
       );
       factoryData = result.data;
