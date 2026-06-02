@@ -93,4 +93,11 @@ describe("GET /api/generator/:eventId/execution-summary", () => {
     );
     expect(res.status).toBe(400);
   });
+
+  it("returns 500 when the DB throws", async () => {
+    vi.mocked(db.execute).mockRejectedValueOnce(new Error("db error"));
+
+    const res = await buildApp().request(makeUrl());
+    expect(res.status).toBe(500);
+  });
 });
