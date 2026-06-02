@@ -155,12 +155,14 @@ livenessProbe:
   httpGet:
     path: /healthz
     port: 3000
+  initialDelaySeconds: 30
   periodSeconds: 30
   failureThreshold: 3
 readinessProbe:
   httpGet:
     path: /ready
     port: 3000
+  initialDelaySeconds: 30
   periodSeconds: 10
   failureThreshold: 18   # 3-minute window before marking unready
 ```
