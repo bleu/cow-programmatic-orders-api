@@ -231,11 +231,6 @@ ponder.on("GPv2Settlement:Settlement", async ({ event, context }) => {
       chainId,
       adapter: ownerAddress,
       eoa: eoaOwner.toLowerCase(),
-      orderUid: String(orderUid),
-      sellToken: sellToken.toLowerCase(),
-      buyToken: buyToken.toLowerCase(),
-      sellAmount: String(sellAmount),
-      buyAmount: String(buyAmount),
     });
   }
 
