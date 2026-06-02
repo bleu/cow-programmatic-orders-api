@@ -106,7 +106,7 @@ describe("OrdersByOwnerResponse schema", () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.orders).toHaveLength(1);
-      expect(result.data.orders[0].generator?.hash).toBe(validGenerator.hash);
+      expect(result.data.orders[0]!.generator?.hash).toBe(validGenerator.hash);
     }
   });
 
@@ -153,6 +153,9 @@ vi.mock("ponder", () => ({
 
 import { db } from "ponder:api";
 import { ordersByOwnerHandler } from "../../src/api/endpoints/orders-by-owner";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const makeSelectChain = (db as any).__makeSelectChain as (rows?: unknown[]) => ReturnType<typeof db.select>;
 
 const OWNER = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const EVENT_ID = "abc123";
@@ -220,8 +223,8 @@ beforeEach(() => {
 describe("ordersByOwnerHandler", () => {
   it("returns empty orders array when no generators are found", async () => {
     vi.mocked(db.select)
-      .mockReturnValueOnce(db.__makeSelectChain([]) as never)
-      .mockReturnValueOnce(db.__makeSelectChain([]) as never);
+      .mockReturnValueOnce(makeSelectChain([]) as never)
+      .mockReturnValueOnce(makeSelectChain([]) as never);
 
     const ctx = makeContext();
     await ordersByOwnerHandler(ctx as never, vi.fn() as never);
@@ -231,9 +234,9 @@ describe("ordersByOwnerHandler", () => {
 
   it("returns empty orders when generators exist but have no discrete orders", async () => {
     vi.mocked(db.select)
-      .mockReturnValueOnce(db.__makeSelectChain([]) as never)
-      .mockReturnValueOnce(db.__makeSelectChain([GENERATOR]) as never)
-      .mockReturnValueOnce(db.__makeSelectChain([]) as never);
+      .mockReturnValueOnce(makeSelectChain([]) as never)
+      .mockReturnValueOnce(makeSelectChain([GENERATOR]) as never)
+      .mockReturnValueOnce(makeSelectChain([]) as never);
 
     const ctx = makeContext();
     await ordersByOwnerHandler(ctx as never, vi.fn() as never);
@@ -243,9 +246,9 @@ describe("ordersByOwnerHandler", () => {
 
   it("returns enriched orders with embedded generator data", async () => {
     vi.mocked(db.select)
-      .mockReturnValueOnce(db.__makeSelectChain([]) as never)
-      .mockReturnValueOnce(db.__makeSelectChain([GENERATOR]) as never)
-      .mockReturnValueOnce(db.__makeSelectChain([ORDER]) as never);
+      .mockReturnValueOnce(makeSelectChain([]) as never)
+      .mockReturnValueOnce(makeSelectChain([GENERATOR]) as never)
+      .mockReturnValueOnce(makeSelectChain([ORDER]) as never);
 
     const ctx = makeContext();
     await ordersByOwnerHandler(ctx as never, vi.fn() as never);
@@ -262,9 +265,9 @@ describe("ordersByOwnerHandler", () => {
 
   it("serialises creationDate as a decimal string (BigInt scalar)", async () => {
     vi.mocked(db.select)
-      .mockReturnValueOnce(db.__makeSelectChain([]) as never)
-      .mockReturnValueOnce(db.__makeSelectChain([GENERATOR]) as never)
-      .mockReturnValueOnce(db.__makeSelectChain([ORDER]) as never);
+      .mockReturnValueOnce(makeSelectChain([]) as never)
+      .mockReturnValueOnce(makeSelectChain([GENERATOR]) as never)
+      .mockReturnValueOnce(makeSelectChain([ORDER]) as never);
 
     const ctx = makeContext();
     await ordersByOwnerHandler(ctx as never, vi.fn() as never);
@@ -275,9 +278,9 @@ describe("ordersByOwnerHandler", () => {
   it("includes proxy addresses from ownerMapping in the generator lookup", async () => {
     const PROXY = "0xcccccccccccccccccccccccccccccccccccccccc";
     vi.mocked(db.select)
-      .mockReturnValueOnce(db.__makeSelectChain([{ address: PROXY }]) as never)
-      .mockReturnValueOnce(db.__makeSelectChain([GENERATOR]) as never)
-      .mockReturnValueOnce(db.__makeSelectChain([ORDER]) as never);
+      .mockReturnValueOnce(makeSelectChain([{ address: PROXY }]) as never)
+      .mockReturnValueOnce(makeSelectChain([GENERATOR]) as never)
+      .mockReturnValueOnce(makeSelectChain([ORDER]) as never);
 
     const ctx = makeContext();
     await ordersByOwnerHandler(ctx as never, vi.fn() as never);
@@ -287,9 +290,9 @@ describe("ordersByOwnerHandler", () => {
 
   it("includes hash in generator object (COW-993)", async () => {
     vi.mocked(db.select)
-      .mockReturnValueOnce(db.__makeSelectChain([]) as never)
-      .mockReturnValueOnce(db.__makeSelectChain([GENERATOR]) as never)
-      .mockReturnValueOnce(db.__makeSelectChain([ORDER]) as never);
+      .mockReturnValueOnce(makeSelectChain([]) as never)
+      .mockReturnValueOnce(makeSelectChain([GENERATOR]) as never)
+      .mockReturnValueOnce(makeSelectChain([ORDER]) as never);
 
     const ctx = makeContext();
     await ordersByOwnerHandler(ctx as never, vi.fn() as never);
