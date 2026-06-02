@@ -1,7 +1,7 @@
 import { ponder } from "ponder:registry";
 import { AddressType, conditionalOrderGenerator, ownerMapping, transaction } from "ponder:schema";
 import { and, eq } from "ponder";
-import { decodeAbiParameters, keccak256, toBytes } from "viem";
+import { keccak256, toBytes } from "viem";
 import { cowLog } from "../helpers/cowLogger";
 import { AaveV3AdapterHelperAbi } from "../../../abis/AaveV3AdapterHelperAbi";
 import {
@@ -192,20 +192,6 @@ ponder.on("GPv2Settlement:Settlement", async ({ event, context }) => {
         ),
       );
 
-    // Decode non-indexed Trade log fields: sellToken, buyToken, amounts, orderUid
-    const [sellToken, buyToken, sellAmount, buyAmount, , orderUid] =
-      decodeAbiParameters(
-        [
-          { type: "address" },
-          { type: "address" },
-          { type: "uint256" },
-          { type: "uint256" },
-          { type: "uint256" },
-          { type: "bytes" },
-        ],
-        log.data,
-      );
-
     stats.mapped++;
     logStatsIfIntervalPassed();
 
@@ -214,11 +200,6 @@ ponder.on("GPv2Settlement:Settlement", async ({ event, context }) => {
       chainId,
       adapter: ownerAddress,
       eoa: eoaOwner.toLowerCase(),
-      orderUid: String(orderUid),
-      sellToken: sellToken.toLowerCase(),
-      buyToken: buyToken.toLowerCase(),
-      sellAmount: String(sellAmount),
-      buyAmount: String(buyAmount),
     });
   }
 
