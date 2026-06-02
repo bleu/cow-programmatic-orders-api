@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // Mock virtual modules before any ponder-importing source files are loaded.
-vi.mock("ponder:api", () => ({ db: { execute: vi.fn(), select: vi.fn() } }));
+// ponder:api is resolved to tests/__mocks__/ponder-api.ts via vitest alias — no inline override needed.
 vi.mock("ponder:schema", () => {
   const ownerMapping = { owner: "owner", chainId: "chainId", address: "address" };
   const conditionalOrderGenerator = {
@@ -69,13 +69,6 @@ function makeContext({
   };
 }
 
-/** Returns a db.select chain that resolves to `rows`. */
-function makeChain(rows: unknown[]) {
-  const where = vi.fn().mockResolvedValue(rows);
-  const from = vi.fn().mockReturnValue({ where });
-  return { from };
-}
-
 const GENERATOR = {
   eventId: EVENT_ID,
   chainId: CHAIN_ID,
@@ -84,6 +77,7 @@ const GENERATOR = {
   resolvedOwner: OWNER,
   status: "Active",
   ownerAddressType: null,
+  hash: "0xabc123def456abc123def456abc123def456abc123def456abc123def456abc1",
 };
 
 const ORDER = {
@@ -107,8 +101,8 @@ beforeEach(() => {
 describe("ordersByOwnerHandler", () => {
   it("returns empty orders array when no generators are found", async () => {
     vi.mocked(db.select)
-      .mockReturnValueOnce(makeChain([]) as never) // ownerMapping → no proxies
-      .mockReturnValueOnce(makeChain([]) as never); // generators → none
+      .mockReturnValueOnce(db.__makeSelectChain([]) as never) // ownerMapping → no proxies
+      .mockReturnValueOnce(db.__makeSelectChain([]) as never); // generators → none
 
     const ctx = makeContext();
     await ordersByOwnerHandler(ctx as never, vi.fn() as never);
@@ -118,9 +112,9 @@ describe("ordersByOwnerHandler", () => {
 
   it("returns empty orders when generators exist but have no discrete orders", async () => {
     vi.mocked(db.select)
-      .mockReturnValueOnce(makeChain([]) as never)
-      .mockReturnValueOnce(makeChain([GENERATOR]) as never)
-      .mockReturnValueOnce(makeChain([]) as never);
+      .mockReturnValueOnce(db.__makeSelectChain([]) as never)
+      .mockReturnValueOnce(db.__makeSelectChain([GENERATOR]) as never)
+      .mockReturnValueOnce(db.__makeSelectChain([]) as never);
 
     const ctx = makeContext();
     await ordersByOwnerHandler(ctx as never, vi.fn() as never);
@@ -130,9 +124,9 @@ describe("ordersByOwnerHandler", () => {
 
   it("returns enriched orders with embedded generator data", async () => {
     vi.mocked(db.select)
-      .mockReturnValueOnce(makeChain([]) as never)
-      .mockReturnValueOnce(makeChain([GENERATOR]) as never)
-      .mockReturnValueOnce(makeChain([ORDER]) as never);
+      .mockReturnValueOnce(db.__makeSelectChain([]) as never)
+      .mockReturnValueOnce(db.__makeSelectChain([GENERATOR]) as never)
+      .mockReturnValueOnce(db.__makeSelectChain([ORDER]) as never);
 
     const ctx = makeContext();
     await ordersByOwnerHandler(ctx as never, vi.fn() as never);
@@ -149,9 +143,9 @@ describe("ordersByOwnerHandler", () => {
 
   it("serialises creationDate as a decimal string (BigInt scalar)", async () => {
     vi.mocked(db.select)
-      .mockReturnValueOnce(makeChain([]) as never)
-      .mockReturnValueOnce(makeChain([GENERATOR]) as never)
-      .mockReturnValueOnce(makeChain([ORDER]) as never);
+      .mockReturnValueOnce(db.__makeSelectChain([]) as never)
+      .mockReturnValueOnce(db.__makeSelectChain([GENERATOR]) as never)
+      .mockReturnValueOnce(db.__makeSelectChain([ORDER]) as never);
 
     const ctx = makeContext();
     await ordersByOwnerHandler(ctx as never, vi.fn() as never);
@@ -162,9 +156,9 @@ describe("ordersByOwnerHandler", () => {
   it("includes proxy addresses from ownerMapping in the generator lookup", async () => {
     const PROXY = "0xcccccccccccccccccccccccccccccccccccccccc";
     vi.mocked(db.select)
-      .mockReturnValueOnce(makeChain([{ address: PROXY }]) as never)
-      .mockReturnValueOnce(makeChain([GENERATOR]) as never)
-      .mockReturnValueOnce(makeChain([ORDER]) as never);
+      .mockReturnValueOnce(db.__makeSelectChain([{ address: PROXY }]) as never)
+      .mockReturnValueOnce(db.__makeSelectChain([GENERATOR]) as never)
+      .mockReturnValueOnce(db.__makeSelectChain([ORDER]) as never);
 
     const ctx = makeContext();
     await ordersByOwnerHandler(ctx as never, vi.fn() as never);
