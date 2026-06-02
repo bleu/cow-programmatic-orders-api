@@ -44,6 +44,8 @@ import {
 import { computeOrderUid, type GPv2OrderData } from "../helpers/orderUid";
 import { cowLog } from "../helpers/cowLogger";
 
+type DiscreteStatus = "open" | "fulfilled" | "unfilled" | "expired" | "cancelled";
+
 const NON_DETERMINISTIC_TYPES = ["PerpetualSwap", "GoodAfterTime", "TradeAboveThreshold", "Unknown"] as const;
 const SINGLE_SHOT_NON_DETERMINISTIC = ["GoodAfterTime", "TradeAboveThreshold"] as const;
 const BLOCK_NEVER = 2n ** 63n - 1n; // sentinel for epoch-scheduled generators (PollTryAtEpoch)
@@ -350,12 +352,11 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
       // been posted by the watch-tower and filled/expired between generator creation
       // and the cancellation cascade (~0.17% observed rate). Use the API status when
       // available; fall back to 'cancelled' for UIDs not yet on the orderbook.
-      type DiscreteStatus = "open" | "fulfilled" | "unfilled" | "expired" | "cancelled";
       let preflightStatuses: Awaited<ReturnType<typeof fetchOrderStatusByUids>>;
       try {
         preflightStatuses = await withTimeout(
           fetchOrderStatusByUids(context, chainId, orphanCandidates.map((c) => c.orderUid)),
-          ORDERBOOK_HTTP_TIMEOUT_MS,
+          ORDERBOOK_HTTP_TIMEOUT_MS * 2,
           "c2:cascade:preflight",
         );
       } catch {
@@ -397,8 +398,13 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
           ),
         );
 
-      const preflightHits = preflightStatuses.size;
-      cowLog("info", "CandidateConfirmer:parent_cancelled", { block: String(event.block.number), chainId, parentCancelled: orphanCandidates.length, preflightHits });
+      const preflightKnown = preflightStatuses.size;
+      cowLog("info", "CandidateConfirmer:parent_cancelled", {
+        block: String(event.block.number),
+        chainId,
+        parentCancelled: orphanCandidates.length,
+        preflightKnown,
+      });
     }
   }
 
@@ -438,7 +444,6 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
   const uids = unconfirmed.map((c) => c.orderUid);
   const statuses = await fetchOrderStatusByUids(context, chainId, uids);
 
-  type DiscreteStatus = "open" | "fulfilled" | "unfilled" | "expired" | "cancelled";
   const rowsToUpsert: (typeof discreteOrder.$inferInsert)[] = [];
   const confirmedUids: string[] = [];
 
