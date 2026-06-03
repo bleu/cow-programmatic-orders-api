@@ -105,7 +105,7 @@ describe("OrdersByOwnerResponse schema", () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.orders).toHaveLength(1);
-      expect(result.data.orders[0].generator?.hash).toBe(validGenerator.hash);
+      expect(result.data.orders[0]!.generator?.hash).toBe(validGenerator.hash);
     }
   });
 
