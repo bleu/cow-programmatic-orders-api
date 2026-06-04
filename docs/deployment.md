@@ -86,15 +86,6 @@ chains: {
 }
 ```
 
-Common provider limits:
-
-| Provider | Typical eth_getLogs limit |
-|----------|--------------------------|
-| Alchemy | 10 000 blocks |
-| Infura | 10 000 blocks |
-| QuickNode | 10 000 blocks (paid plans); 5 blocks (free trial — unusable for backfill) |
-| Public RPCs (Pocket, etc.) | 1 000 blocks |
-
 ## Database Setup
 
 ### Local Development
