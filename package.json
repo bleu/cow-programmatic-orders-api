@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@cowprotocol/cow-sdk": "^7.3.8",
+    "drizzle-orm": "0.41.0",
     "@hono/swagger-ui": "^0.5.3",
     "@hono/zod-openapi": "^0.19.10",
     "hono": "^4.5.0",
