@@ -37,6 +37,25 @@ pnpm dev
 
 The GraphQL API is at `http://localhost:42069` once the dev server starts.
 
+> **First run takes time.** The indexer must backfill all on-chain events from the contract's deploy block before it goes live. This can take several hours depending on your RPC endpoint. The API is queryable the whole time — data just fills in progressively.
+
+## Is it working?
+
+Use these endpoints to check indexer health without reading logs:
+
+| Endpoint | What to expect |
+|----------|----------------|
+| `GET /healthz` | `200 {"status":"ok"}` — process is alive |
+| `GET /ready` | `503` while backfilling, `200` once caught up |
+| `GET /status` | Per-chain block progress (current vs. latest) |
+| `GET /metrics` | Prometheus metrics (block lag, handler latency) |
+
+**Normal during backfill** — `/ready` returns `503` and `/status` shows `checkpoint` far behind `latest`. The indexer is working; it just hasn't caught up yet. Expect this for several hours on first run.
+
+**Stuck vs. slow** — if `/status` shows the same `checkpoint` block for more than 5 minutes _after_ backfill (i.e., once `/ready` returned `200`), the indexer may be stuck. Check `docker logs <container>` for errors.
+
+**Container crashed** — `/healthz` returns a connection error. Restart the container and check logs.
+
 ## Commands
 
 | Command | What it does |
