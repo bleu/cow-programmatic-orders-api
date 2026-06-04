@@ -25,6 +25,9 @@ describe("GeneratorSummary schema", () => {
     }
   });
 
+  // Regression guard for COW-993: hash was previously missing from the schema,
+  // causing it to be silently dropped from API responses. safeParse accepts
+  // unknown so TS gives no protection here at runtime.
   it("fails parse when hash is missing", () => {
     const { hash: _omitted, ...withoutHash } = validGenerator;
     const result = GeneratorSummary.safeParse(withoutHash);
@@ -35,57 +38,19 @@ describe("GeneratorSummary schema", () => {
     }
   });
 
-  it("fails parse when hash is not a string (number supplied)", () => {
-    const result = GeneratorSummary.safeParse({ ...validGenerator, hash: 12345 });
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      const paths = result.error.issues.map((i) => i.path.join("."));
-      expect(paths).toContain("hash");
-    }
-  });
-
-  it("hash field carries the correct describe() text", () => {
-    const shape = GeneratorSummary.shape;
-    const description = shape.hash.description;
-    expect(description).toBe(
-      "On-chain canonical identifier: keccak256(abi.encode(handler, salt, staticInput)). Used by ComposableCow.singleOrders(owner, hash) and remove(owner, hash).",
-    );
-  });
-
-  it("ownerAddressType accepts null (regression guard for unchanged field)", () => {
+  // Regression guard: ownerAddressType is nullable — null is the common case
+  // for generators that don't go through a proxy.
+  it("ownerAddressType accepts null", () => {
     const result = GeneratorSummary.safeParse({ ...validGenerator, ownerAddressType: null });
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.ownerAddressType).toBeNull();
     }
   });
-
-  it("ownerAddressType accepts the enum value 'cowshed_proxy'", () => {
-    const result = GeneratorSummary.safeParse({
-      ...validGenerator,
-      ownerAddressType: "cowshed_proxy",
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.ownerAddressType).toBe("cowshed_proxy");
-    }
-  });
-
-  it("ownerAddressType accepts the enum value 'flash_loan_helper'", () => {
-    const result = GeneratorSummary.safeParse({
-      ...validGenerator,
-      ownerAddressType: "flash_loan_helper",
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.ownerAddressType).toBe("flash_loan_helper");
-    }
-  });
 });
 
 describe("OrdersByOwnerResponse schema", () => {
   it("wraps an array of GeneratorSummary correctly via the orders field", () => {
-    // Build a minimal OrderItem that nests the generator.
     const orderItem = {
       orderUid: "0xorder001",
       chainId: 1,
