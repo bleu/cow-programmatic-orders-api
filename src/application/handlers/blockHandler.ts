@@ -362,6 +362,8 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
       // been posted by the watch-tower and filled/expired between generator creation
       // and the cancellation cascade (~0.17% observed rate). Use the API status when
       // available; fall back to 'cancelled' for UIDs not yet on the orderbook.
+      // Bounded by ORDERBOOK_HTTP_TIMEOUT_MS * 2; on timeout the empty map fallback
+      // keeps correctness degraded-gracefully (all orphans written as 'cancelled').
       let preflightStatuses: Awaited<ReturnType<typeof fetchOrderStatusByUids>>;
       try {
         preflightStatuses = await withTimeout(
@@ -373,6 +375,9 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
         preflightStatuses = new Map();
       }
 
+      // onConflictDoNothing: if C3 already promoted this UID with a terminal status
+      // (e.g. 'fulfilled'), the existing row wins and this insert is a no-op.
+      // preflightKnown counts API hits, not rows actually written.
       await context.db.sql
         .insert(discreteOrder)
         .values(
