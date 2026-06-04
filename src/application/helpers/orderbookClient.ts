@@ -18,7 +18,7 @@ import {
   conditionalOrderGenerator,
   discreteOrder,
 } from "ponder:schema";
-import { and, eq, inArray, sql } from "ponder";
+import { and, eq, inArray } from "ponder";
 import { pgSchema, integer, text } from "drizzle-orm/pg-core";
 import { encodeAbiParameters, keccak256, type Hex } from "viem";
 import { COMPOSABLE_COW_HANDLER_ADDRESSES, ORDERBOOK_API_URLS } from "../../data";
@@ -532,17 +532,25 @@ async function cacheUidStatuses(
   const now = Math.floor(Date.now() / 1000);
   for (const order of orders) {
     try {
-      await context.db.sql.execute(
-        sql`INSERT INTO cow_cache.order_uid_cache
-              (chain_id, order_uid, status, fetched_at, executed_sell_amount, executed_buy_amount)
-            VALUES (${chainId}, ${order.uid}, ${order.status}, ${now},
-                    ${order.executedSellAmount}, ${order.executedBuyAmount})
-            ON CONFLICT (chain_id, order_uid) DO UPDATE SET
-              status               = EXCLUDED.status,
-              fetched_at           = EXCLUDED.fetched_at,
-              executed_sell_amount  = EXCLUDED.executed_sell_amount,
-              executed_buy_amount   = EXCLUDED.executed_buy_amount`,
-      );
+      await context.db.sql
+        .insert(orderUidCacheTable)
+        .values({
+          chainId,
+          orderUid: order.uid,
+          status: order.status,
+          fetchedAt: now,
+          executedSellAmount: order.executedSellAmount,
+          executedBuyAmount: order.executedBuyAmount,
+        })
+        .onConflictDoUpdate({
+          target: [orderUidCacheTable.chainId, orderUidCacheTable.orderUid],
+          set: {
+            status: order.status,
+            fetchedAt: now,
+            executedSellAmount: order.executedSellAmount,
+            executedBuyAmount: order.executedBuyAmount,
+          },
+        });
     } catch {
       // Best-effort cache write
     }
