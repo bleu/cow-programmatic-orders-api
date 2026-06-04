@@ -31,6 +31,7 @@ vi.mock("ponder", () => ({
 }));
 
 import { db } from "ponder:api";
+import { makeSelectChain } from "../__mocks__/ponder-api";
 import { ordersByOwnerHandler } from "../../src/api/endpoints/orders-by-owner";
 
 const OWNER = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -101,8 +102,8 @@ beforeEach(() => {
 describe("ordersByOwnerHandler", () => {
   it("returns empty orders array when no generators are found", async () => {
     vi.mocked(db.select)
-      .mockReturnValueOnce(db.__makeSelectChain([]) as never) // ownerMapping → no proxies
-      .mockReturnValueOnce(db.__makeSelectChain([]) as never); // generators → none
+      .mockReturnValueOnce(makeSelectChain([]) as never) // ownerMapping → no proxies
+      .mockReturnValueOnce(makeSelectChain([]) as never); // generators → none
 
     const ctx = makeContext();
     await ordersByOwnerHandler(ctx as never, vi.fn() as never);
@@ -112,9 +113,9 @@ describe("ordersByOwnerHandler", () => {
 
   it("returns empty orders when generators exist but have no discrete orders", async () => {
     vi.mocked(db.select)
-      .mockReturnValueOnce(db.__makeSelectChain([]) as never)
-      .mockReturnValueOnce(db.__makeSelectChain([GENERATOR]) as never)
-      .mockReturnValueOnce(db.__makeSelectChain([]) as never);
+      .mockReturnValueOnce(makeSelectChain([]) as never)
+      .mockReturnValueOnce(makeSelectChain([GENERATOR]) as never)
+      .mockReturnValueOnce(makeSelectChain([]) as never);
 
     const ctx = makeContext();
     await ordersByOwnerHandler(ctx as never, vi.fn() as never);
@@ -124,9 +125,9 @@ describe("ordersByOwnerHandler", () => {
 
   it("returns enriched orders with embedded generator data", async () => {
     vi.mocked(db.select)
-      .mockReturnValueOnce(db.__makeSelectChain([]) as never)
-      .mockReturnValueOnce(db.__makeSelectChain([GENERATOR]) as never)
-      .mockReturnValueOnce(db.__makeSelectChain([ORDER]) as never);
+      .mockReturnValueOnce(makeSelectChain([]) as never)
+      .mockReturnValueOnce(makeSelectChain([GENERATOR]) as never)
+      .mockReturnValueOnce(makeSelectChain([ORDER]) as never);
 
     const ctx = makeContext();
     await ordersByOwnerHandler(ctx as never, vi.fn() as never);
@@ -143,9 +144,9 @@ describe("ordersByOwnerHandler", () => {
 
   it("serialises creationDate as a decimal string (BigInt scalar)", async () => {
     vi.mocked(db.select)
-      .mockReturnValueOnce(db.__makeSelectChain([]) as never)
-      .mockReturnValueOnce(db.__makeSelectChain([GENERATOR]) as never)
-      .mockReturnValueOnce(db.__makeSelectChain([ORDER]) as never);
+      .mockReturnValueOnce(makeSelectChain([]) as never)
+      .mockReturnValueOnce(makeSelectChain([GENERATOR]) as never)
+      .mockReturnValueOnce(makeSelectChain([ORDER]) as never);
 
     const ctx = makeContext();
     await ordersByOwnerHandler(ctx as never, vi.fn() as never);
@@ -156,9 +157,9 @@ describe("ordersByOwnerHandler", () => {
   it("includes proxy addresses from ownerMapping in the generator lookup", async () => {
     const PROXY = "0xcccccccccccccccccccccccccccccccccccccccc";
     vi.mocked(db.select)
-      .mockReturnValueOnce(db.__makeSelectChain([{ address: PROXY }]) as never)
-      .mockReturnValueOnce(db.__makeSelectChain([GENERATOR]) as never)
-      .mockReturnValueOnce(db.__makeSelectChain([ORDER]) as never);
+      .mockReturnValueOnce(makeSelectChain([{ address: PROXY }]) as never)
+      .mockReturnValueOnce(makeSelectChain([GENERATOR]) as never)
+      .mockReturnValueOnce(makeSelectChain([ORDER]) as never);
 
     const ctx = makeContext();
     await ordersByOwnerHandler(ctx as never, vi.fn() as never);
