@@ -43,7 +43,7 @@ export default createConfig({
     // The CoW watch-tower processes orders sequentially — with 1,461+ gnosis
     // generators, a full cycle takes many blocks. Polling every 5s gnosis block
     // wastes RPC calls since state rarely changes between blocks.
-    "OrderDiscoveryPoller": {
+    OrderDiscoveryPoller: {
       chain: {
         mainnet: { startBlock: "latest" },
         gnosis: { startBlock: "latest", interval: 4 },
@@ -51,7 +51,7 @@ export default createConfig({
       interval: 1,
     },
     // CandidateConfirmer — checks API for unconfirmed candidates.
-    "CandidateConfirmer": {
+    CandidateConfirmer: {
       chain: {
         mainnet: { startBlock: "latest" },
         gnosis: { startBlock: "latest" },
@@ -59,7 +59,7 @@ export default createConfig({
       interval: 1,
     },
     // OrderStatusTracker — polls API for open discrete order status.
-    "OrderStatusTracker": {
+    OrderStatusTracker: {
       chain: {
         mainnet: { startBlock: "latest" },
         gnosis: { startBlock: "latest" },
@@ -67,7 +67,7 @@ export default createConfig({
       interval: 1,
     },
     // OwnerBackfill — one-time owner fetch for non-deterministic backfill orders.
-    "OwnerBackfill": {
+    OwnerBackfill: {
       chain: {
         mainnet: { startBlock: "latest", endBlock: "latest" },
         gnosis: { startBlock: "latest", endBlock: "latest" },
@@ -77,7 +77,7 @@ export default createConfig({
     // CancellationWatcher — singleOrders() mapping read for deterministic
     // generators (allCandidatesKnown=true). Cadence per generator is
     // DETERMINISTIC_CANCEL_SWEEP_INTERVAL blocks; the handler itself is cheap when nothing is due.
-    "CancellationWatcher": {
+    CancellationWatcher: {
       chain: {
         mainnet: { startBlock: "latest" },
         gnosis: { startBlock: "latest" },
