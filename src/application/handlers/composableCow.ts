@@ -8,8 +8,8 @@
  *
  * For deterministic types (TWAP, StopLoss, CirclesBackingOrder), precomputeAndDiscover
  * computes all UIDs, fetches their status from the API, upserts discrete orders, and marks
- * allCandidatesKnown=true. Non-deterministic types are left for the C1-C4 block handlers to
- * discover at live sync.
+ * allCandidatesKnown=true. Non-deterministic types are left for the OrderDiscoveryPoller
+ * block handler to discover at live sync.
  *
  * CirclesBackingOrder (Gnosis only) additionally reads two constructor immutables
  * (SELL_TOKEN, SELL_AMOUNT) from the handler contract at creation time and merges them
@@ -253,7 +253,7 @@ ponder.on(
 
 // ─── Live handler (ComposableCowLive — startBlock: "latest") ────────────────
 // Same as backfill: pre-compute covers deterministic types.
-// Non-deterministic types are discovered by C1-C4 block handlers at live sync.
+// Non-deterministic types are discovered by the OrderDiscoveryPoller block handler at live sync.
 
 ponder.on(
   "ComposableCowLive:ConditionalOrderCreated",
