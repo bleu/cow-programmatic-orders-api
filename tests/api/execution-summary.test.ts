@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { OpenAPIHono } from "@hono/zod-openapi";
+import { z } from "zod";
 
 // Mock virtual modules before any ponder-importing source files are loaded.
 vi.mock("ponder:api", () => ({ db: { execute: vi.fn() } }));
@@ -13,8 +14,9 @@ vi.mock("ponder", () => ({
 import { db } from "ponder:api";
 import { executionSummaryRoute } from "../../src/api/routes";
 import { executionSummaryHandler } from "../../src/api/endpoints/execution-summary";
+import { DiscreteOrderStatusQuery } from "../../src/api/schemas/common";
 
-type StatusRow = { status: string; count: string };
+type StatusRow = { status: z.infer<typeof DiscreteOrderStatusQuery>; count: string };
 
 function buildApp() {
   const app = new OpenAPIHono();
