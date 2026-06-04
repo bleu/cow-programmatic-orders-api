@@ -462,7 +462,7 @@ async function filterAndProcess(
 // ─── Per-UID cache helpers ──────────────────────────────────────────────────
 // cow_cache.order_uid_cache is created by setup.ts. Table defined here for typed queries.
 const cowCacheSchema = pgSchema("cow_cache");
-const orderUidCacheTable = cowCacheSchema.table("order_uid_cache", {
+const orderUidCache = cowCacheSchema.table("order_uid_cache", {
   chainId: integer("chain_id").notNull(),
   orderUid: text("order_uid").notNull(),
   status: text("status").notNull(),
@@ -495,16 +495,16 @@ async function getCachedUidStatuses(
       const batch = uids.slice(i, i + batchSize);
       const rows = await context.db.sql
         .select({
-          orderUid: orderUidCacheTable.orderUid,
-          status: orderUidCacheTable.status,
-          executedSellAmount: orderUidCacheTable.executedSellAmount,
-          executedBuyAmount: orderUidCacheTable.executedBuyAmount,
+          orderUid: orderUidCache.orderUid,
+          status: orderUidCache.status,
+          executedSellAmount: orderUidCache.executedSellAmount,
+          executedBuyAmount: orderUidCache.executedBuyAmount,
         })
-        .from(orderUidCacheTable)
+        .from(orderUidCache)
         .where(
           and(
-            eq(orderUidCacheTable.chainId, chainId),
-            inArray(orderUidCacheTable.orderUid, batch),
+            eq(orderUidCache.chainId, chainId),
+            inArray(orderUidCache.orderUid, batch),
           ),
         );
       for (const row of rows) {
@@ -533,7 +533,7 @@ async function cacheUidStatuses(
   for (const order of orders) {
     try {
       await context.db.sql
-        .insert(orderUidCacheTable)
+        .insert(orderUidCache)
         .values({
           chainId,
           orderUid: order.uid,
@@ -543,7 +543,7 @@ async function cacheUidStatuses(
           executedBuyAmount: order.executedBuyAmount,
         })
         .onConflictDoUpdate({
-          target: [orderUidCacheTable.chainId, orderUidCacheTable.orderUid],
+          target: [orderUidCache.chainId, orderUidCache.orderUid],
           set: {
             status: order.status,
             fetchedAt: now,
