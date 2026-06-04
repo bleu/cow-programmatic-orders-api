@@ -544,7 +544,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
         try {
           const ownerStatuses = await withTimeout(
             fetchOwnerOrderStatuses(chainId, owner),
-            ORDERBOOK_HTTP_TIMEOUT_MS,
+            BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
             "c2:stale:accountFallback",
           );
           for (const [uid, info] of ownerStatuses) {
