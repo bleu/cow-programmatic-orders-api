@@ -10,16 +10,16 @@ Ponder registers handlers for three independent on-chain event streams: `Composa
 
 ## Contracts and Chains
 
-Configuration lives in `src/data.ts`. The ComposableCoW contract is deployed at the same CREATE2 address on every chain (`0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74`), so `data.ts` only needs to specify the start block per chain.
+Configuration lives in `src/chains/` (one file per chain). The ComposableCoW contract is deployed at the same CREATE2 address on every chain (`0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74`), so each chain config only needs to specify the start block per chain.
 
-Currently indexed:
+Currently active:
 
-- **Mainnet** (chain ID 1) -- ComposableCoW from block 17883049, CoWShedFactory from block 22939254, GPv2Settlement from block 23812751
-- **Gnosis** (chain ID 100) -- ComposableCoW from block 29389123, CoWShedFactory from block 41469991
+- **Mainnet** (chain ID 1) — ComposableCoW from block 17883049, CoWShedFactory from block 22939254, GPv2Settlement from block 23812751
+- **Gnosis** (chain ID 100) — ComposableCoW from block 29389123, CoWShedFactory from block 41469991
 
-Arbitrum is stubbed out but not yet active. See [Adding a New Chain](#adding-a-new-chain) below for the step-by-step checklist to wire in a new chain.
+Stub configs exist for all 12 chains in cow-sdk's `ALL_SUPPORTED_CHAIN_IDS`; contract addresses for the remaining chains need verification before enabling (see COW-986).
 
-`ponder.config.ts` imports everything from `data.ts` and wires it into Ponder's `createConfig`. It never contains raw addresses or block numbers directly. It also registers the live-only block handlers from `blockHandler.ts` — all run during live sync only (`startBlock: "latest"`).
+`ponder.config.ts` derives all config from `ACTIVE_CHAINS` in `src/chains/index.ts` and wires it into Ponder's `createConfig`. It never contains raw addresses or block numbers directly. It also registers the live-only block handlers from `blockHandler.ts` — all run during live sync only (`startBlock: "latest"`).
 
 Three contracts are indexed:
 
@@ -217,14 +217,11 @@ See [api-reference.md](./api-reference.md) for the full endpoint list.
 
 ## Adding a New Chain
 
-1. Add the deployment entry to the relevant export in `src/data.ts` (start block, address if it differs).
-2. Wire it into the contract config objects (`ComposableCowContract`, `CoWShedFactoryContract`, etc.) in the same file.
-3. Add the chain to `ponder.config.ts` under `chains` with its RPC URL env var.
-4. Add the chain's handler addresses to `HANDLER_MAP` in `src/utils/order-types.ts` (they're currently the same across all chains).
-5. Add the RPC URL to `.env.local`.
-6. Run `pnpm codegen` to regenerate types.
-
-The block handlers already run on both mainnet and gnosis. Adding a new chain requires adding entries to each block handler's `chain` config in `ponder.config.ts`.
+1. Create `src/chains/<name>.ts` implementing the `ChainConfig` interface (use `src/chains/base.ts` as a template). Fill in confirmed contract addresses; leave `null` for any that aren't deployed yet.
+2. Import and add the new chain to `ALL_DEFINED_CHAINS` in `src/chains/index.ts`.
+3. When all required addresses are confirmed, add it to `ACTIVE_CHAINS` in the same file.
+4. Add its RPC URL env var to `.env.local` (or `.env` in production) and to the `ponder` service environment in `docker-compose.yml`.
+5. Run `pnpm codegen` to regenerate types.
 
 ## Known Limitations
 

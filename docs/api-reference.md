@@ -16,6 +16,8 @@ The default local URL is `http://localhost:42069` when using `pnpm dev`. The pro
 | `/health` | GET | Ponder built-in. Returns `200` (empty body) when the process is running. |
 | `/ready` | GET | Ponder built-in. Returns `200` when initial sync is complete; `503` while still syncing. Suitable for K8s readiness probes. |
 | `/healthz` | GET | Application-level. Returns `{ "status": "ok" }` when the server is up. Does not reflect indexer sync progress. |
+| `/status` | GET | Sync progress per chain. Returns current indexed block, latest chain block, and a completion percentage. Useful for monitoring backfill progress. |
+| `/metrics` | GET | Prometheus metrics. Exposes Ponder internals (block lag, handler latency, RPC call counts). |
 
 ## GraphQL
 
@@ -33,12 +35,43 @@ For schema details (columns, indexes, relations), see [architecture.md](./archit
 
 ## REST endpoints
 
-Two custom endpoints mounted at `/api`, documented in Swagger UI at `/docs`:
+Custom endpoints mounted at `/api`, documented in Swagger UI at `/docs`:
 
 - `GET /api/orders/by-owner/{owner}` — discrete orders for a wallet, with automatic proxy resolution.
 - `GET /api/generator/{eventId}/execution-summary` — part-count breakdown by status for a generator.
+- `GET /api/sync-progress` — per-chain historical sync progress (total blocks, processed blocks, percentage, realtime mode flag).
 
 Open `/docs` for request/response shapes and to try them out.
+
+### `GET /api/sync-progress`
+
+Returns the indexer's historical backfill progress per chain, parsed from Ponder's built-in Prometheus metrics. Useful for monitoring first-run sync without reading raw metrics.
+
+Example response:
+
+```json
+{
+  "mainnet": {
+    "totalBlocks": 7000000,
+    "processedBlocks": 3000000,
+    "progressPct": 42.9,
+    "isRealtime": false,
+    "isComplete": false
+  },
+  "gnosis": {
+    "totalBlocks": 17000000,
+    "processedBlocks": 17000000,
+    "progressPct": 100.0,
+    "isRealtime": true,
+    "isComplete": true
+  }
+}
+```
+
+- `progressPct` is rounded to one decimal place (0–100).
+- `isRealtime` flips to `true` once the chain enters live-sync mode.
+- `isComplete` flips to `true` once all historical blocks are processed.
+- Returns `{}` if the `/metrics` endpoint is unreachable.
 
 ## Order type decoding
 
@@ -109,9 +142,13 @@ The `conditionalOrderGenerator.decodedParams` JSON encodes Solidity struct field
 
 ## Indexed chains
 
+The active chain list is `ACTIVE_CHAINS` in `src/chains/index.ts`. Currently active:
+
 | Chain | Chain ID |
 |-------|----------|
-| Ethereum mainnet | 1 |
-| Gnosis Chain | 100 |
+| Ethereum Mainnet | 1 |
+| Gnosis | 100 |
 
 Filter queries with `where: { chainId: 1 }` (GraphQL) or `?chainId=1` (REST).
+
+> Adding a chain: create `src/chains/<name>.ts` following the existing chain files as a template, add it to `ACTIVE_CHAINS` in `src/chains/index.ts`, and add its RPC URL env var. See COW-986 for the full checklist.
