@@ -177,8 +177,24 @@ Once running, the indexer exposes:
 
 - `GET /graphql` and `POST /graphql` -- GraphQL API
 - `/sql/*` -- Ponder SQL client (direct Drizzle-based queries)
-- `GET /healthz` -- returns `{"status":"ok"}`
-- `GET /ready` -- readiness check (used by the Docker health check)
+- `GET /healthz` -- liveness probe; returns `{"status":"ok"}` as soon as the server starts
+- `GET /ready` -- readiness probe; returns 200 only after the historical backfill is complete
+- `GET /api/sync-progress` -- per-chain sync status with `historicalSyncProgressPct` (0–100)
+
+### Checking If the Indexer Is Caught Up
+
+`GET /ready` returns HTTP 200 when fully synced and 503 while still indexing. For a more granular view, `GET /api/sync-progress` returns the historical backfill percentage per chain:
+
+```json
+{
+  "chains": [
+    { "chainId": 1,   "chainName": "mainnet", "historicalSyncProgressPct": 100.0, "isSynced": true },
+    { "chainId": 100, "chainName": "gnosis",  "historicalSyncProgressPct": 100.0, "isSynced": true }
+  ]
+}
+```
+
+`isSynced: true` means the backfill is complete and the indexer is processing new blocks in realtime. While `isSynced` is false the GraphQL/SQL data is partial — queries will succeed but results are incomplete.
 
 
 ## What's Not Implemented
