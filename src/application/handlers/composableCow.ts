@@ -28,8 +28,10 @@
  *   SingleOrderNotAuthed (OrderDiscoveryPoller) and the CancellationWatcher,
  *   both of which work correctly.
  *
- *   If this gap proves significant in production, a lightweight periodic check
- *   can be added for owners with open orders. Track via issue tracker if needed.
+ *   A newer ComposableCoW contract version (nullislabs/composable-cow#1) emits a
+ *   ConditionalOrderRemoved event from remove(), which would allow the indexer to
+ *   detect on-chain cancellations directly without polling. Supporting this contract
+ *   version is tracked as a future improvement.
  *
  */
 
