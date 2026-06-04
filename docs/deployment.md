@@ -15,12 +15,14 @@ All config goes in a `.env` file (production) or `.env.local` (local dev). Start
 
 The indexer is RPC-heavy during initial sync. Rate-limited endpoints will work but sync takes considerably longer. Use an endpoint with generous throughput for production.
 
+> **Adding a new chain:** when a chain is added to `ACTIVE_CHAINS` in `src/chains/index.ts`, its RPC URL env var (defined as `rpcEnvVar` in the chain config file) must be added here and to the `ponder` service environment in `docker-compose.yml` under the `deploy` profile.
+
 ### Database
 
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `DATABASE_URL` | Yes | PostgreSQL connection string |
-| `DATABASE_SCHEMA` | Yes | PostgreSQL schema name. `manage.sh` defaults to `programmatic_orders`. |
+| `DATABASE_SCHEMA` | Yes | PostgreSQL schema name. `manage.ts` defaults to `programmatic_orders`. |
 
 Example: `DATABASE_URL=postgresql://cow_programmatic:secretpass@localhost:5433/cow_programmatic`
 
@@ -36,7 +38,7 @@ Example: `DATABASE_URL=postgresql://cow_programmatic:secretpass@localhost:5433/c
 
 ### Production Docker Variables
 
-Used by `deployment/docker-compose.yml` and `deployment/manage.sh`:
+Used by `docker-compose.yml` (deploy profile) and `deployment/manage.ts`:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -45,10 +47,10 @@ Used by `deployment/docker-compose.yml` and `deployment/manage.sh`:
 | `POSTGRES_PASSWORD` | Yes | PostgreSQL password |
 | `POSTGRES_DB` | Yes | PostgreSQL database name |
 | `POSTGRES_PORT` | No | Host port mapped to PostgreSQL. Default: `5433`. |
-| `POSTGRES_MEMORY_LIMIT` | No | Memory allocated to PostgreSQL. Default: `1G`. The `start-db.sh` entrypoint auto-tunes `shared_buffers`, `work_mem`, etc. based on this. |
+| `POSTGRES_MEMORY_LIMIT` | No | Unused. Memory flags are now hardcoded inline in `docker-compose.yml` (tuned for 1G). Adjust the `command:` block proportionally if you allocate more RAM. |
 | `PONDER_EXPOSED_PORT` | No | Host port mapped to the Ponder API. Default: `40000`. Inside the container, Ponder listens on `3000`. |
 
-If you're using the `deploy-remotely.sh` workflow, these variables also need to be set as GitHub Actions secrets (or equivalent) in your CI environment.
+If you're using the `deploy-remotely.ts` workflow, these variables also need to be set as GitHub Actions secrets (or equivalent) in your CI environment.
 
 ## Database Setup
 
@@ -71,7 +73,7 @@ Ponder manages schema migrations automatically. When it starts, it creates or up
 
 ### Production
 
-Production uses a separate stack in `deployment/` that runs PostgreSQL and the indexer together. See the Docker section below.
+Production uses the `deploy` profile in the root `docker-compose.yml`, which runs PostgreSQL and the indexer together. See the Docker section below.
 
 
 ## Docker
@@ -79,63 +81,60 @@ Production uses a separate stack in `deployment/` that runs PostgreSQL and the i
 ### Production Stack
 
 ```
+docker-compose.yml         # root compose file — dev postgres (default) + deploy profile
 deployment/
-  docker-compose.yml     # PostgreSQL + Ponder services
-  manage.sh              # Build image, bring up/down the stack
-  deploy-remotely.sh     # Rsync + SSH deploy to a remote host
-  static/start-db.sh     # PostgreSQL entrypoint with memory auto-tuning
+  manage.ts                # Build image, bring up/down the stack
+  deploy-remotely.ts       # Rsync + SSH deploy to a remote host
+```
+
+The deploy services (`postgres-deploy` and `ponder`) live in the root `docker-compose.yml` under the `deploy` profile. Start them with:
+
+```bash
+docker compose --profile deploy up -d
 ```
 
 The `Dockerfile` in the project root builds the Ponder image: two-stage Node 22 Alpine, installs dependencies with `--frozen-lockfile`, exposes port 3000, runs `pnpm start`. The health check hits `/ready` with a 24-hour start period (initial sync takes hours).
 
-### PostgreSQL Auto-Tuning
+### PostgreSQL Memory Flags
 
-`start-db.sh` tunes memory settings from `POSTGRES_MEMORY_LIMIT`. With the default 1G:
+Memory settings are hardcoded in the `command:` block of `docker-compose.yml`, tuned for 1G RAM:
 
-- `shared_buffers`: ~204MB
-- `work_mem`: 2MB per connection
-- `effective_cache_size`: 512MB
+- `shared_buffers`: 204MB (~20% RAM)
+- `work_mem`: 2MB per connection (~25% RAM / max_connections)
+- `effective_cache_size`: 512MB (~50% RAM)
 - `maintenance_work_mem`: 51MB
+
+Adjust these proportionally if you change the host's available memory.
 
 
 ## Deploying
 
 ### How it works in practice
 
-`deploy-remotely.sh` handles the full flow:
+`deploy-remotely.ts` handles the full flow:
 
 ```bash
 # Local deploy (builds and starts on this machine)
-./deployment/deploy-remotely.sh - /path/to/.env
+npx tsx deployment/deploy-remotely.ts - /path/to/.env
 
 # Remote deploy via SSH
-./deployment/deploy-remotely.sh user@host:/opt/cow-indexer /path/to/.env
+npx tsx deployment/deploy-remotely.ts user@host:/opt/cow-indexer /path/to/.env
 ```
 
 What it does:
 1. Rsyncs the repo to the target (excluding `.git`, `node_modules`, `.env`, logs)
 2. Copies the `.env` file to `deployment/.env` on the remote
-3. Runs `manage.sh up`, which builds a Docker image tagged with the current git SHA and brings up the stack
+3. Runs `manage.ts up`, which builds a Docker image tagged with the current git SHA and brings up the stack
 
 On the target machine, you need Docker and DNS configured to point at the container's exposed port (`PONDER_EXPOSED_PORT`, default 40000).
 
-To tear down: `./deployment/manage.sh down --env-file deployment/.env`
+To tear down: `npx tsx deployment/manage.ts down --env-file deployment/.env`
 
 ### Production architecture
 
 For a production setup, run at least two containers: one dedicated to indexing and one (or more) serving the API. This way if a user overloads the API with queries, the indexer keeps working. And if the indexer crashes or restarts, the API stays up with the last-synced data.
 
-The current `deployment/docker-compose.yml` runs a single container doing both. Splitting indexer and API is a straightforward change: run two instances of the same image, one with indexing enabled and one configured as API-only (Ponder supports this via its `--api-only` flag or by disabling indexing).
-
-### API Endpoints
-
-Once running, the indexer exposes:
-
-- `GET /graphql` and `POST /graphql` -- GraphQL API
-- `/sql/*` -- Ponder SQL client (direct Drizzle-based queries)
-- `GET /healthz` -- returns `{"status":"ok"}`
-- `GET /ready` -- readiness check (used by the Docker health check)
-
+The current deploy profile in `docker-compose.yml` runs a single container doing both. Splitting indexer and API is a straightforward change: run two instances of the same image, one with indexing enabled and one configured as API-only (Ponder supports this via its `--api-only` flag or by disabling indexing).
 
 ## What's Not Implemented
 
