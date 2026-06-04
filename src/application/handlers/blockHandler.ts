@@ -16,7 +16,7 @@
 
 import { ponder } from "ponder:registry";
 import { bootstrapRetryQueue, candidateDiscreteOrder, conditionalOrderGenerator, discreteOrder } from "ponder:schema";
-import { and, asc, eq, inArray, lte, or, sql } from "ponder";
+import { and, asc, eq, inArray, isNull, lte, or, sql } from "ponder";
 import type { Hex } from "viem";
 import {
   COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID,
@@ -409,7 +409,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
       and(
         eq(candidateDiscreteOrder.chainId, chainId),
         or(
-          sql`${candidateDiscreteOrder.possibleValidAfterTimestamp} IS NULL`,
+          isNull(candidateDiscreteOrder.possibleValidAfterTimestamp),
           lte(candidateDiscreteOrder.possibleValidAfterTimestamp, event.block.timestamp),
         ),
       ),
@@ -723,7 +723,7 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
         eq(conditionalOrderGenerator.chainId, chainId),
         eq(conditionalOrderGenerator.status, "Active"),
         inArray(conditionalOrderGenerator.orderType, [...NON_DETERMINISTIC_TYPES]),
-        sql`${discreteOrder.orderUid} IS NULL`,
+        isNull(discreteOrder.orderUid),
       ),
     ) as {
     generatorId: string;
@@ -810,7 +810,7 @@ ponder.on("DeterministicCancellationSweeper:block", async ({ event, context }) =
         eq(conditionalOrderGenerator.status, "Active"),
         eq(conditionalOrderGenerator.allCandidatesKnown, true),
         or(
-          sql`${conditionalOrderGenerator.nextCheckBlock} IS NULL`,
+          isNull(conditionalOrderGenerator.nextCheckBlock),
           lte(conditionalOrderGenerator.nextCheckBlock, currentBlock),
         ),
       ),
