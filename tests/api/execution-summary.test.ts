@@ -3,12 +3,14 @@ import { OpenAPIHono } from "@hono/zod-openapi";
 import { z } from "zod";
 
 // Mock virtual modules before any ponder-importing source files are loaded.
-vi.mock("ponder:api", () => ({ db: { execute: vi.fn() } }));
+vi.mock("ponder:api", () => ({ db: { select: vi.fn() } }));
 vi.mock("ponder", () => ({
-  sql: Object.assign(
-    (_s: TemplateStringsArray, ..._v: unknown[]) => ({}),
-    { raw: (_s: string) => ({}) },
-  ),
+  and: (..._args: unknown[]) => ({}),
+  eq: (..._args: unknown[]) => ({}),
+  count: () => ({}),
+}));
+vi.mock("ponder:schema", () => ({
+  discreteOrder: { status: "status", conditionalOrderGeneratorId: "conditionalOrderGeneratorId", chainId: "chainId" },
 }));
 
 import { db } from "ponder:api";
@@ -17,7 +19,7 @@ import { executionSummaryHandler } from "../../src/api/endpoints/execution-summa
 import { DiscreteOrderStatusQuery } from "../../src/api/schemas/common";
 
 const Status = DiscreteOrderStatusQuery.enum;
-type StatusRow = { status: z.infer<typeof DiscreteOrderStatusQuery>; count: string };
+type StatusRow = { status: z.infer<typeof DiscreteOrderStatusQuery>; count: number };
 
 function buildApp() {
   const app = new OpenAPIHono();
@@ -31,13 +33,20 @@ function makeUrl(eventId = EVENT_ID, chainId = 1) {
   return `http://localhost/generator/${eventId}/execution-summary?chainId=${chainId}`;
 }
 
+function makeSelectChain(rows: unknown[] = []) {
+  const groupBy = vi.fn().mockResolvedValue(rows);
+  const where = vi.fn().mockReturnValue({ groupBy });
+  const from = vi.fn().mockReturnValue({ where });
+  return { from };
+}
+
 beforeEach(() => {
-  vi.mocked(db.execute).mockReset();
+  vi.mocked(db.select).mockReset();
 });
 
 describe("GET /api/generator/:eventId/execution-summary", () => {
   it("returns all-zero counts when no discrete orders exist", async () => {
-    vi.mocked(db.execute).mockResolvedValue({ rows: [] } as never);
+    vi.mocked(db.select).mockReturnValueOnce(makeSelectChain([]) as never);
 
     const res = await buildApp().request(makeUrl());
     expect(res.status).toBe(200);
@@ -53,11 +62,11 @@ describe("GET /api/generator/:eventId/execution-summary", () => {
 
   it("maps fulfilled, expired, open, unfilled, cancelled to the right fields", async () => {
     const rows: StatusRow[] = [
-      { status: Status.fulfilled, count: "3" },
-      { status: Status.expired,   count: "7" },
-      { status: Status.open,      count: "2" },
+      { status: Status.fulfilled, count: 3 },
+      { status: Status.expired,   count: 7 },
+      { status: Status.open,      count: 2 },
     ];
-    vi.mocked(db.execute).mockResolvedValue({ rows } as never);
+    vi.mocked(db.select).mockReturnValueOnce(makeSelectChain(rows) as never);
 
     const body = await (await buildApp().request(makeUrl())).json() as Record<string, unknown>;
 
@@ -71,18 +80,18 @@ describe("GET /api/generator/:eventId/execution-summary", () => {
 
   it("totalParts is the sum of all status counts", async () => {
     const rows: StatusRow[] = [
-      { status: Status.fulfilled, count: "10" },
-      { status: Status.cancelled, count: "5" },
-      { status: Status.unfilled,  count: "3" },
+      { status: Status.fulfilled, count: 10 },
+      { status: Status.cancelled, count: 5 },
+      { status: Status.unfilled,  count: 3 },
     ];
-    vi.mocked(db.execute).mockResolvedValue({ rows } as never);
+    vi.mocked(db.select).mockReturnValueOnce(makeSelectChain(rows) as never);
 
     const body = await (await buildApp().request(makeUrl())).json() as Record<string, unknown>;
     expect(body["totalParts"]).toBe(18);
   });
 
   it("echoes back the generatorId and chainId", async () => {
-    vi.mocked(db.execute).mockResolvedValue({ rows: [] } as never);
+    vi.mocked(db.select).mockReturnValueOnce(makeSelectChain([]) as never);
 
     const body = await (await buildApp().request(makeUrl(EVENT_ID, 100))).json() as Record<string, unknown>;
     expect(body["generatorId"]).toBe(EVENT_ID);
@@ -90,15 +99,17 @@ describe("GET /api/generator/:eventId/execution-summary", () => {
   });
 
   it("returns 400 when chainId query param is missing", async () => {
-    const app = buildApp();
-    const res = await app.request(
+    const res = await buildApp().request(
       `http://localhost/generator/${EVENT_ID}/execution-summary`,
     );
     expect(res.status).toBe(400);
   });
 
   it("returns 500 when the DB throws", async () => {
-    vi.mocked(db.execute).mockRejectedValueOnce(new Error("db error"));
+    const groupBy = vi.fn().mockRejectedValueOnce(new Error("db error"));
+    const where = vi.fn().mockReturnValue({ groupBy });
+    const from = vi.fn().mockReturnValue({ where });
+    vi.mocked(db.select).mockReturnValueOnce({ from } as never);
 
     const res = await buildApp().request(makeUrl());
     expect(res.status).toBe(500);
