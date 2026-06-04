@@ -1,12 +1,4 @@
-/**
- * Structured JSON logger for handler code. Outputs one JSON line per call so
- * log aggregators (Datadog, CloudWatch, etc.) can filter by chainId, handler,
- * block number, or any other field without regex parsing.
- *
- * Ponder's own log lines are controlled by --log-format (pretty|json) on the
- * CLI. These handler lines are always JSON so they remain parseable regardless
- * of Ponder's format setting.
- */
+// Structured JSON logger for handler code — always emits one JSON line per call regardless of Ponder's --log-format setting.
 
 type LogLevel = "info" | "warn" | "error";
 
