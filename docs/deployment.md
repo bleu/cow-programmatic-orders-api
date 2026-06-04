@@ -32,6 +32,7 @@ Example: `DATABASE_URL=postgresql://cow_programmatic:secretpass@localhost:5433/c
 | `DISABLE_DETERMINISTIC_CANCEL_SWEEP` | No | Disables the CancellationWatcher. Skips periodic `singleOrders()` reads on deterministic generators. While disabled, on-chain `ComposableCoW.remove()` calls on TWAP/StopLoss/CirclesBackingOrder generators will not be detected and those generators stay `Active`. |
 | `MAX_GENERATORS_PER_BLOCK_<chainId>` | No | Per-block cap on how many generators OrderDiscoveryPoller and CancellationWatcher will touch on the given chain (e.g. `MAX_GENERATORS_PER_BLOCK_1=200`, `MAX_GENERATORS_PER_BLOCK_100=400`). Default is 200. Excess generators defer to the next block, prioritized by oldest `lastCheckBlock` first. |
 | `DISABLE_SETTLEMENT_FACTORY_CHECK` | No | Skips `getCode` + `FACTORY()` RPC calls in the GPv2Settlement handler. Useful for benchmarking base sync throughput. |
+| `ETH_GET_LOGS_BLOCK_RANGE_<chainId>` | No | Overrides the `ethGetLogsBlockRange` Ponder config per chain (e.g. `ETH_GET_LOGS_BLOCK_RANGE_1=2000`, `ETH_GET_LOGS_BLOCK_RANGE_100=5000`). Default is 1000. Increase if your RPC provider supports a larger range to speed up backfill. |
 | `PINO_LOG_LEVEL` | No | Log verbosity: `debug`, `info`, `warn`, `error`. Defaults to Ponder's built-in default. |
 
 ### Production Docker Variables
@@ -91,7 +92,7 @@ Common provider limits:
 |----------|--------------------------|
 | Alchemy | 10 000 blocks |
 | Infura | 10 000 blocks |
-| QuickNode | 1 000–10 000 blocks (plan-dependent) |
+| QuickNode | 1 000–10 000 blocks (plan-dependent, unverified — check your plan's docs) |
 | Public RPCs (Pocket, etc.) | 1 000 blocks |
 
 ## Database Setup

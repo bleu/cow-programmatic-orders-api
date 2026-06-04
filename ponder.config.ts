@@ -14,13 +14,13 @@ export default createConfig({
       id: 1,
       rpc: process.env.MAINNET_RPC_URL!,
       // Many RPC providers cap eth_getLogs at 1000–2000 blocks; set conservatively to avoid
-      // InvalidInputRpcError retry storms during backfill. Override if your provider allows more.
-      ethGetLogsBlockRange: 1000,
+      // InvalidInputRpcError retry storms during backfill. Override via ETH_GET_LOGS_BLOCK_RANGE_1.
+      ethGetLogsBlockRange: Number(process.env.ETH_GET_LOGS_BLOCK_RANGE_1 ?? 1000),
     },
     gnosis: {
       id: 100,
       rpc: process.env.GNOSIS_RPC_URL!,
-      ethGetLogsBlockRange: 1000,
+      ethGetLogsBlockRange: Number(process.env.ETH_GET_LOGS_BLOCK_RANGE_100 ?? 1000),
     },
   },
   contracts: {

@@ -13,7 +13,9 @@ The default local URL is `http://localhost:42069` when using `pnpm dev`. The pro
 | `/api/*` | GET | Custom REST endpoints. Full reference in Swagger UI at `/docs`. |
 | `/docs` | GET | Swagger UI for the REST endpoints. |
 | `/openapi.json` | GET | OpenAPI 3.0 spec for the REST endpoints. |
-| `/healthz` | GET | Returns `{ "status": "ok" }` when the server is up. Does not reflect indexer sync progress. |
+| `/health` | GET | Ponder built-in. Returns `200` (empty body) when the process is running. |
+| `/ready` | GET | Ponder built-in. Returns `200` when initial sync is complete; `503` while still syncing. Suitable for K8s readiness probes. |
+| `/healthz` | GET | Application-level. Returns `{ "status": "ok" }` when the server is up. Does not reflect indexer sync progress. |
 
 ## GraphQL
 
