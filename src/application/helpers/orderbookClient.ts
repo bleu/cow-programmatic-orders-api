@@ -18,8 +18,7 @@ import {
   conditionalOrderGenerator,
   discreteOrder,
 } from "ponder:schema";
-import { and, eq, inArray, sql } from "ponder";
-import { pgSchema, integer, text } from "drizzle-orm/pg-core";
+import { and, eq, sql } from "ponder";
 import { encodeAbiParameters, keccak256, type Hex } from "viem";
 import { COMPOSABLE_COW_HANDLER_ADDRESSES, ORDERBOOK_API_URLS } from "../../data";
 import { ORDERBOOK_HTTP_TIMEOUT_MS, SIGNING_SCHEME_EIP1271 } from "../../constants";
@@ -460,16 +459,7 @@ async function filterAndProcess(
 }
 
 // ─── Per-UID cache helpers ──────────────────────────────────────────────────
-// cow_cache.order_uid_cache is created by setup.ts. Table defined here for typed queries.
-const cowCacheSchema = pgSchema("cow_cache");
-const orderUidCacheTable = cowCacheSchema.table("order_uid_cache", {
-  chainId: integer("chain_id").notNull(),
-  orderUid: text("order_uid").notNull(),
-  status: text("status").notNull(),
-  fetchedAt: integer("fetched_at").notNull(),
-  executedSellAmount: text("executed_sell_amount"),
-  executedBuyAmount: text("executed_buy_amount"),
-});
+// cow_cache.order_uid_cache is created by setup.ts. Fully qualified names required.
 
 /** Cached order data returned by getCachedUidStatuses. */
 interface CachedOrderData {
@@ -493,25 +483,17 @@ async function getCachedUidStatuses(
     const batchSize = 500;
     for (let i = 0; i < uids.length; i += batchSize) {
       const batch = uids.slice(i, i + batchSize);
-      const rows = await context.db.sql
-        .select({
-          orderUid: orderUidCacheTable.orderUid,
-          status: orderUidCacheTable.status,
-          executedSellAmount: orderUidCacheTable.executedSellAmount,
-          executedBuyAmount: orderUidCacheTable.executedBuyAmount,
-        })
-        .from(orderUidCacheTable)
-        .where(
-          and(
-            eq(orderUidCacheTable.chainId, chainId),
-            inArray(orderUidCacheTable.orderUid, batch),
-          ),
-        );
+      const uidList = sql.join(batch.map((uid) => sql`${uid}`), sql`, `);
+      const rows = (await context.db.sql.execute(
+        sql`SELECT order_uid, status, executed_sell_amount, executed_buy_amount
+            FROM cow_cache.order_uid_cache
+            WHERE chain_id = ${chainId} AND order_uid IN (${uidList})`,
+      )) as { order_uid: string; status: string; executed_sell_amount: string | null; executed_buy_amount: string | null }[];
       for (const row of rows) {
-        result.set(row.orderUid, {
+        result.set(row.order_uid, {
           status: row.status,
-          executedSellAmount: row.executedSellAmount,
-          executedBuyAmount: row.executedBuyAmount,
+          executedSellAmount: row.executed_sell_amount,
+          executedBuyAmount: row.executed_buy_amount,
         });
       }
     }
