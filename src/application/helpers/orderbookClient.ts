@@ -20,6 +20,7 @@ import {
 } from "ponder:schema";
 import { and, eq, sql } from "ponder";
 import { encodeAbiParameters, keccak256, type Hex } from "viem";
+import { type OrderType } from "../../utils/order-types";
 import { COMPOSABLE_COW_HANDLER_ADDRESSES, ORDERBOOK_API_URLS } from "../../data";
 import { ORDERBOOK_HTTP_TIMEOUT_MS, SIGNING_SCHEME_EIP1271 } from "../../constants";
 import { decodeEip1271Signature } from "../decoders/erc1271Signature";
@@ -52,7 +53,7 @@ export type ComposableOrder = Pick<
   uid: string;
   generatorId: string;
   generatorHash: string;
-  orderType: string;
+  orderType: OrderType;
   creationDate: number;
 };
 
@@ -274,7 +275,7 @@ export async function fetchOrderStatusByUids(
           status: order.status as ComposableOrder["status"],
           generatorId: "",
           generatorHash: "",
-          orderType: "",
+          orderType: "Unknown",
           sellAmount: order.sellAmount,
           buyAmount: order.buyAmount,
           feeAmount: order.feeAmount,
@@ -432,7 +433,7 @@ async function filterAndProcess(
       )
       .limit(1)) as {
       eventId: string;
-      orderType: string;
+      orderType: OrderType;
     }[];
 
     if (generators.length === 0) continue;
