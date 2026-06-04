@@ -13,6 +13,7 @@ export default defineConfig({
       // ponder:schema must come before ponder to avoid prefix-match shadowing.
       { find: "ponder:schema", replacement: resolve(__dirname, "tests/__mocks__/ponder-schema.ts") },
       { find: /^ponder$/, replacement: resolve(__dirname, "tests/__mocks__/ponder.ts") },
+      { find: "ponder:api", replacement: resolve(__dirname, "tests/__mocks__/ponder-api.ts") },
     ],
   },
 });

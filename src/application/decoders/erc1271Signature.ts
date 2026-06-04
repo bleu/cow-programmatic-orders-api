@@ -28,7 +28,7 @@ import { decodeAbiParameters, type Hex } from "viem";
 // GPv2Order.Data: 12 fixed-size fields × 32 bytes = 384 bytes total (used for byte-offset math)
 const GPV2_ORDER_BYTES = 384;
 
-const PAYLOAD_STRUCT_ABI = [
+export const PAYLOAD_STRUCT_ABI = [
   {
     type: "tuple" as const,
     name: "payload",
