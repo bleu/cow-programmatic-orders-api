@@ -16,6 +16,7 @@ import { executionSummaryRoute } from "../../src/api/routes";
 import { executionSummaryHandler } from "../../src/api/endpoints/execution-summary";
 import { DiscreteOrderStatusQuery } from "../../src/api/schemas/common";
 
+const Status = DiscreteOrderStatusQuery.enum;
 type StatusRow = { status: z.infer<typeof DiscreteOrderStatusQuery>; count: string };
 
 function buildApp() {
@@ -52,9 +53,9 @@ describe("GET /api/generator/:eventId/execution-summary", () => {
 
   it("maps fulfilled, expired, open, unfilled, cancelled to the right fields", async () => {
     const rows: StatusRow[] = [
-      { status: "fulfilled", count: "3" },
-      { status: "expired",   count: "7" },
-      { status: "open",      count: "2" },
+      { status: Status.fulfilled, count: "3" },
+      { status: Status.expired,   count: "7" },
+      { status: Status.open,      count: "2" },
     ];
     vi.mocked(db.execute).mockResolvedValue({ rows } as never);
 
@@ -70,9 +71,9 @@ describe("GET /api/generator/:eventId/execution-summary", () => {
 
   it("totalParts is the sum of all status counts", async () => {
     const rows: StatusRow[] = [
-      { status: "fulfilled",  count: "10" },
-      { status: "cancelled",  count: "5" },
-      { status: "unfilled",   count: "3" },
+      { status: Status.fulfilled, count: "10" },
+      { status: Status.cancelled, count: "5" },
+      { status: Status.unfilled,  count: "3" },
     ];
     vi.mocked(db.execute).mockResolvedValue({ rows } as never);
 
