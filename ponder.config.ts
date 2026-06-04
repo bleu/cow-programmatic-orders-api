@@ -115,11 +115,11 @@ export default createConfig({
       interval: 1,
     },
     // SettlementResolver — async Aave adapter discovery from queued Settlement events.
-    // Mainnet only: flash loan router is not deployed on Gnosis.
+    // Only runs on chains that have a flash loan router (currently mainnet only).
     SettlementResolver: {
-      chain: {
-        mainnet: { startBlock: "latest" },
-      },
+      chain: Object.fromEntries(
+        settlementChains.map((c) => [c.name, { startBlock: "latest" as const }]),
+      ),
       interval: 1,
     },
   },
