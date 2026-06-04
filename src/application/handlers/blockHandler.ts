@@ -15,7 +15,7 @@
  */
 
 import { ponder } from "ponder:registry";
-import { bootstrapRetryQueue, candidateDiscreteOrder, conditionalOrderGenerator, discreteOrder } from "ponder:schema";
+import { bootstrapRetryQueue, candidateDiscreteOrder, conditionalOrderGenerator, discreteOrder, discreteOrderStatusEnum } from "ponder:schema";
 import { and, asc, eq, inArray, lte, or, sql } from "ponder";
 import type { Hex } from "viem";
 import {
@@ -42,9 +42,7 @@ import {
   parsePollError,
 } from "../helpers/pollResultErrors";
 import { computeOrderUid, type GPv2OrderData } from "../helpers/orderUid";
-import { cowLog } from "../helpers/cowLogger";
-
-type DiscreteStatus = "open" | "fulfilled" | "unfilled" | "expired" | "cancelled";
+type DiscreteStatus = (typeof discreteOrderStatusEnum.enumValues)[number];
 
 const NON_DETERMINISTIC_TYPES = ["PerpetualSwap", "GoodAfterTime", "TradeAboveThreshold", "Unknown"] as const;
 const SINGLE_SHOT_NON_DETERMINISTIC = ["GoodAfterTime", "TradeAboveThreshold"] as const;
@@ -414,12 +412,9 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
         );
 
       const preflightKnown = preflightStatuses.size;
-      cowLog("info", "c2:parent-cancelled", {
-        block: String(event.block.number),
-        chainId,
-        parentCancelled: orphanCandidates.length,
-        preflightKnown,
-      });
+      console.log(
+        `[COW:C2] c2:parent-cancelled block=${event.block.number} chainId=${chainId} parentCancelled=${orphanCandidates.length} preflightKnown=${preflightKnown}`,
+      );
     }
   }
 
