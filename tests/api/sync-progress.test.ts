@@ -5,7 +5,7 @@ import { syncProgressHandler } from "../../src/api/endpoints/sync-progress";
 type ChainProgress = {
   totalBlocks: number;
   processedBlocks: number;
-  historicalSyncProgressPct: number;
+  historicalBlocksFetchedPct: number;
   isRealtime: boolean;
   isComplete: boolean;
 };
@@ -84,15 +84,15 @@ describe("GET /api/sync-progress", () => {
     expect(body["gnosis"]!.processedBlocks).toBe(2_400_000);
   });
 
-  it("computes historicalSyncProgressPct correctly (rounded to 1 decimal)", async () => {
+  it("computes historicalBlocksFetchedPct correctly (rounded to 1 decimal)", async () => {
     mockFetch(SAMPLE_METRICS);
     const app = buildApp();
     const res = await app.request("http://localhost/api/sync-progress");
     const body = (await res.json()) as Record<string, ChainProgress>;
     // mainnet: 3_000_000 / 7_000_000 = 42.857... → 42.9
-    expect(body["mainnet"]!.historicalSyncProgressPct).toBe(42.9);
+    expect(body["mainnet"]!.historicalBlocksFetchedPct).toBe(42.9);
     // gnosis: 2_400_000 / 17_000_000 = 14.117... → 14.1
-    expect(body["gnosis"]!.historicalSyncProgressPct).toBe(14.1);
+    expect(body["gnosis"]!.historicalBlocksFetchedPct).toBe(14.1);
   });
 
   it("sets isRealtime and isComplete from metrics flags", async () => {
