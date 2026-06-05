@@ -94,7 +94,7 @@ The indexer exposes two health endpoints with distinct semantics:
 
 | Endpoint | Semantic | Returns 200 when |
 |----------|----------|-----------------|
-| `/healthz` | **Liveness** — is the process alive? | Always, once the server starts |
+| `/health` | **Liveness** — is the process alive? | Always, once the server starts |
 | `/ready` | **Readiness** — is the index fully synced? | Only when fully synced |
 
 Map these to different K8s probe types:
@@ -102,7 +102,7 @@ Map these to different K8s probe types:
 ```yaml
 livenessProbe:
   httpGet:
-    path: /healthz
+    path: /health
     port: 3000
   initialDelaySeconds: 30
   periodSeconds: 30
@@ -112,17 +112,19 @@ readinessProbe:
     path: /ready
     port: 3000
   initialDelaySeconds: 30
-  periodSeconds: 10
-  failureThreshold: 18   # 3-minute window before marking unready
+  periodSeconds: 30
+  failureThreshold: 3    # marks pod unready (not killed) — cold-start sync takes hours
 ```
 
-**Do not** use `/ready` as the liveness probe. A pod that is still indexing (which takes hours on a cold start) returns 200 on `/healthz` but not on `/ready`. Using `/ready` for liveness would kill the pod before it ever finishes syncing.
+**Do not** use `/ready` as the liveness probe. A pod that is still indexing (which takes hours on a cold start) returns 200 on `/health` but not on `/ready`. Using `/ready` for liveness would kill the pod before it ever finishes syncing.
+
+A pod in `NotReady` state is not killed — it is simply removed from load-balancer rotation. On a cold start (no existing database), the pod will be `NotReady` for the duration of the historical backfill (hours). That is expected: the old pod (if any) keeps serving traffic during this window, and once the new pod catches up, K8s starts routing to it.
 
 The Docker Compose health check uses `/ready` with a 24-hour start period as a pragmatic fallback for single-container deployments, not as a K8s-style probe.
 
 ### Structured Logging
 
-`pnpm start` runs with `--log-format json`, which makes both Ponder's internal log lines and the handler log lines (via `cowLog`) emit newline-delimited JSON. Each handler log line includes `chainId` and `block` as top-level fields, enabling log aggregators (Datadog, CloudWatch, Loki) to filter and alert by chain.
+`pnpm start` runs with `--log-format json`, which makes both Ponder's internal log lines and the handler log lines (via `log()` in `src/application/helpers/logger.ts`) emit newline-delimited JSON. Each handler log line includes `chainId` and `block` as top-level fields, enabling log aggregators (Datadog, CloudWatch, Loki) to filter and alert by chain.
 
 `pnpm dev` uses Ponder's default pretty format for readability during local development.
 

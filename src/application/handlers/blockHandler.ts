@@ -41,7 +41,7 @@ import {
   parsePollError,
 } from "../helpers/pollResultErrors";
 import { computeOrderUid, type GPv2OrderData } from "../helpers/orderUid";
-import { cowLog } from "../helpers/cowLogger";
+import { log } from "../helpers/logger";
 
 const NON_DETERMINISTIC_TYPES = ["PerpetualSwap", "GoodAfterTime", "TradeAboveThreshold", "Unknown"] as const;
 const SINGLE_SHOT_NON_DETERMINISTIC = ["GoodAfterTime", "TradeAboveThreshold"] as const;
@@ -120,7 +120,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
 
   if (dueOrders.length === 0) return;
 
-  cowLog("info", "C1:ENTER", { block: String(currentBlock), chainId, due: dueOrders.length });
+  log("info", "C1:ENTER", { block: String(currentBlock), chainId, due: dueOrders.length });
 
   const c1MulticallPromise = context.client.multicall({
     contracts: dueOrders.map((order) => ({
@@ -146,7 +146,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
     );
   } catch (err) {
     if (err instanceof TimeoutError) {
-      cowLog("warn", "C1:multicall_timeout", { block: String(currentBlock), chainId, due: dueOrders.length });
+      log("warn", "C1:multicall_timeout", { block: String(currentBlock), chainId, due: dueOrders.length });
       return;
     }
     throw err;
@@ -260,7 +260,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
                 eq(conditionalOrderGenerator.eventId, order.generatorId),
               ),
             );
-          cowLog("info", "C1:NEVER", { block: String(currentBlock), chainId, generatorId: order.generatorId, reason: pollResult.reason });
+          log("info", "C1:NEVER", { block: String(currentBlock), chainId, generatorId: order.generatorId, reason: pollResult.reason });
           neverCount++;
           break;
 
@@ -279,7 +279,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
                 eq(conditionalOrderGenerator.eventId, order.generatorId),
               ),
             );
-          cowLog("info", "C1:CANCELLED", { block: String(currentBlock), chainId, generatorId: order.generatorId });
+          log("info", "C1:CANCELLED", { block: String(currentBlock), chainId, generatorId: order.generatorId });
           break;
       }
     }
@@ -288,7 +288,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
   await Promise.all(successPromises);
 
   const capped = dueOrders.length === maxGeneratorsPerBlock;
-  cowLog("info", "C1:DONE", { block: String(currentBlock), chainId, due: dueOrders.length, success: successCount, never: neverCount, backedOff: backedOffCount, capped });
+  log("info", "C1:DONE", { block: String(currentBlock), chainId, due: dueOrders.length, success: successCount, never: neverCount, backedOff: backedOffCount, capped });
 });
 
 // ─── C2: Candidate Confirmer ─────────────────────────────────────────────────
@@ -377,7 +377,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
           ),
         );
 
-      cowLog("info", "C2:parent_cancelled", { block: String(event.block.number), chainId, parentCancelled: orphanCandidates.length });
+      log("info", "C2:parent_cancelled", { block: String(event.block.number), chainId, parentCancelled: orphanCandidates.length });
     }
   }
 
@@ -537,7 +537,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
   }
 
   if (confirmed > 0 || stale.length > 0) {
-    cowLog("info", "C2:DONE", { block: String(event.block.number), chainId, candidates: unconfirmed.length, confirmed, expired: stale.length });
+    log("info", "C2:DONE", { block: String(event.block.number), chainId, candidates: unconfirmed.length, confirmed, expired: stale.length });
   }
 });
 
@@ -589,7 +589,7 @@ ponder.on("StatusUpdater:block", async ({ event, context }) => {
     }
 
     if (updated > 0) {
-      cowLog("info", "C3:DONE", { block: String(event.block.number), chainId, open: openOrders.length, updated });
+      log("info", "C3:DONE", { block: String(event.block.number), chainId, open: openOrders.length, updated });
     }
   }
 
@@ -653,7 +653,7 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
     .from(bootstrapRetryQueue)
     .where(eq(bootstrapRetryQueue.chainId, chainId));
 
-  cowLog("info", "C4:START", { block: String(currentBlock), chainId, pendingRetry: queued.length });
+  log("info", "C4:START", { block: String(currentBlock), chainId, pendingRetry: queued.length });
 
   let totalDiscovered = 0;
   const retriedOwners = new Set<Hex>();
@@ -673,7 +673,7 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
         .where(and(eq(bootstrapRetryQueue.chainId, chainId), eq(bootstrapRetryQueue.owner, owner as Hex)));
     } catch (err) {
       if (err instanceof TimeoutError) {
-        cowLog("warn", "C4:owner_retry_timeout", { block: String(currentBlock), chainId, owner, retryCount: retryCount + 1, timeoutMs: BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS });
+        log("warn", "C4:owner_retry_timeout", { block: String(currentBlock), chainId, owner, retryCount: retryCount + 1, timeoutMs: BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS });
         await context.db.sql
           .update(bootstrapRetryQueue)
           .set({ retryCount: retryCount + 1, lastRetryAt: currentBlock })
@@ -716,12 +716,12 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
   const freshOwners = new Set(generators.map((g) => g.owner).filter((o) => !retriedOwners.has(o)));
 
   if (freshOwners.size === 0 && retriedOwners.size === 0) {
-    cowLog("info", "C4:no_bootstrap_needed", { block: String(currentBlock), chainId });
+    log("info", "C4:no_bootstrap_needed", { block: String(currentBlock), chainId });
     return;
   }
 
   if (freshOwners.size > 0) {
-    cowLog("info", "C4:bootstrap_start", { block: String(currentBlock), chainId, generators: generators.length, freshOwners: freshOwners.size });
+    log("info", "C4:bootstrap_start", { block: String(currentBlock), chainId, generators: generators.length, freshOwners: freshOwners.size });
   }
 
   for (const owner of freshOwners) {
@@ -735,7 +735,7 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
       totalDiscovered += count;
     } catch (err) {
       if (err instanceof TimeoutError) {
-        cowLog("warn", "C4:owner_timeout", { block: String(currentBlock), chainId, owner, timeoutMs: BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS });
+        log("warn", "C4:owner_timeout", { block: String(currentBlock), chainId, owner, timeoutMs: BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS });
         await context.db.sql
           .insert(bootstrapRetryQueue)
           .values({ chainId, owner, firstTimeoutAt: currentBlock, retryCount: 1, lastRetryAt: currentBlock })
@@ -746,7 +746,7 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
     }
   }
 
-  cowLog("info", "C4:DONE", { block: String(currentBlock), chainId, discovered: totalDiscovered });
+  log("info", "C4:DONE", { block: String(currentBlock), chainId, discovered: totalDiscovered });
 });
 
 // ─── C5: Deterministic Cancellation Sweeper ──────────────────────────────────
@@ -800,7 +800,7 @@ ponder.on("DeterministicCancellationSweeper:block", async ({ event, context }) =
 
   if (dueGenerators.length === 0) return;
 
-  cowLog("info", "C5:ENTER", { block: String(currentBlock), chainId, due: dueGenerators.length });
+  log("info", "C5:ENTER", { block: String(currentBlock), chainId, due: dueGenerators.length });
 
   const c5MulticallPromise = context.client.multicall({
     contracts: dueGenerators.map((g) => ({
@@ -821,7 +821,7 @@ ponder.on("DeterministicCancellationSweeper:block", async ({ event, context }) =
     );
   } catch (err) {
     if (err instanceof TimeoutError) {
-      cowLog("warn", "C5:multicall_timeout", { block: String(currentBlock), chainId, due: dueGenerators.length });
+      log("warn", "C5:multicall_timeout", { block: String(currentBlock), chainId, due: dueGenerators.length });
       return;
     }
     throw err;
@@ -858,7 +858,7 @@ ponder.on("DeterministicCancellationSweeper:block", async ({ event, context }) =
             eq(conditionalOrderGenerator.eventId, gen.generatorId),
           ),
         );
-      cowLog("info", "C5:CANCELLED", { block: String(currentBlock), chainId, generatorId: gen.generatorId, orderType: gen.orderType });
+      log("info", "C5:CANCELLED", { block: String(currentBlock), chainId, generatorId: gen.generatorId, orderType: gen.orderType });
       cancelledCount++;
     } else {
       await context.db.sql
@@ -878,7 +878,7 @@ ponder.on("DeterministicCancellationSweeper:block", async ({ event, context }) =
     }
   }
 
-  cowLog("info", "C5:DONE", { block: String(currentBlock), chainId, due: dueGenerators.length, cancelled: cancelledCount, stillActive: stillActiveCount, errors: errorCount });
+  log("info", "C5:DONE", { block: String(currentBlock), chainId, due: dueGenerators.length, cancelled: cancelledCount, stillActive: stillActiveCount, errors: errorCount });
 });
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@
 
 type LogLevel = "info" | "warn" | "error";
 
-export function cowLog(
+export function log(
   level: LogLevel,
   msg: string,
   fields: Record<string, unknown> = {},
