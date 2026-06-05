@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CHAIN_NAMES } from "../../data";
 
 export const AddressParam = z.object({
   owner: z
@@ -21,8 +22,12 @@ export const DiscreteOrderStatusQuery = z.enum([
   "cancelled",
 ]);
 
+const _indexedChainsDesc = Object.entries(CHAIN_NAMES)
+  .map(([id, name]) => `${id} (${name})`)
+  .join(", ");
+
 export const ChainIdQuery = z.coerce
   .number()
   .int()
   .positive()
-  .describe("EVM chain ID. Indexed chains: 1 (mainnet), 100 (Gnosis).");
+  .describe(`EVM chain ID. Indexed chains: ${_indexedChainsDesc}.`);

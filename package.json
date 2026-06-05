@@ -10,10 +10,14 @@
     "codegen": "ponder codegen",
     "lint": "eslint . --ext .ts",
     "typecheck": "tsc",
-    "test": "vitest run"
+    "test": "vitest run",
+    "deploy:up": "tsx deployment/manage.ts up",
+    "deploy:down": "tsx deployment/manage.ts down",
+    "deploy:remote": "tsx deployment/deploy-remotely.ts"
   },
   "dependencies": {
     "@cowprotocol/cow-sdk": "^7.3.8",
+    "drizzle-orm": "0.41.0",
     "@hono/swagger-ui": "^0.5.3",
     "@hono/zod-openapi": "^0.19.10",
     "hono": "^4.5.0",
@@ -26,6 +30,7 @@
     "@types/node": "^20.9.0",
     "eslint": "^8.53.0",
     "eslint-config-ponder": "^0.16.2",
+    "tsx": "^4.0.0",
     "typescript": "^5.2.2",
     "vite": "^6.0.0",
     "vite-tsconfig-paths": "^5.0.0",

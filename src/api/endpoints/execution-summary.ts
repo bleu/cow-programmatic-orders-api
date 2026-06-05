@@ -1,6 +1,7 @@
 import type { RouteHandler } from "@hono/zod-openapi";
 import { db } from "ponder:api";
-import { sql } from "ponder";
+import { discreteOrder } from "ponder:schema";
+import { and, count, eq } from "ponder";
 import type { executionSummaryRoute } from "../routes";
 
 export const executionSummaryHandler: RouteHandler<
@@ -9,17 +10,20 @@ export const executionSummaryHandler: RouteHandler<
   const { eventId } = c.req.valid("param");
   const { chainId } = c.req.valid("query");
 
-  const rows = await db.execute<{ status: string; count: string }>(
-    sql`SELECT status, COUNT(*)::text AS count
-        FROM discrete_order
-        WHERE conditional_order_generator_id = ${eventId}
-          AND chain_id = ${chainId}
-        GROUP BY status`,
-  );
+  const rows = await db
+    .select({ status: discreteOrder.status, count: count() })
+    .from(discreteOrder)
+    .where(
+      and(
+        eq(discreteOrder.conditionalOrderGeneratorId, eventId),
+        eq(discreteOrder.chainId, chainId),
+      ),
+    )
+    .groupBy(discreteOrder.status);
 
   const counts: Record<string, number> = {};
-  for (const row of rows.rows) {
-    counts[row.status] = Number(row.count);
+  for (const row of rows) {
+    counts[row.status] = row.count;
   }
 
   const filledParts = counts["fulfilled"] ?? 0;
