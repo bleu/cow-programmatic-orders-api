@@ -2,7 +2,7 @@
 
 The indexer exposes three ways to query indexed data: a Ponder-generated GraphQL endpoint, a read-only SQL passthrough, and two custom REST endpoints for queries that require cross-table logic.
 
-The default local URL is `http://localhost:42069`.
+The default local URL is `http://localhost:42069` when using `pnpm dev`. The production server (`pnpm start`, Docker) listens on port **3000** (mapped to the host via `PONDER_EXPOSED_PORT`, default 40000).
 
 ## Endpoints
 
@@ -13,8 +13,9 @@ The default local URL is `http://localhost:42069`.
 | `/api/*` | GET | Custom REST endpoints. Full reference in Swagger UI at `/docs`. |
 | `/docs` | GET | Swagger UI for the REST endpoints. |
 | `/openapi.json` | GET | OpenAPI 3.0 spec for the REST endpoints. |
-| `/healthz` | GET | Liveness probe. Always returns `200 { "status": "ok" }` if the process is up. |
-| `/ready` | GET | Readiness probe. Returns `200` once historical sync is complete; `503` with `{ "message": "Historical indexing is not complete." }` while still backfilling. |
+| `/health` | GET | Ponder built-in. Returns `200` (empty body) when the process is running. |
+| `/ready` | GET | Ponder built-in. Returns `200` when initial sync is complete; `503` while still syncing. Suitable for K8s readiness probes. |
+| `/healthz` | GET | Application-level. Returns `{ "status": "ok" }` when the server is up. Does not reflect indexer sync progress. |
 | `/status` | GET | Sync progress per chain. Returns current indexed block, latest chain block, and a completion percentage. Useful for monitoring backfill progress. |
 | `/metrics` | GET | Prometheus metrics. Exposes Ponder internals (block lag, handler latency, RPC call counts). |
 
@@ -126,7 +127,7 @@ There is one principled exception to "everything as string": `discreteOrder.vali
 | `discreteOrder.validTo` | number | yes | Unix seconds when this discrete order expires. `uint32` per CoW protocol. |
 | `discreteOrder.creationDate` | string | no | Unix seconds when the discrete order was first observed. Source varies — see the GraphQL field doc. |
 | `candidateDiscreteOrder.validTo` | number | yes | Same as `discreteOrder.validTo`. |
-| `candidateDiscreteOrder.creationDate` | string | no | Block timestamp at C1 discovery. |
+| `candidateDiscreteOrder.creationDate` | string | no | Block timestamp at **OrderDiscoveryPoller** discovery. |
 | `candidateDiscreteOrder.possibleValidAfterTimestamp` | string | yes | TWAP only: `t0 + partIndex*t`. Earliest Unix-seconds time the part can be valid. |
 
 ### Timestamp-like values inside `decodedParams`
