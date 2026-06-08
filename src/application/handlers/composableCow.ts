@@ -47,6 +47,7 @@ import { getOrderTypeFromHandler } from "../../utils/order-types";
 import { decodeStaticInput } from "../../decoders/index";
 import { precomputeAndDiscover } from "../helpers/uidPrecompute";
 import { CirclesBackingOrderAbi } from "../../../abis/CirclesBackingOrderAbi";
+import { log } from "../helpers/logger";
 
 // ─── CirclesBackingOrder immutables cache ───────────────────────────────────
 //
@@ -130,14 +131,9 @@ async function insertGenerator(
   const orderType = getOrderTypeFromHandler(handler, chainId);
 
   if (orderType === "Unknown") {
-    console.warn(
-      `[ComposableCow] Unknown handler ${handler} on chain ${chainId}, ` +
-        `saving as Unknown — event=${event.id}`,
-    );
+    log("warn", "composableCow:unknownHandler", { handler, chainId, event: event.id });
   } else {
-    console.log(
-      `[ComposableCow] ConditionalOrderCreated event=${event.id} chain=${chainId} orderType=${orderType} block=${event.block.number}`,
-    );
+    log("info", "composableCow:created", { event: event.id, chainId, orderType, block: String(event.block.number) });
   }
 
   // Decode staticInput; for CirclesBackingOrder, also merge in handler immutables.
@@ -171,13 +167,9 @@ async function insertGenerator(
         };
       }
 
-      console.log(
-        `[ComposableCow] Decoded event=${event.id} orderType=${orderType} decodedParams=${decodedParams ? "ok" : "null"}`,
-      );
+      log("info", "composableCow:decoded", { event: event.id, orderType, decodedParams: decodedParams ? "ok" : "null" });
     } catch (err) {
-      console.warn(
-        `[ComposableCow] Decode failed event=${event.id} orderType=${orderType} err=${err}`,
-      );
+      log("warn", "composableCow:decodeFailed", { event: event.id, orderType, err: String(err) });
       decodedParams = null;
       decodeError = "invalid_static_input";
     }

@@ -7,7 +7,16 @@ import { GPv2SettlementAbi } from "./abis/GPv2SettlementAbi";
 
 // Build chain entries: { mainnet: { id: 1, rpc: "..." }, gnosis: { id: 100, rpc: "..." }, ... }
 const chains = Object.fromEntries(
-  ACTIVE_CHAINS.map((c) => [c.name, { id: c.chainId, rpc: process.env[c.rpcEnvVar]! }]),
+  ACTIVE_CHAINS.map((c) => [
+    c.name,
+    {
+      id: c.chainId,
+      rpc: process.env[c.rpcEnvVar]!,
+      // Many RPC providers cap eth_getLogs at 1000–2000 blocks; set conservatively to avoid
+      // InvalidInputRpcError retry storms during backfill. Override via ETH_GET_LOGS_BLOCK_RANGE_<chainId>.
+      ethGetLogsBlockRange: Number(process.env[`ETH_GET_LOGS_BLOCK_RANGE_${c.chainId}`] ?? 1000),
+    },
+  ]),
 );
 
 const cowShedChains = ACTIVE_CHAINS.filter((c) => c.cowShedFactory !== null);
