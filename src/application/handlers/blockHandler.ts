@@ -1,17 +1,17 @@
 /**
  * Block handlers — five responsibilities split into separate Ponder block entries.
  *
- * OrderDiscoveryPoller:  RPC multicall for non-deterministic generators. Every block.
- * CandidateConfirmer:    API batch check for unconfirmed candidates. Every block.
- * OrderStatusTracker:    API batch check for open discrete orders + expiry. Every block.
- * OwnerBackfill:         One-time owner fetch for non-deterministic backfill orders.
- * CancellationWatcher:   singleOrders() mapping read for deterministic generators
- *                        (allCandidatesKnown=true) that OrderDiscoveryPoller skips.
- *                        Runs every block but re-checks each generator only every
- *                        DETERMINISTIC_CANCEL_SWEEP_INTERVAL blocks.
+ * C1 (ContractPoller):      RPC multicall for non-deterministic generators. Every block.
+ * C2 (CandidateConfirmer):  API batch check for unconfirmed candidates. Every block.
+ * C3 (StatusUpdater):       API batch check for open discrete orders + expiry. Every block.
+ * C4 (HistoricalBootstrap): One-time owner fetch for non-deterministic backfill orders.
+ * C5 (DeterministicCancellationSweeper): singleOrders() mapping read for
+ *                           deterministic generators (allCandidatesKnown=true) that
+ *                           C1 skips. Runs every block but re-checks each generator
+ *                           only every DETERMINISTIC_CANCEL_SWEEP_INTERVAL blocks.
  *
  * All handlers start at "latest" — only run during live sync.
- * OwnerBackfill additionally has endBlock: "latest", so it fires exactly once.
+ * C4 additionally has endBlock: "latest", so it fires exactly once.
  */
 
 import { ponder } from "ponder:registry";
@@ -51,7 +51,7 @@ const SINGLE_SHOT_NON_DETERMINISTIC: readonly OrderType[] = ["GoodAfterTime", "T
 const BLOCK_NEVER = 2n ** 63n - 1n; // sentinel for epoch-scheduled generators (PollTryAtEpoch)
 const VALID_DISCRETE_STATUSES = new Set(["fulfilled", "unfilled", "expired", "cancelled"]);
 
-// Minimal ABI for CancellationWatcher: reads the singleOrders(owner, hash) mapping on ComposableCoW.
+// Minimal ABI for C5: reads the singleOrders(owner, hash) mapping on ComposableCoW.
 // `false` means the owner called remove() — generator is cancelled on-chain.
 const SINGLE_ORDERS_ABI = [
   {
@@ -67,7 +67,7 @@ const SINGLE_ORDERS_ABI = [
 ] as const;
 
 
-// ─── composableCow.OrderDiscoveryPoller ──────────────────────────────────────
+// ─── C1: Contract Poller ─────────────────────────────────────────────────────
 // Polls getTradeableOrderWithSignature for any active generator where
 // allCandidatesKnown=false. Normally only non-deterministic types, but also
 // serves as fallback for deterministic types whose precompute failed.
@@ -294,7 +294,7 @@ ponder.on("OrderDiscoveryPoller:block", async ({ event, context }) => {
   log("info", "OrderDiscoveryPoller:DONE", { block: String(currentBlock), chainId, due: dueOrders.length, success: successCount, never: neverCount, backedOff: backedOffCount, capped });
 });
 
-// ─── composableCow.CandidateConfirmer ────────────────────────────────────────
+// ─── C2: Candidate Confirmer ─────────────────────────────────────────────────
 // Checks if candidate discrete orders exist on the Orderbook API.
 // When confirmed, promotes them to discreteOrder.
 
@@ -567,7 +567,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
   }
 });
 
-// ─── composableCow.OrderStatusTracker ────────────────────────────────────────
+// ─── C3: Status Updater ──────────────────────────────────────────────────────
 // Polls the API for status updates on open discrete orders. Expires past validTo.
 
 ponder.on("OrderStatusTracker:block", async ({ event, context }) => {
@@ -665,7 +665,7 @@ ponder.on("OrderStatusTracker:block", async ({ event, context }) => {
     );
 });
 
-// ─── composableCow.OwnerBackfill ─────────────────────────────────────────────
+// ─── C4: Historical Bootstrap ────────────────────────────────────────────────
 // One-time discovery of historical discrete orders for non-deterministic
 // generators created during backfill. Fires once at startBlock=endBlock="latest".
 
@@ -775,14 +775,14 @@ ponder.on("OwnerBackfill:block", async ({ event, context }) => {
   log("info", "OwnerBackfill:DONE", { block: String(currentBlock), chainId, discovered: totalDiscovered });
 });
 
-// ─── composableCow.CancellationWatcher ───────────────────────────────────────
-// OrderDiscoveryPoller skips generators with allCandidatesKnown=true (deterministic
-// types: TWAP, StopLoss, CirclesBackingOrder), so SingleOrderNotAuthed is never
-// observed for them. This handler closes that gap by reading
+// ─── C5: Deterministic Cancellation Sweeper ──────────────────────────────────
+// C1 skips generators with allCandidatesKnown=true (deterministic types: TWAP,
+// StopLoss, CirclesBackingOrder), so SingleOrderNotAuthed is never observed
+// for them. This handler closes that gap by reading
 // ComposableCoW.singleOrders(owner, hash) on a DETERMINISTIC_CANCEL_SWEEP_INTERVAL
 // cadence. A `false` result means the owner called remove() on-chain → flip to
-// Cancelled, which lets the CandidateConfirmer/OrderStatusTracker parent-cancelled
-// cascade (COW-918) reconcile the child discrete / candidate rows on the next block.
+// Cancelled, which lets the C2/C3 parent-cancelled cascade (COW-918) reconcile
+// the child discrete / candidate rows on the next block.
 
 ponder.on("CancellationWatcher:block", async ({ event, context }) => {
   if (process.env.DISABLE_DETERMINISTIC_CANCEL_SWEEP) return;
