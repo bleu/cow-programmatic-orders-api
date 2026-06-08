@@ -35,7 +35,7 @@ export const syncProgressRoute = createRoute({
   tags: ["Indexer"],
   summary: "Per-chain historical sync progress",
   description:
-    "Returns the indexer's historical backfill progress per chain: total blocks to process, blocks already processed, percentage complete, and whether the chain is in realtime mode. Reads from Ponder's built-in Prometheus metrics. During initial sync, progressPct will rise from 0 to 100 and isComplete will flip to true once the chain is fully caught up.",
+    "Returns the indexer's historical backfill progress per chain: total blocks to process, blocks already processed, percentage complete, and whether the chain is in realtime mode. Reads from Ponder's built-in Prometheus metrics. During initial sync, historicalBlocksFetchedPct will rise from 0 to 100 and isComplete will flip to true once the chain is fully caught up.",
   responses: {
     200: {
       description: "Per-chain sync progress.",

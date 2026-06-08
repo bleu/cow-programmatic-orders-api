@@ -1,5 +1,6 @@
 import { ponder } from "ponder:registry";
 import { sql } from "ponder";
+import { log } from "../helpers/logger";
 
 /**
  * Creates the cow_cache schema and persistent cache tables on startup.
@@ -37,7 +38,5 @@ ponder.on("ComposableCow:setup", async ({ context }) => {
   ) as { count: number }[];
   const count = result[0]?.count ?? 0;
 
-  console.log(
-    `[COW:SETUP] cow_cache.order_uid_cache ready — ${count} entr${count === 1 ? "y" : "ies"} from previous run`,
-  );
+  log("info", "setup:cacheReady", { count, entries: `${count} entr${count === 1 ? "y" : "ies"} from previous run` });
 });

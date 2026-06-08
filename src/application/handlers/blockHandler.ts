@@ -15,7 +15,7 @@
  */
 
 import { ponder } from "ponder:registry";
-import { bootstrapRetryQueue, candidateDiscreteOrder, conditionalOrderGenerator, discreteOrder } from "ponder:schema";
+import { bootstrapRetryQueue, candidateDiscreteOrder, conditionalOrderGenerator, discreteOrder, discreteOrderStatusEnum } from "ponder:schema";
 import { and, asc, eq, inArray, isNull, lte, or, sql } from "ponder";
 import type { Hex } from "viem";
 import {
@@ -27,6 +27,7 @@ import {
   BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
   DEFAULT_MAX_GENERATORS_PER_BLOCK,
   DETERMINISTIC_CANCEL_SWEEP_INTERVAL,
+  ORDERBOOK_HTTP_TIMEOUT_MS,
   RECHECK_INTERVAL,
   TRY_NEXT_BLOCK_WARMUP_THRESHOLD,
   TRY_NEXT_BLOCK_COOLDOWN_THRESHOLD,
@@ -41,9 +42,12 @@ import {
   parsePollError,
 } from "../helpers/pollResultErrors";
 import { computeOrderUid, type GPv2OrderData } from "../helpers/orderUid";
+import { log } from "../helpers/logger";
+import { type OrderType } from "../../utils/order-types";
+type DiscreteStatus = (typeof discreteOrderStatusEnum.enumValues)[number];
 
-const NON_DETERMINISTIC_TYPES = ["PerpetualSwap", "GoodAfterTime", "TradeAboveThreshold", "Unknown"] as const;
-const SINGLE_SHOT_NON_DETERMINISTIC = ["GoodAfterTime", "TradeAboveThreshold"] as const;
+const NON_DETERMINISTIC_TYPES: readonly OrderType[] = ["PerpetualSwap", "GoodAfterTime", "TradeAboveThreshold", "Unknown"];
+const SINGLE_SHOT_NON_DETERMINISTIC: readonly OrderType[] = ["GoodAfterTime", "TradeAboveThreshold"];
 const BLOCK_NEVER = 2n ** 63n - 1n; // sentinel for epoch-scheduled generators (PollTryAtEpoch)
 const VALID_DISCRETE_STATUSES = new Set(["fulfilled", "unfilled", "expired", "cancelled"]);
 
@@ -112,16 +116,14 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
     handler: Hex;
     salt: Hex;
     staticInput: Hex;
-    orderType: string;
+    orderType: OrderType;
     decodedParams: Record<string, string> | null;
     consecutiveTryNextBlock: number;
   }[];
 
   if (dueOrders.length === 0) return;
 
-  console.log(
-    `[COW:C1] ENTER block=${currentBlock} chain=${chainId} due=${dueOrders.length}`,
-  );
+  log("info", "C1:ENTER", { block: String(currentBlock), chainId, due: dueOrders.length });
 
   const c1MulticallPromise = context.client.multicall({
     contracts: dueOrders.map((order) => ({
@@ -147,9 +149,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
     );
   } catch (err) {
     if (err instanceof TimeoutError) {
-      console.warn(
-        `[COW:C1] multicall timeout block=${currentBlock} chain=${chainId} due=${dueOrders.length}`,
-      );
+      log("warn", "C1:multicall_timeout", { block: String(currentBlock), chainId, due: dueOrders.length });
       return;
     }
     throw err;
@@ -197,7 +197,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
           .onConflictDoNothing(),
       );
 
-      const isSingleShot = (SINGLE_SHOT_NON_DETERMINISTIC as readonly string[]).includes(order.orderType);
+      const isSingleShot = SINGLE_SHOT_NON_DETERMINISTIC.includes(order.orderType);
       successPromises.push(
         updateGeneratorPollState(context, chainId, order.generatorId, currentBlock, {
           nextCheckBlock: currentBlock + RECHECK_INTERVAL,
@@ -263,9 +263,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
                 eq(conditionalOrderGenerator.eventId, order.generatorId),
               ),
             );
-          console.log(
-            `[COW:C1] NEVER generatorId=${order.generatorId} reason=${pollResult.reason} block=${currentBlock} chain=${chainId}`,
-          );
+          log("info", "C1:NEVER", { block: String(currentBlock), chainId, generatorId: order.generatorId, reason: pollResult.reason });
           neverCount++;
           break;
 
@@ -284,9 +282,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
                 eq(conditionalOrderGenerator.eventId, order.generatorId),
               ),
             );
-          console.log(
-            `[COW:C1] CANCELLED generatorId=${order.generatorId} block=${currentBlock} chain=${chainId}`,
-          );
+          log("info", "C1:CANCELLED", { block: String(currentBlock), chainId, generatorId: order.generatorId });
           break;
       }
     }
@@ -295,9 +291,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
   await Promise.all(successPromises);
 
   const capped = dueOrders.length === maxGeneratorsPerBlock;
-  console.log(
-    `[COW:C1] DONE block=${currentBlock} chain=${chainId} due=${dueOrders.length} success=${successCount} never=${neverCount} backedOff=${backedOffCount}${capped ? " CAPPED" : ""}`,
-  );
+  log("info", "C1:DONE", { block: String(currentBlock), chainId, due: dueOrders.length, success: successCount, never: neverCount, backedOff: backedOffCount, capped });
 });
 
 // ─── C2: Candidate Confirmer ─────────────────────────────────────────────────
@@ -354,23 +348,46 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
     }[];
 
     if (orphanCandidates.length > 0) {
+      // COW-990: preflight /by_uids before writing cancelled. A candidate could have
+      // been posted by the watch-tower and filled/expired between generator creation
+      // and the cancellation cascade (~0.17% observed rate). Use the API status when
+      // available; fall back to 'cancelled' for UIDs not yet on the orderbook.
+      // Bounded by ORDERBOOK_HTTP_TIMEOUT_MS * 2; on timeout the empty map fallback
+      // keeps correctness degraded-gracefully (all orphans written as 'cancelled').
+      let preflightStatuses: Awaited<ReturnType<typeof fetchOrderStatusByUids>>;
+      try {
+        preflightStatuses = await withTimeout(
+          fetchOrderStatusByUids(context, chainId, orphanCandidates.map((c) => c.orderUid)),
+          ORDERBOOK_HTTP_TIMEOUT_MS * 2,
+          "c2:cascade:preflight",
+        );
+      } catch {
+        preflightStatuses = new Map();
+      }
+
+      // onConflictDoNothing: if C3 already promoted this UID with a terminal status
+      // (e.g. 'fulfilled'), the existing row wins and this insert is a no-op.
+      // preflightKnown counts API hits, not rows actually written.
       await context.db.sql
         .insert(discreteOrder)
         .values(
-          orphanCandidates.map((c) => ({
-            orderUid: c.orderUid,
-            chainId,
-            conditionalOrderGeneratorId: c.generatorId,
-            status: "cancelled" as const,
-            sellAmount: c.sellAmount,
-            buyAmount: c.buyAmount,
-            feeAmount: c.feeAmount,
-            validTo: c.validTo,
-            creationDate: c.creationDate,
-            executedSellAmount: null,
-            executedBuyAmount: null,
-            promotedAt: event.block.timestamp,
-          })),
+          orphanCandidates.map((c) => {
+            const apiEntry = preflightStatuses.get(c.orderUid);
+            return {
+              orderUid: c.orderUid,
+              chainId,
+              conditionalOrderGeneratorId: c.generatorId,
+              status: (apiEntry?.status ?? "cancelled") as DiscreteStatus,
+              sellAmount: c.sellAmount,
+              buyAmount: c.buyAmount,
+              feeAmount: c.feeAmount,
+              validTo: c.validTo,
+              creationDate: c.creationDate,
+              executedSellAmount: apiEntry?.executedSellAmount ?? null,
+              executedBuyAmount: apiEntry?.executedBuyAmount ?? null,
+              promotedAt: event.block.timestamp,
+            };
+          }),
         )
         .onConflictDoNothing();
 
@@ -386,9 +403,8 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
           ),
         );
 
-      console.log(
-        `[COW:C2] block=${event.block.number} chain=${chainId} parent-cancelled=${orphanCandidates.length}`,
-      );
+      const preflightKnown = preflightStatuses.size;
+      log("info", "C2:parent_cancelled", { block: String(event.block.number), chainId, parentCancelled: orphanCandidates.length, preflightKnown });
     }
   }
 
@@ -428,7 +444,6 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
   const uids = unconfirmed.map((c) => c.orderUid);
   const statuses = await fetchOrderStatusByUids(context, chainId, uids);
 
-  type DiscreteStatus = "open" | "fulfilled" | "unfilled" | "expired" | "cancelled";
   const rowsToUpsert: (typeof discreteOrder.$inferInsert)[] = [];
   const confirmedUids: string[] = [];
 
@@ -548,9 +563,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
   }
 
   if (confirmed > 0 || stale.length > 0) {
-    console.log(
-      `[COW:C2] block=${event.block.number} chain=${chainId} candidates=${unconfirmed.length} confirmed=${confirmed} expired=${stale.length}`,
-    );
+    log("info", "C2:DONE", { block: String(event.block.number), chainId, candidates: unconfirmed.length, confirmed, expired: stale.length });
   }
 });
 
@@ -602,9 +615,7 @@ ponder.on("StatusUpdater:block", async ({ event, context }) => {
     }
 
     if (updated > 0) {
-      console.log(
-        `[COW:C3] block=${event.block.number} chain=${chainId} open=${openOrders.length} updated=${updated}`,
-      );
+      log("info", "C3:DONE", { block: String(event.block.number), chainId, open: openOrders.length, updated });
     }
   }
 
@@ -668,9 +679,7 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
     .from(bootstrapRetryQueue)
     .where(eq(bootstrapRetryQueue.chainId, chainId));
 
-  console.log(
-    `[COW:C4] block=${currentBlock} chain=${chainId} pending_retry=${queued.length}`,
-  );
+  log("info", "C4:START", { block: String(currentBlock), chainId, pendingRetry: queued.length });
 
   let totalDiscovered = 0;
   const retriedOwners = new Set<Hex>();
@@ -690,9 +699,7 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
         .where(and(eq(bootstrapRetryQueue.chainId, chainId), eq(bootstrapRetryQueue.owner, owner as Hex)));
     } catch (err) {
       if (err instanceof TimeoutError) {
-        console.warn(
-          `[COW:C4] owner retry timeout owner=${owner} chain=${chainId} retry_count=${retryCount + 1} after=${BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS}ms`,
-        );
+        log("warn", "C4:owner_retry_timeout", { block: String(currentBlock), chainId, owner, retryCount: retryCount + 1, timeoutMs: BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS });
         await context.db.sql
           .update(bootstrapRetryQueue)
           .set({ retryCount: retryCount + 1, lastRetryAt: currentBlock })
@@ -728,21 +735,19 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
     ) as {
     generatorId: string;
     owner: Hex;
-    orderType: string;
+    orderType: OrderType;
   }[];
 
   // Exclude owners already retried above — they were just attempted this run
   const freshOwners = new Set(generators.map((g) => g.owner).filter((o) => !retriedOwners.has(o)));
 
   if (freshOwners.size === 0 && retriedOwners.size === 0) {
-    console.log(`[COW:C4] block=${currentBlock} chain=${chainId} no generators need bootstrap`);
+    log("info", "C4:no_bootstrap_needed", { block: String(currentBlock), chainId });
     return;
   }
 
   if (freshOwners.size > 0) {
-    console.log(
-      `[COW:C4] block=${currentBlock} chain=${chainId} generators=${generators.length} fresh_owners=${freshOwners.size}`,
-    );
+    log("info", "C4:bootstrap_start", { block: String(currentBlock), chainId, generators: generators.length, freshOwners: freshOwners.size });
   }
 
   for (const owner of freshOwners) {
@@ -756,9 +761,7 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
       totalDiscovered += count;
     } catch (err) {
       if (err instanceof TimeoutError) {
-        console.warn(
-          `[COW:C4] owner timeout owner=${owner} chain=${chainId} after=${BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS}ms`,
-        );
+        log("warn", "C4:owner_timeout", { block: String(currentBlock), chainId, owner, timeoutMs: BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS });
         await context.db.sql
           .insert(bootstrapRetryQueue)
           .values({ chainId, owner, firstTimeoutAt: currentBlock, retryCount: 1, lastRetryAt: currentBlock })
@@ -769,9 +772,7 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
     }
   }
 
-  console.log(
-    `[COW:C4] DONE block=${currentBlock} chain=${chainId} discovered=${totalDiscovered}`,
-  );
+  log("info", "C4:DONE", { block: String(currentBlock), chainId, discovered: totalDiscovered });
 });
 
 // ─── C5: Deterministic Cancellation Sweeper ──────────────────────────────────
@@ -820,14 +821,12 @@ ponder.on("DeterministicCancellationSweeper:block", async ({ event, context }) =
     generatorId: string;
     owner: Hex;
     hash: Hex;
-    orderType: string;
+    orderType: OrderType;
   }[];
 
   if (dueGenerators.length === 0) return;
 
-  console.log(
-    `[COW:C5] ENTER block=${currentBlock} chain=${chainId} due=${dueGenerators.length}`,
-  );
+  log("info", "C5:ENTER", { block: String(currentBlock), chainId, due: dueGenerators.length });
 
   const c5MulticallPromise = context.client.multicall({
     contracts: dueGenerators.map((g) => ({
@@ -848,9 +847,7 @@ ponder.on("DeterministicCancellationSweeper:block", async ({ event, context }) =
     );
   } catch (err) {
     if (err instanceof TimeoutError) {
-      console.warn(
-        `[COW:C5] multicall timeout block=${currentBlock} chain=${chainId} due=${dueGenerators.length}`,
-      );
+      log("warn", "C5:multicall_timeout", { block: String(currentBlock), chainId, due: dueGenerators.length });
       return;
     }
     throw err;
@@ -887,9 +884,7 @@ ponder.on("DeterministicCancellationSweeper:block", async ({ event, context }) =
             eq(conditionalOrderGenerator.eventId, gen.generatorId),
           ),
         );
-      console.log(
-        `[COW:C5] CANCELLED generatorId=${gen.generatorId} orderType=${gen.orderType} block=${currentBlock} chain=${chainId}`,
-      );
+      log("info", "C5:CANCELLED", { block: String(currentBlock), chainId, generatorId: gen.generatorId, orderType: gen.orderType });
       cancelledCount++;
     } else {
       await context.db.sql
@@ -909,9 +904,7 @@ ponder.on("DeterministicCancellationSweeper:block", async ({ event, context }) =
     }
   }
 
-  console.log(
-    `[COW:C5] DONE block=${currentBlock} chain=${chainId} due=${dueGenerators.length} cancelled=${cancelledCount} stillActive=${stillActiveCount} errors=${errorCount}`,
-  );
+  log("info", "C5:DONE", { block: String(currentBlock), chainId, due: dueGenerators.length, cancelled: cancelledCount, stillActive: stillActiveCount, errors: errorCount });
 });
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────
