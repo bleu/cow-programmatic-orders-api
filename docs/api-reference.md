@@ -53,21 +53,21 @@ Example response:
   "mainnet": {
     "totalBlocks": 7000000,
     "processedBlocks": 3000000,
-    "progressPct": 42.9,
+    "historicalBlocksFetchedPct": 42.9,
     "isRealtime": false,
     "isComplete": false
   },
   "gnosis": {
     "totalBlocks": 17000000,
     "processedBlocks": 17000000,
-    "progressPct": 100.0,
+    "historicalBlocksFetchedPct": 100.0,
     "isRealtime": true,
     "isComplete": true
   }
 }
 ```
 
-- `progressPct` is rounded to one decimal place (0–100).
+- `historicalBlocksFetchedPct` is rounded to one decimal place (0–100).
 - `isRealtime` flips to `true` once the chain enters live-sync mode.
 - `isComplete` flips to `true` once all historical blocks are processed.
 - Returns `{}` if the `/metrics` endpoint is unreachable.
