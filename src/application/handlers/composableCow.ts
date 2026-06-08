@@ -8,8 +8,8 @@
  *
  * For deterministic types (TWAP, StopLoss, CirclesBackingOrder), precomputeAndDiscover
  * computes all UIDs, fetches their status from the API, upserts discrete orders, and marks
- * allCandidatesKnown=true. Non-deterministic types are left for the C1-C4 block handlers to
- * discover at live sync.
+ * allCandidatesKnown=true. Non-deterministic types are left for the OrderDiscoveryPoller
+ * block handler to discover at live sync.
  *
  * CirclesBackingOrder (Gnosis only) additionally reads two constructor immutables
  * (SELL_TOKEN, SELL_AMOUNT) from the handler contract at creation time and merges them
@@ -24,12 +24,14 @@
  *
  *   This affects only EIP-1271 composable orders where the user cancels through
  *   the API rather than calling ComposableCoW.remove() on-chain. In practice
- *   this is rare — the standard cancellation path for composable orders is
- *   on-chain, which emits ConditionalOrderCancelled (handled elsewhere) or
- *   triggers PollNever in the block handler.
+ *   this is rare — the standard on-chain cancellation path is detected via
+ *   SingleOrderNotAuthed (OrderDiscoveryPoller) and the CancellationWatcher,
+ *   both of which work correctly.
  *
- *   If this gap proves significant in production, a lightweight periodic check
- *   can be added for owners with open orders. Track via issue tracker if needed.
+ *   A newer ComposableCoW contract version (nullislabs/composable-cow#1) emits a
+ *   ConditionalOrderRemoved event from remove(), which would allow the indexer to
+ *   detect on-chain cancellations directly without polling. Supporting this contract
+ *   version is tracked as a future improvement.
  *
  */
 
@@ -253,7 +255,7 @@ ponder.on(
 
 // ─── Live handler (ComposableCowLive — startBlock: "latest") ────────────────
 // Same as backfill: pre-compute covers deterministic types.
-// Non-deterministic types are discovered by C1-C4 block handlers at live sync.
+// Non-deterministic types are discovered by the OrderDiscoveryPoller block handler at live sync.
 
 ponder.on(
   "ComposableCowLive:ConditionalOrderCreated",
