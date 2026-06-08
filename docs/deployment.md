@@ -104,23 +104,17 @@ The indexer exposes two health endpoints with distinct semantics:
 | `/health` | **Liveness** — is the process alive? | Always, once the server starts |
 | `/ready` | **Readiness** — is the index fully synced? | Only when fully synced |
 
-Map these to different K8s probe types:
+Map these to different K8s probe types. The specific timing values (`periodSeconds`, `failureThreshold`, `initialDelaySeconds`) depend on your cluster's SLOs; what matters is which path and port to use:
 
 ```yaml
 livenessProbe:
   httpGet:
     path: /health
     port: 3000
-  initialDelaySeconds: 30
-  periodSeconds: 30
-  failureThreshold: 3
 readinessProbe:
   httpGet:
     path: /ready
     port: 3000
-  initialDelaySeconds: 30
-  periodSeconds: 30
-  failureThreshold: 3    # marks pod unready (not killed) — cold-start sync takes hours
 ```
 
 **Do not** use `/ready` as the liveness probe. A pod that is still indexing (which takes hours on a cold start) returns 200 on `/health` but not on `/ready`. Using `/ready` for liveness would kill the pod before it ever finishes syncing.
