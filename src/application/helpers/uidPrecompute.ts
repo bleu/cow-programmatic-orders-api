@@ -21,6 +21,7 @@ import { candidateDiscreteOrder, conditionalOrderGenerator, discreteOrder } from
 import { computeOrderUid, type GPv2OrderData } from "./orderUid";
 import { fetchOrderStatusByUids } from "./orderbookClient";
 import { isDeterministicOrderType } from "../../utils/order-types";
+import { log } from "./logger";
 
 // GPv2Order.sol constant hashes
 const KIND_SELL = "0xf3b277728b3fee749481eb3e0b3b48980dbbab78658fc419025cb16eee346775" as Hex;
@@ -61,7 +62,7 @@ export function precomputeOrderUids(
 ): PrecomputedOrder[] | null {
   if (!decodedParams) {
     if (isDeterministicOrderType(orderType)) {
-      console.warn(`[COW:PRECOMPUTE] SKIP type=${orderType} owner=${owner} chain=${chainId} reason=decodedParams_null`);
+      log("warn", "precompute:skip", { orderType, owner, chainId, reason: "decodedParams_null" });
     }
     return null;
   }
@@ -167,9 +168,7 @@ export async function precomputeAndDiscover(
           eq(conditionalOrderGenerator.eventId, generatorEventId),
         ),
       );
-    console.log(
-      `[ComposableCow] All ${precomputed.length} pre-computed orders terminal on API — generator=${generatorEventId} marked Completed`,
-    );
+    log("info", "precompute:allTerminal", { count: precomputed.length, generatorEventId });
     return true;
   }
 
@@ -221,7 +220,7 @@ function precomputeTwapUids(
   const appData = params["appData"] as Hex | undefined;
 
   if (!sellToken || !buyToken || !partSellAmount || !minPartLimit || !n || !t || !appData) {
-    console.warn(`[COW:PRECOMPUTE] SKIP type=TWAP owner=${owner} chain=${chainId} reason=missing_params missing=${[!sellToken && "sellToken", !buyToken && "buyToken", !partSellAmount && "partSellAmount", !minPartLimit && "minPartLimit", !n && "n", !t && "t", !appData && "appData"].filter(Boolean).join(",")}`);
+    log("warn", "precompute:skip", { orderType: "TWAP", owner, chainId, reason: "missing_params", missing: [!sellToken && "sellToken", !buyToken && "buyToken", !partSellAmount && "partSellAmount", !minPartLimit && "minPartLimit", !n && "n", !t && "t", !appData && "appData"].filter(Boolean).join(",") });
     return null;
   }
 
@@ -232,11 +231,11 @@ function precomputeTwapUids(
   const t0 = BigInt(t0Raw ?? "0") === 0n ? blockTimestamp : BigInt(t0Raw!);
 
   if (nParts <= 0 || tSeconds <= 0n) {
-    console.warn(`[COW:PRECOMPUTE] SKIP type=TWAP owner=${owner} chain=${chainId} reason=invalid_math nParts=${nParts} tSeconds=${tSeconds}`);
+    log("warn", "precompute:skip", { orderType: "TWAP", owner, chainId, reason: "invalid_math", nParts, tSeconds: String(tSeconds) });
     return null;
   }
   if (nParts > 100000) {
-    console.warn(`[COW:PRECOMPUTE] SKIP type=TWAP owner=${owner} chain=${chainId} reason=too_many_parts nParts=${nParts}`);
+    log("warn", "precompute:skip", { orderType: "TWAP", owner, chainId, reason: "too_many_parts", nParts });
     return null;
   }
 
@@ -318,7 +317,7 @@ function precomputeStopLossUid(
   const validTo = params["validTo"];
 
   if (!sellToken || !buyToken || !sellAmount || !buyAmount || !appData || !validTo) {
-    console.warn(`[COW:PRECOMPUTE] SKIP type=StopLoss owner=${owner} chain=${chainId} reason=missing_params missing=${[!sellToken && "sellToken", !buyToken && "buyToken", !sellAmount && "sellAmount", !buyAmount && "buyAmount", !appData && "appData", !validTo && "validTo"].filter(Boolean).join(",")}`);
+    log("warn", "precompute:skip", { orderType: "StopLoss", owner, chainId, reason: "missing_params", missing: [!sellToken && "sellToken", !buyToken && "buyToken", !sellAmount && "sellAmount", !buyAmount && "buyAmount", !appData && "appData", !validTo && "validTo"].filter(Boolean).join(",") });
     return null;
   }
 

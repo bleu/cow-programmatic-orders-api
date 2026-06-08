@@ -131,9 +131,20 @@ The Docker Compose health check uses `/ready` with a 24-hour start period as a p
 
 ### Structured Logging
 
-`pnpm start` runs with `--log-format json`, which makes both Ponder's internal log lines and the handler log lines (via `log()` in `src/application/helpers/logger.ts`) emit newline-delimited JSON. Each handler log line includes `chainId` and `block` as top-level fields, enabling log aggregators (Datadog, CloudWatch, Loki) to filter and alert by chain.
+`pnpm start` runs with `--log-format json`, which makes both Ponder's internal log lines and the handler log lines emit newline-delimited JSON. Each handler log line includes structured fields (e.g. `chainId`, `block`) enabling log aggregators (Datadog, CloudWatch, Loki) to filter and alert by chain.
 
 `pnpm dev` uses Ponder's default pretty format for readability during local development.
+
+**Convention:** all code under `src/application/` uses `log()` from `src/application/helpers/logger.ts` instead of `console.log/warn/error` directly. The `src/api/` layer (Hono routes) is exempt — Hono handles its own logging. Example:
+
+```ts
+import { log } from "../helpers/logger";
+
+log("info", "c2:confirmed", { chainId, orderUid, block: String(event.block.number) });
+log("warn", "c2:timeout",   { chainId, block: String(event.block.number) });
+```
+
+`warn` and `error` level messages go to `stderr`; `info` goes to `stdout`. The `level` field in the JSON payload is what log aggregators use to route and alert.
 
 ### PostgreSQL Memory Flags
 
