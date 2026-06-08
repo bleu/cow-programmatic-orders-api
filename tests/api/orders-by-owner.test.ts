@@ -1,4 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import {
+  GeneratorSummary,
+  OrdersByOwnerResponse,
+} from "../../src/api/schemas/orders-by-owner";
 
 // Mock virtual modules before any ponder-importing source files are loaded.
 // ponder:api is resolved to tests/__mocks__/ponder-api.ts via vitest alias — no inline override needed.
@@ -123,7 +127,7 @@ describe("ordersByOwnerHandler", () => {
     expect(result.orders).toEqual([]);
   });
 
-  it("returns enriched orders with embedded generator data", async () => {
+  it("returns enriched orders with embedded generator data including hash", async () => {
     vi.mocked(db.select)
       .mockReturnValueOnce(makeSelectChain([]) as never)
       .mockReturnValueOnce(makeSelectChain([GENERATOR]) as never)
@@ -140,6 +144,7 @@ describe("ordersByOwnerHandler", () => {
     const gen = order["generator"] as Record<string, unknown>;
     expect(gen["eventId"]).toBe(EVENT_ID);
     expect(gen["orderType"]).toBe("TWAP");
+    expect(gen["hash"]).toBe(GENERATOR.hash);
   });
 
   it("serialises creationDate as a decimal string (BigInt scalar)", async () => {
@@ -166,9 +171,75 @@ describe("ordersByOwnerHandler", () => {
     const result = ctx._responses[0]!.body as { orders: unknown[] };
     expect(result.orders).toHaveLength(1);
   });
+});
 
-  // Regression guard for COW-993 (F15): hash must be present in generator object.
-  // Enable this test after the F15 fix lands (add `hash` to GeneratorSummary schema
-  // and select it in ordersByOwnerHandler).
-  it.todo("includes hash in generator object (COW-993)");
+// A minimal valid GeneratorSummary payload that satisfies all required fields.
+const validGenerator = {
+  eventId: "0xabc123",
+  chainId: 1,
+  orderType: "TWAP",
+  owner: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  resolvedOwner: null,
+  status: "open",
+  hash: "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+  ownerAddressType: null,
+} as const;
+
+describe("GeneratorSummary schema", () => {
+  // Regression guard for COW-993: hash was previously missing from the schema,
+  // causing it to be silently dropped from API responses. safeParse accepts
+  // unknown so TS gives no protection here at runtime.
+  it("fails parse when hash is missing", () => {
+    const { hash: _omitted, ...withoutHash } = validGenerator;
+    const result = GeneratorSummary.safeParse(withoutHash);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const paths = result.error.issues.map((i) => i.path.join("."));
+      expect(paths).toContain("hash");
+    }
+  });
+
+  // Regression guard: ownerAddressType is nullable — null is the common case
+  // for generators that don't go through a proxy.
+  it("ownerAddressType accepts null", () => {
+    const result = GeneratorSummary.safeParse({ ...validGenerator, ownerAddressType: null });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.ownerAddressType).toBeNull();
+    }
+  });
+});
+
+describe("OrdersByOwnerResponse schema", () => {
+  it("wraps an array of GeneratorSummary correctly via the orders field", () => {
+    const orderItem = {
+      orderUid: "0xorder001",
+      chainId: 1,
+      status: "open",
+      sellAmount: "1000000000000000000",
+      buyAmount: "2000000000000000000",
+      feeAmount: "0",
+      validTo: null,
+      creationDate: "1700000000",
+      executedSellAmount: null,
+      executedBuyAmount: null,
+      generatorId: "0xabc123",
+      generator: validGenerator,
+    };
+
+    const result = OrdersByOwnerResponse.safeParse({ orders: [orderItem] });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.orders).toHaveLength(1);
+      expect(result.data.orders[0]!.generator?.hash).toBe(validGenerator.hash);
+    }
+  });
+
+  it("parses an empty orders array", () => {
+    const result = OrdersByOwnerResponse.safeParse({ orders: [] });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.orders).toHaveLength(0);
+    }
+  });
 });

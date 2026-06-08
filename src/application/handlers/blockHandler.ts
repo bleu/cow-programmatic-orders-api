@@ -15,7 +15,7 @@
  */
 
 import { ponder } from "ponder:registry";
-import { bootstrapRetryQueue, candidateDiscreteOrder, conditionalOrderGenerator, discreteOrder } from "ponder:schema";
+import { bootstrapRetryQueue, candidateDiscreteOrder, conditionalOrderGenerator, discreteOrder, discreteOrderStatusEnum } from "ponder:schema";
 import { and, asc, eq, inArray, isNull, lte, or, sql } from "ponder";
 import type { Hex } from "viem";
 import {
@@ -27,6 +27,7 @@ import {
   BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
   DEFAULT_MAX_GENERATORS_PER_BLOCK,
   DETERMINISTIC_CANCEL_SWEEP_INTERVAL,
+  ORDERBOOK_HTTP_TIMEOUT_MS,
   RECHECK_INTERVAL,
   TRY_NEXT_BLOCK_WARMUP_THRESHOLD,
   TRY_NEXT_BLOCK_COOLDOWN_THRESHOLD,
@@ -42,9 +43,11 @@ import {
 } from "../helpers/pollResultErrors";
 import { computeOrderUid, type GPv2OrderData } from "../helpers/orderUid";
 import { log } from "../helpers/logger";
+import { type OrderType } from "../../utils/order-types";
+type DiscreteStatus = (typeof discreteOrderStatusEnum.enumValues)[number];
 
-const NON_DETERMINISTIC_TYPES = ["PerpetualSwap", "GoodAfterTime", "TradeAboveThreshold", "Unknown"] as const;
-const SINGLE_SHOT_NON_DETERMINISTIC = ["GoodAfterTime", "TradeAboveThreshold"] as const;
+const NON_DETERMINISTIC_TYPES: readonly OrderType[] = ["PerpetualSwap", "GoodAfterTime", "TradeAboveThreshold", "Unknown"];
+const SINGLE_SHOT_NON_DETERMINISTIC: readonly OrderType[] = ["GoodAfterTime", "TradeAboveThreshold"];
 const BLOCK_NEVER = 2n ** 63n - 1n; // sentinel for epoch-scheduled generators (PollTryAtEpoch)
 const VALID_DISCRETE_STATUSES = new Set(["fulfilled", "unfilled", "expired", "cancelled"]);
 
@@ -113,7 +116,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
     handler: Hex;
     salt: Hex;
     staticInput: Hex;
-    orderType: string;
+    orderType: OrderType;
     decodedParams: Record<string, string> | null;
     consecutiveTryNextBlock: number;
   }[];
@@ -194,7 +197,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
           .onConflictDoNothing(),
       );
 
-      const isSingleShot = (SINGLE_SHOT_NON_DETERMINISTIC as readonly string[]).includes(order.orderType);
+      const isSingleShot = SINGLE_SHOT_NON_DETERMINISTIC.includes(order.orderType);
       successPromises.push(
         updateGeneratorPollState(context, chainId, order.generatorId, currentBlock, {
           nextCheckBlock: currentBlock + RECHECK_INTERVAL,
@@ -345,23 +348,46 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
     }[];
 
     if (orphanCandidates.length > 0) {
+      // COW-990: preflight /by_uids before writing cancelled. A candidate could have
+      // been posted by the watch-tower and filled/expired between generator creation
+      // and the cancellation cascade (~0.17% observed rate). Use the API status when
+      // available; fall back to 'cancelled' for UIDs not yet on the orderbook.
+      // Bounded by ORDERBOOK_HTTP_TIMEOUT_MS * 2; on timeout the empty map fallback
+      // keeps correctness degraded-gracefully (all orphans written as 'cancelled').
+      let preflightStatuses: Awaited<ReturnType<typeof fetchOrderStatusByUids>>;
+      try {
+        preflightStatuses = await withTimeout(
+          fetchOrderStatusByUids(context, chainId, orphanCandidates.map((c) => c.orderUid)),
+          ORDERBOOK_HTTP_TIMEOUT_MS * 2,
+          "c2:cascade:preflight",
+        );
+      } catch {
+        preflightStatuses = new Map();
+      }
+
+      // onConflictDoNothing: if C3 already promoted this UID with a terminal status
+      // (e.g. 'fulfilled'), the existing row wins and this insert is a no-op.
+      // preflightKnown counts API hits, not rows actually written.
       await context.db.sql
         .insert(discreteOrder)
         .values(
-          orphanCandidates.map((c) => ({
-            orderUid: c.orderUid,
-            chainId,
-            conditionalOrderGeneratorId: c.generatorId,
-            status: "cancelled" as const,
-            sellAmount: c.sellAmount,
-            buyAmount: c.buyAmount,
-            feeAmount: c.feeAmount,
-            validTo: c.validTo,
-            creationDate: c.creationDate,
-            executedSellAmount: null,
-            executedBuyAmount: null,
-            promotedAt: event.block.timestamp,
-          })),
+          orphanCandidates.map((c) => {
+            const apiEntry = preflightStatuses.get(c.orderUid);
+            return {
+              orderUid: c.orderUid,
+              chainId,
+              conditionalOrderGeneratorId: c.generatorId,
+              status: (apiEntry?.status ?? "cancelled") as DiscreteStatus,
+              sellAmount: c.sellAmount,
+              buyAmount: c.buyAmount,
+              feeAmount: c.feeAmount,
+              validTo: c.validTo,
+              creationDate: c.creationDate,
+              executedSellAmount: apiEntry?.executedSellAmount ?? null,
+              executedBuyAmount: apiEntry?.executedBuyAmount ?? null,
+              promotedAt: event.block.timestamp,
+            };
+          }),
         )
         .onConflictDoNothing();
 
@@ -377,7 +403,8 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
           ),
         );
 
-      log("info", "C2:parent_cancelled", { block: String(event.block.number), chainId, parentCancelled: orphanCandidates.length });
+      const preflightKnown = preflightStatuses.size;
+      log("info", "C2:parent_cancelled", { block: String(event.block.number), chainId, parentCancelled: orphanCandidates.length, preflightKnown });
     }
   }
 
@@ -417,7 +444,6 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
   const uids = unconfirmed.map((c) => c.orderUid);
   const statuses = await fetchOrderStatusByUids(context, chainId, uids);
 
-  type DiscreteStatus = "open" | "fulfilled" | "unfilled" | "expired" | "cancelled";
   const rowsToUpsert: (typeof discreteOrder.$inferInsert)[] = [];
   const confirmedUids: string[] = [];
 
@@ -709,7 +735,7 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
     ) as {
     generatorId: string;
     owner: Hex;
-    orderType: string;
+    orderType: OrderType;
   }[];
 
   // Exclude owners already retried above — they were just attempted this run
@@ -795,7 +821,7 @@ ponder.on("DeterministicCancellationSweeper:block", async ({ event, context }) =
     generatorId: string;
     owner: Hex;
     hash: Hex;
-    orderType: string;
+    orderType: OrderType;
   }[];
 
   if (dueGenerators.length === 0) return;

@@ -20,7 +20,7 @@ import { and, eq } from "ponder";
 import { candidateDiscreteOrder, conditionalOrderGenerator, discreteOrder } from "ponder:schema";
 import { computeOrderUid, type GPv2OrderData } from "./orderUid";
 import { fetchOrderStatusByUids } from "./orderbookClient";
-import { isDeterministicOrderType } from "../../utils/order-types";
+import { type OrderType, DETERMINISTIC_ORDER_TYPE } from "../../utils/order-types";
 import { log } from "./logger";
 
 // GPv2Order.sol constant hashes
@@ -56,12 +56,12 @@ export interface PrecomputedOrder {
 export function precomputeOrderUids(
   chainId: number,
   owner: Hex,
-  orderType: string,
+  orderType: OrderType,
   decodedParams: Record<string, string> | null,
   blockTimestamp: bigint,
 ): PrecomputedOrder[] | null {
   if (!decodedParams) {
-    if (isDeterministicOrderType(orderType)) {
+    if (DETERMINISTIC_ORDER_TYPE[orderType]) {
       log("warn", "precompute:skip", { orderType, owner, chainId, reason: "decodedParams_null" });
     }
     return null;
@@ -94,7 +94,7 @@ export async function precomputeAndDiscover(
   chainId: number,
   generatorEventId: string,
   owner: Hex,
-  orderType: string,
+  orderType: OrderType,
   decodedParams: Record<string, string> | null,
   blockTimestamp: bigint,
 ): Promise<boolean> {
