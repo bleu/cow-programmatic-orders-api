@@ -12,10 +12,7 @@ Ponder registers handlers for three independent on-chain event streams: `Composa
 
 Configuration lives in `src/chains/` (one file per chain). The ComposableCoW contract is deployed at the same CREATE2 address on every chain (`0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74`), so each chain config only needs to specify the start block per chain.
 
-Currently active:
-
-- **Mainnet** (chain ID 1) — ComposableCoW from block 17883049, CoWShedFactory from block 22939254, GPv2Settlement from block 23812751
-- **Gnosis** (chain ID 100) — ComposableCoW from block 29389123, CoWShedFactory from block 41469991
+Currently active chains, their start blocks, and contract addresses are defined in `src/chains/`. To add a chain, create a chain file there and register it in `src/chains/index.ts`.
 
 Stub configs exist for all 12 chains in cow-sdk's `ALL_SUPPORTED_CHAIN_IDS`; contract addresses for the remaining chains need verification before enabling (see COW-986).
 
