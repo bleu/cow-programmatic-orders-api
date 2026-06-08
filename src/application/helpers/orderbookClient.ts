@@ -26,6 +26,7 @@ import { COMPOSABLE_COW_HANDLER_ADDRESSES, ORDERBOOK_API_URLS } from "../../data
 import { ORDERBOOK_HTTP_TIMEOUT_MS, SIGNING_SCHEME_EIP1271 } from "../../constants";
 import { decodeEip1271Signature } from "../decoders/erc1271Signature";
 import { fetchWithTimeout, TimeoutError, withTimeout } from "./withTimeout";
+import { log } from "./logger";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -87,16 +88,16 @@ export async function fetchComposableOrders(
 ): Promise<ComposableOrder[]> {
   const apiBaseUrl = ORDERBOOK_API_URLS[chainId];
   if (!apiBaseUrl) {
-    console.warn(`[COW:OB] No API URL for chainId=${chainId}`);
+    log("warn", "ob:noApiUrl", { chainId });
     return [];
   }
 
-  console.log(`[COW:OB] FETCH owner=${owner} chain=${chainId}`);
+  log("info", "ob:fetch", { owner, chainId });
   const allApiOrders = await fetchAccountOrders(apiBaseUrl, owner);
   const composable = await filterAndProcess(context, chainId, allApiOrders);
 
   if (composable.length === 0) {
-    console.log(`[COW:OB] owner=${owner} chain=${chainId} apiTotal=${allApiOrders.length} composable=0`);
+    log("info", "ob:fetchResult", { owner, chainId, apiTotal: allApiOrders.length, composable: 0 });
     return [];
   }
 
@@ -141,9 +142,7 @@ export async function fetchComposableOrders(
     }
   }
 
-  console.log(
-    `[COW:OB] owner=${owner} chain=${chainId} apiTotal=${allApiOrders.length} composable=${composable.length} cached=${composable.length - toRefresh.length} refreshed=${toRefresh.length}`,
-  );
+  log("info", "ob:fetchResult", { owner, chainId, apiTotal: allApiOrders.length, composable: composable.length, cached: composable.length - toRefresh.length, refreshed: toRefresh.length });
   return results;
 }
 
@@ -254,9 +253,7 @@ export async function fetchOrderStatusByUids(
       );
     } catch (err) {
       if (err instanceof TimeoutError) {
-        console.warn(
-          `[COW:OB] statusByUids timeout chain=${chainId} toFetch=${toFetch.length} after=${ORDERBOOK_HTTP_TIMEOUT_MS * 2}ms`,
-        );
+        log("warn", "ob:statusByUidsTimeout", { chainId, toFetch: toFetch.length, after: ORDERBOOK_HTTP_TIMEOUT_MS * 2 });
         return result; // cache-only map — caller treats missing UIDs as "not on API yet"
       }
       throw err;
@@ -317,7 +314,7 @@ async function fetchAccountOrders(
         "ob:account",
       );
       if (!response.ok) {
-        console.warn(`[COW:OB] API ${response.status} owner=${owner}`);
+        log("warn", "ob:accountError", { status: response.status, owner });
         break;
       }
       const page = (await response.json()) as OrderbookOrder[];
@@ -326,12 +323,10 @@ async function fetchAccountOrders(
       offset += page.length;
     } catch (err) {
       if (err instanceof TimeoutError) {
-        console.warn(
-          `[COW:OB] Account fetch timeout owner=${owner} offset=${offset} after=${ORDERBOOK_HTTP_TIMEOUT_MS}ms`,
-        );
+        log("warn", "ob:accountTimeout", { owner, offset, after: ORDERBOOK_HTTP_TIMEOUT_MS });
         break;
       }
-      console.warn(`[COW:OB] Fetch failed owner=${owner} err=${err}`);
+      log("warn", "ob:accountFetchFailed", { owner, err: String(err) });
       break;
     }
   }
@@ -363,19 +358,17 @@ async function fetchOrdersByUids(
         "ob:byUids",
       );
       if (!response.ok) {
-        console.warn(`[COW:OB] Batch fetch ${response.status} uids=${chunk.length} offset=${i}`);
+        log("warn", "ob:batchFetchError", { status: response.status, uids: chunk.length, offset: i });
         continue;
       }
       const raw = (await response.json()) as { order: OrderbookOrder }[];
       results.push(...raw.map((item) => item.order));
     } catch (err) {
       if (err instanceof TimeoutError) {
-        console.warn(
-          `[COW:OB] Batch fetch timeout uids=${chunk.length} offset=${i} after=${ORDERBOOK_HTTP_TIMEOUT_MS}ms`,
-        );
+        log("warn", "ob:batchFetchTimeout", { uids: chunk.length, offset: i, after: ORDERBOOK_HTTP_TIMEOUT_MS });
         continue;
       }
-      console.warn(`[COW:OB] Batch fetch failed err=${err} offset=${i}`);
+      log("warn", "ob:batchFetchFailed", { err: String(err), offset: i });
     }
   }
 

@@ -95,6 +95,51 @@ docker compose --profile deploy up -d
 
 The `Dockerfile` in the project root builds the Ponder image: two-stage Node 22 Alpine, installs dependencies with `--frozen-lockfile`, exposes port 3000, runs `pnpm start`. The health check hits `/ready` with a 24-hour start period (initial sync takes hours).
 
+### Kubernetes Probes
+
+The indexer exposes two health endpoints with distinct semantics:
+
+| Endpoint | Semantic | Returns 200 when |
+|----------|----------|-----------------|
+| `/health` | **Liveness** — is the process alive? | Always, once the server starts |
+| `/ready` | **Readiness** — is the index fully synced? | Only when fully synced |
+
+Map these to different K8s probe types. The specific timing values (`periodSeconds`, `failureThreshold`, `initialDelaySeconds`) depend on your cluster's SLOs; what matters is which path and port to use:
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 3000
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 3000
+```
+
+**Do not** use `/ready` as the liveness probe. A pod that is still indexing (which takes hours on a cold start) returns 200 on `/health` but not on `/ready`. Using `/ready` for liveness would kill the pod before it ever finishes syncing.
+
+A pod in `NotReady` state is not killed — it is simply removed from load-balancer rotation. On a cold start (no existing database), the pod will be `NotReady` for the duration of the historical backfill (hours). That is expected: the old pod (if any) keeps serving traffic during this window, and once the new pod catches up, K8s starts routing to it.
+
+The Docker Compose health check uses `/ready` with a 24-hour start period as a pragmatic fallback for single-container deployments, not as a K8s-style probe.
+
+### Structured Logging
+
+`pnpm start` runs with `--log-format json`, which makes both Ponder's internal log lines and the handler log lines emit newline-delimited JSON. Each handler log line includes structured fields (e.g. `chainId`, `block`) enabling log aggregators (Datadog, CloudWatch, Loki) to filter and alert by chain.
+
+`pnpm dev` uses Ponder's default pretty format for readability during local development.
+
+**Convention:** all code under `src/application/` uses `log()` from `src/application/helpers/logger.ts` instead of `console.log/warn/error` directly. The `src/api/` layer (Hono routes) is exempt — Hono handles its own logging. Example:
+
+```ts
+import { log } from "../helpers/logger";
+
+log("info", "c2:confirmed", { chainId, orderUid, block: String(event.block.number) });
+log("warn", "c2:timeout",   { chainId, block: String(event.block.number) });
+```
+
+`warn` and `error` level messages go to `stderr`; `info` goes to `stdout`. The `level` field in the JSON payload is what log aggregators use to route and alert.
+
 ### PostgreSQL Memory Flags
 
 Memory settings are hardcoded in the `command:` block of `docker-compose.yml`, tuned for 1G RAM:
