@@ -149,6 +149,19 @@ export const bootstrapRetryQueue = onchainTable(
   })
 );
 
+export const settlementQueue = onchainTable(
+  "settlement_queue",
+  (t) => ({
+    txHash: t.hex().notNull(),
+    chainId: t.integer().notNull(),
+    blockNumber: t.bigint().notNull(),
+    blockTimestamp: t.bigint().notNull(),
+  }),
+  (table) => ({
+    pk: primaryKey({ columns: [table.chainId, table.txHash] }),
+  })
+);
+
 export const ownerMapping = onchainTable(
   "owner_mapping",
   (t) => ({
