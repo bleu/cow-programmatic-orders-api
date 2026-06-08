@@ -6,20 +6,18 @@ This document covers how the indexer works, from on-chain events to the GraphQL 
 
 The system is a Ponder 0.16.x indexer that watches the ComposableCoW contract on all active chains (see `ponder.config.ts`). When a user creates a programmatic order (TWAP, Stop Loss, etc.), the contract emits a `ConditionalOrderCreated` event. The indexer picks that up, decodes the order parameters, resolves the actual owner (which may be behind a proxy), and writes the result to Postgres. A Hono HTTP server exposes the data through GraphQL and a SQL passthrough endpoint.
 
-Ponder registers handlers for three independent on-chain event streams: `ComposableCow` (conditional order creation), `CoWShedFactory` (proxy wallet deployment), and `GPv2Settlement` (Aave adapter detection via Trade logs). During live sync, additional block handlers in `blockHandler.ts` poll contract state and the CoW orderbook API. See `blockHandler.ts` for the current handler list and responsibilities.
+Ponder registers handlers for three independent on-chain event streams: `ComposableCow` (conditional order creation), `CoWShedFactory` (proxy wallet deployment), and `GPv2Settlement` (Aave adapter detection via `Settlement` events — `Trade` logs in the receipt identify the adapter address). During live sync, additional block handlers in `blockHandler.ts` poll contract state and the CoW orderbook API. See `blockHandler.ts` for the current handler list and responsibilities.
 
 ## Contracts and Chains
 
 Configuration lives in `src/chains/` (one file per chain). The ComposableCoW contract is deployed at the same CREATE2 address on every chain (`0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74`), so each chain config only needs to specify the start block per chain.
 
-Currently active:
-
-- **Mainnet** (chain ID 1) — ComposableCoW from block 17883049, CoWShedFactory from block 22939254, GPv2Settlement from block 23812751
-- **Gnosis** (chain ID 100) — ComposableCoW from block 29389123, CoWShedFactory from block 41469991
+Currently active chains, their start blocks, and contract addresses are defined in `src/chains/`. To add a chain, create a chain file there and register it in `src/chains/index.ts`.
 
 Stub configs exist for all 12 chains in cow-sdk's `ALL_SUPPORTED_CHAIN_IDS`; contract addresses for the remaining chains need verification before enabling (see COW-986).
 
 `ponder.config.ts` derives all config from `ACTIVE_CHAINS` in `src/chains/index.ts` and wires it into Ponder's `createConfig`. It never contains raw addresses or block numbers directly. It also registers the five live-only block handlers from `blockHandler.ts` (`OrderDiscoveryPoller`, `CandidateConfirmer`, `OrderStatusTracker`, `OwnerBackfill`, `CancellationWatcher`) — all run during live sync only (`startBlock: "latest"`).
+
 
 Three contracts are indexed:
 

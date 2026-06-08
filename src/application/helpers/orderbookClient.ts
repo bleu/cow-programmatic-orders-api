@@ -18,12 +18,15 @@ import {
   conditionalOrderGenerator,
   discreteOrder,
 } from "ponder:schema";
-import { and, eq, sql } from "ponder";
+import { and, eq, inArray } from "ponder";
+import { pgSchema, integer, text } from "drizzle-orm/pg-core";
 import { encodeAbiParameters, keccak256, type Hex } from "viem";
+import { type OrderType } from "../../utils/order-types";
 import { COMPOSABLE_COW_HANDLER_ADDRESSES, ORDERBOOK_API_URLS } from "../../data";
 import { ORDERBOOK_HTTP_TIMEOUT_MS, SIGNING_SCHEME_EIP1271 } from "../../constants";
 import { decodeEip1271Signature } from "../decoders/erc1271Signature";
 import { fetchWithTimeout, TimeoutError, withTimeout } from "./withTimeout";
+import { log } from "./logger";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -52,7 +55,7 @@ export type ComposableOrder = Pick<
   uid: string;
   generatorId: string;
   generatorHash: string;
-  orderType: string;
+  orderType: OrderType;
   creationDate: number;
 };
 
@@ -85,16 +88,16 @@ export async function fetchComposableOrders(
 ): Promise<ComposableOrder[]> {
   const apiBaseUrl = ORDERBOOK_API_URLS[chainId];
   if (!apiBaseUrl) {
-    console.warn(`[COW:OB] No API URL for chainId=${chainId}`);
+    log("warn", "ob:noApiUrl", { chainId });
     return [];
   }
 
-  console.log(`[COW:OB] FETCH owner=${owner} chain=${chainId}`);
+  log("info", "ob:fetch", { owner, chainId });
   const allApiOrders = await fetchAccountOrders(apiBaseUrl, owner);
   const composable = await filterAndProcess(context, chainId, allApiOrders);
 
   if (composable.length === 0) {
-    console.log(`[COW:OB] owner=${owner} chain=${chainId} apiTotal=${allApiOrders.length} composable=0`);
+    log("info", "ob:fetchResult", { owner, chainId, apiTotal: allApiOrders.length, composable: 0 });
     return [];
   }
 
@@ -139,9 +142,7 @@ export async function fetchComposableOrders(
     }
   }
 
-  console.log(
-    `[COW:OB] owner=${owner} chain=${chainId} apiTotal=${allApiOrders.length} composable=${composable.length} cached=${composable.length - toRefresh.length} refreshed=${toRefresh.length}`,
-  );
+  log("info", "ob:fetchResult", { owner, chainId, apiTotal: allApiOrders.length, composable: composable.length, cached: composable.length - toRefresh.length, refreshed: toRefresh.length });
   return results;
 }
 
@@ -252,9 +253,7 @@ export async function fetchOrderStatusByUids(
       );
     } catch (err) {
       if (err instanceof TimeoutError) {
-        console.warn(
-          `[COW:OB] statusByUids timeout chain=${chainId} toFetch=${toFetch.length} after=${ORDERBOOK_HTTP_TIMEOUT_MS * 2}ms`,
-        );
+        log("warn", "ob:statusByUidsTimeout", { chainId, toFetch: toFetch.length, after: ORDERBOOK_HTTP_TIMEOUT_MS * 2 });
         return result; // cache-only map — caller treats missing UIDs as "not on API yet"
       }
       throw err;
@@ -274,7 +273,7 @@ export async function fetchOrderStatusByUids(
           status: order.status as ComposableOrder["status"],
           generatorId: "",
           generatorHash: "",
-          orderType: "",
+          orderType: "Unknown",
           sellAmount: order.sellAmount,
           buyAmount: order.buyAmount,
           feeAmount: order.feeAmount,
@@ -315,7 +314,7 @@ async function fetchAccountOrders(
         "ob:account",
       );
       if (!response.ok) {
-        console.warn(`[COW:OB] API ${response.status} owner=${owner}`);
+        log("warn", "ob:accountError", { status: response.status, owner });
         break;
       }
       const page = (await response.json()) as OrderbookOrder[];
@@ -324,12 +323,10 @@ async function fetchAccountOrders(
       offset += page.length;
     } catch (err) {
       if (err instanceof TimeoutError) {
-        console.warn(
-          `[COW:OB] Account fetch timeout owner=${owner} offset=${offset} after=${ORDERBOOK_HTTP_TIMEOUT_MS}ms`,
-        );
+        log("warn", "ob:accountTimeout", { owner, offset, after: ORDERBOOK_HTTP_TIMEOUT_MS });
         break;
       }
-      console.warn(`[COW:OB] Fetch failed owner=${owner} err=${err}`);
+      log("warn", "ob:accountFetchFailed", { owner, err: String(err) });
       break;
     }
   }
@@ -361,19 +358,17 @@ async function fetchOrdersByUids(
         "ob:byUids",
       );
       if (!response.ok) {
-        console.warn(`[COW:OB] Batch fetch ${response.status} uids=${chunk.length} offset=${i}`);
+        log("warn", "ob:batchFetchError", { status: response.status, uids: chunk.length, offset: i });
         continue;
       }
       const raw = (await response.json()) as { order: OrderbookOrder }[];
       results.push(...raw.flatMap((item) => (item?.order != null ? [item.order] : [])));
     } catch (err) {
       if (err instanceof TimeoutError) {
-        console.warn(
-          `[COW:OB] Batch fetch timeout uids=${chunk.length} offset=${i} after=${ORDERBOOK_HTTP_TIMEOUT_MS}ms`,
-        );
+        log("warn", "ob:batchFetchTimeout", { uids: chunk.length, offset: i, after: ORDERBOOK_HTTP_TIMEOUT_MS });
         continue;
       }
-      console.warn(`[COW:OB] Batch fetch failed err=${err} offset=${i}`);
+      log("warn", "ob:batchFetchFailed", { err: String(err), offset: i });
     }
   }
 
@@ -432,7 +427,7 @@ async function filterAndProcess(
       )
       .limit(1)) as {
       eventId: string;
-      orderType: string;
+      orderType: OrderType;
     }[];
 
     if (generators.length === 0) continue;
@@ -459,7 +454,16 @@ async function filterAndProcess(
 }
 
 // ─── Per-UID cache helpers ──────────────────────────────────────────────────
-// cow_cache.order_uid_cache is created by setup.ts. Fully qualified names required.
+// cow_cache.order_uid_cache is created by setup.ts. Table defined here for typed queries.
+const cowCacheSchema = pgSchema("cow_cache");
+const orderUidCache = cowCacheSchema.table("order_uid_cache", {
+  chainId: integer("chain_id").notNull(),
+  orderUid: text("order_uid").notNull(),
+  status: text("status").notNull(),
+  fetchedAt: integer("fetched_at").notNull(),
+  executedSellAmount: text("executed_sell_amount"),
+  executedBuyAmount: text("executed_buy_amount"),
+});
 
 /** Cached order data returned by getCachedUidStatuses. */
 interface CachedOrderData {
@@ -483,17 +487,25 @@ async function getCachedUidStatuses(
     const batchSize = 500;
     for (let i = 0; i < uids.length; i += batchSize) {
       const batch = uids.slice(i, i + batchSize);
-      const uidList = sql.join(batch.map((uid) => sql`${uid}`), sql`, `);
-      const rows = (await context.db.sql.execute(
-        sql`SELECT order_uid, status, executed_sell_amount, executed_buy_amount
-            FROM cow_cache.order_uid_cache
-            WHERE chain_id = ${chainId} AND order_uid IN (${uidList})`,
-      )) as { order_uid: string; status: string; executed_sell_amount: string | null; executed_buy_amount: string | null }[];
+      const rows = await context.db.sql
+        .select({
+          orderUid: orderUidCache.orderUid,
+          status: orderUidCache.status,
+          executedSellAmount: orderUidCache.executedSellAmount,
+          executedBuyAmount: orderUidCache.executedBuyAmount,
+        })
+        .from(orderUidCache)
+        .where(
+          and(
+            eq(orderUidCache.chainId, chainId),
+            inArray(orderUidCache.orderUid, batch),
+          ),
+        );
       for (const row of rows) {
-        result.set(row.order_uid, {
+        result.set(row.orderUid, {
           status: row.status,
-          executedSellAmount: row.executed_sell_amount,
-          executedBuyAmount: row.executed_buy_amount,
+          executedSellAmount: row.executedSellAmount,
+          executedBuyAmount: row.executedBuyAmount,
         });
       }
     }
@@ -514,17 +526,25 @@ async function cacheUidStatuses(
   const now = Math.floor(Date.now() / 1000);
   for (const order of orders) {
     try {
-      await context.db.sql.execute(
-        sql`INSERT INTO cow_cache.order_uid_cache
-              (chain_id, order_uid, status, fetched_at, executed_sell_amount, executed_buy_amount)
-            VALUES (${chainId}, ${order.uid}, ${order.status}, ${now},
-                    ${order.executedSellAmount}, ${order.executedBuyAmount})
-            ON CONFLICT (chain_id, order_uid) DO UPDATE SET
-              status               = EXCLUDED.status,
-              fetched_at           = EXCLUDED.fetched_at,
-              executed_sell_amount  = EXCLUDED.executed_sell_amount,
-              executed_buy_amount   = EXCLUDED.executed_buy_amount`,
-      );
+      await context.db.sql
+        .insert(orderUidCache)
+        .values({
+          chainId,
+          orderUid: order.uid,
+          status: order.status,
+          fetchedAt: now,
+          executedSellAmount: order.executedSellAmount,
+          executedBuyAmount: order.executedBuyAmount,
+        })
+        .onConflictDoUpdate({
+          target: [orderUidCache.chainId, orderUidCache.orderUid],
+          set: {
+            status: order.status,
+            fetchedAt: now,
+            executedSellAmount: order.executedSellAmount,
+            executedBuyAmount: order.executedBuyAmount,
+          },
+        });
     } catch {
       // Best-effort cache write
     }

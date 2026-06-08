@@ -9,7 +9,7 @@ export const ChainProgressSchema = z.object({
     .number()
     .int()
     .describe("Blocks already processed (completed + served from cache)."),
-  historicalSyncProgressPct: z
+  historicalBlocksFetchedPct: z
     .number()
     .describe("Completion percentage (0–100). Rounded to one decimal place."),
   isRealtime: z

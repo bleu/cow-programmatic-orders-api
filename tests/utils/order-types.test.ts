@@ -1,39 +1,30 @@
 import { describe, it, expect } from "vitest";
 import {
-  DETERMINISTIC_ORDER_TYPES,
-  isDeterministicOrderType,
+  DETERMINISTIC_ORDER_TYPE,
+  type OrderType,
 } from "../../src/utils/order-types";
 
-describe("DETERMINISTIC_ORDER_TYPES", () => {
-  it("includes TWAP", () => {
-    expect(DETERMINISTIC_ORDER_TYPES.has("TWAP")).toBe(true);
+describe("DETERMINISTIC_ORDER_TYPE", () => {
+  it("covers every OrderType (exhaustive record)", () => {
+    // If a new OrderType is added to the union without updating the record,
+    // TypeScript will catch it at compile time. This test documents the intent.
+    const types = Object.keys(DETERMINISTIC_ORDER_TYPE) as OrderType[];
+    expect(types.length).toBeGreaterThan(0);
   });
 
-  it("includes StopLoss", () => {
-    expect(DETERMINISTIC_ORDER_TYPES.has("StopLoss")).toBe(true);
+  it("marks TWAP, StopLoss, CirclesBackingOrder as deterministic", () => {
+    expect(DETERMINISTIC_ORDER_TYPE["TWAP"]).toBe(true);
+    expect(DETERMINISTIC_ORDER_TYPE["StopLoss"]).toBe(true);
+    // Regression guard for COW-1003: CirclesBackingOrder must be deterministic
+    expect(DETERMINISTIC_ORDER_TYPE["CirclesBackingOrder"]).toBe(true);
   });
 
-  // Regression guard for COW-1003 (F2): CirclesBackingOrder is deterministic
-  // (precomputed in uidPrecompute.ts) but was missing from this set, causing
-  // spurious non-deterministic warnings in logs.
-  it("includes CirclesBackingOrder (COW-1003)", () => {
-    expect(DETERMINISTIC_ORDER_TYPES.has("CirclesBackingOrder")).toBe(true);
-  });
-
-  it("does not include non-deterministic types", () => {
-    expect(DETERMINISTIC_ORDER_TYPES.has("PerpetualSwap")).toBe(false);
-    expect(DETERMINISTIC_ORDER_TYPES.has("GoodAfterTime")).toBe(false);
-    expect(DETERMINISTIC_ORDER_TYPES.has("TradeAboveThreshold")).toBe(false);
-  });
-
-  it("isDeterministicOrderType returns true for all members", () => {
-    for (const type of DETERMINISTIC_ORDER_TYPES) {
-      expect(isDeterministicOrderType(type)).toBe(true);
-    }
-  });
-
-  it("isDeterministicOrderType returns false for unknown types", () => {
-    expect(isDeterministicOrderType("Unknown")).toBe(false);
-    expect(isDeterministicOrderType("")).toBe(false);
+  it("marks non-deterministic types as false", () => {
+    expect(DETERMINISTIC_ORDER_TYPE["PerpetualSwap"]).toBe(false);
+    expect(DETERMINISTIC_ORDER_TYPE["GoodAfterTime"]).toBe(false);
+    expect(DETERMINISTIC_ORDER_TYPE["TradeAboveThreshold"]).toBe(false);
+    expect(DETERMINISTIC_ORDER_TYPE["SwapOrderHandler"]).toBe(false);
+    expect(DETERMINISTIC_ORDER_TYPE["ERC4626CowSwapFeeBurner"]).toBe(false);
+    expect(DETERMINISTIC_ORDER_TYPE["Unknown"]).toBe(false);
   });
 });

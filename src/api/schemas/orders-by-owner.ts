@@ -22,7 +22,7 @@ export const GeneratorSummary = z.object({
   hash: z
     .string()
     .describe(
-      "On-chain canonical identifier: keccak256(abi.encode((handler, salt, staticInput))). Used by ComposableCow.singleOrders(owner, hash) and remove(owner, hash).",
+      "On-chain canonical identifier: keccak256(abi.encode(ConditionalOrderParams { handler, salt, staticInput })) — the value returned by ComposableCow.hash(params) and used as the key in singleOrders(owner, hash) and remove(owner, hash).",
     ),
   ownerAddressType: z
     .enum(["cowshed_proxy", "flash_loan_helper"])

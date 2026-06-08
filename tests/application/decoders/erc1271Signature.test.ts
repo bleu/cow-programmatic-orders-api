@@ -1,33 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { encodeAbiParameters, getAddress, type Hex } from "viem";
-import { decodeEip1271Signature } from "../../../src/application/decoders/erc1271Signature";
+import { decodeEip1271Signature, PAYLOAD_STRUCT_ABI } from "../../../src/application/decoders/erc1271Signature";
 
 const HANDLER = "0xaabbccddaabbccddaabbccddaabbccddaabbccdd" as Hex;
 const SALT = ("0x" + "ab".repeat(32)) as Hex;
 const STATIC_INPUT = "0xdeadbeef" as Hex;
 const PROOF: Hex[] = [("0x" + "11".repeat(32)) as Hex];
 const OFFCHAIN_INPUT = "0x1234" as Hex;
-
-// The PayloadStruct ABI as defined in the decoder — must match exactly.
-const PAYLOAD_STRUCT_ABI = [
-  {
-    type: "tuple" as const,
-    name: "payload",
-    components: [
-      { name: "proof",        type: "bytes32[]" as const },
-      {
-        type: "tuple" as const,
-        name: "params",
-        components: [
-          { name: "handler",     type: "address" as const },
-          { name: "salt",        type: "bytes32" as const },
-          { name: "staticInput", type: "bytes"   as const },
-        ],
-      },
-      { name: "offchainInput", type: "bytes" as const },
-    ],
-  },
-] as const;
 
 /** Build a Format B signature (ERC1271Forwarder / CoWShed path). */
 function buildFormatB({
