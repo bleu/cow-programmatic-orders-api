@@ -41,9 +41,10 @@ import {
   parsePollError,
 } from "../helpers/pollResultErrors";
 import { computeOrderUid, type GPv2OrderData } from "../helpers/orderUid";
+import { type OrderType } from "../../utils/order-types";
 
-const NON_DETERMINISTIC_TYPES = ["PerpetualSwap", "GoodAfterTime", "TradeAboveThreshold", "Unknown"] as const;
-const SINGLE_SHOT_NON_DETERMINISTIC = ["GoodAfterTime", "TradeAboveThreshold"] as const;
+const NON_DETERMINISTIC_TYPES: readonly OrderType[] = ["PerpetualSwap", "GoodAfterTime", "TradeAboveThreshold", "Unknown"];
+const SINGLE_SHOT_NON_DETERMINISTIC: readonly OrderType[] = ["GoodAfterTime", "TradeAboveThreshold"];
 const BLOCK_NEVER = 2n ** 63n - 1n; // sentinel for epoch-scheduled generators (PollTryAtEpoch)
 const VALID_DISCRETE_STATUSES = new Set(["fulfilled", "unfilled", "expired", "cancelled"]);
 
@@ -112,7 +113,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
     handler: Hex;
     salt: Hex;
     staticInput: Hex;
-    orderType: string;
+    orderType: OrderType;
     decodedParams: Record<string, string> | null;
     consecutiveTryNextBlock: number;
   }[];
@@ -197,7 +198,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
           .onConflictDoNothing(),
       );
 
-      const isSingleShot = (SINGLE_SHOT_NON_DETERMINISTIC as readonly string[]).includes(order.orderType);
+      const isSingleShot = SINGLE_SHOT_NON_DETERMINISTIC.includes(order.orderType);
       successPromises.push(
         updateGeneratorPollState(context, chainId, order.generatorId, currentBlock, {
           nextCheckBlock: currentBlock + RECHECK_INTERVAL,
@@ -728,7 +729,7 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
     ) as {
     generatorId: string;
     owner: Hex;
-    orderType: string;
+    orderType: OrderType;
   }[];
 
   // Exclude owners already retried above — they were just attempted this run
@@ -820,7 +821,7 @@ ponder.on("DeterministicCancellationSweeper:block", async ({ event, context }) =
     generatorId: string;
     owner: Hex;
     hash: Hex;
-    orderType: string;
+    orderType: OrderType;
   }[];
 
   if (dueGenerators.length === 0) return;
