@@ -1,15 +1,29 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { AddressInfo } from "node:net";
-import { fetchOrderStatusByUids } from "../../src/application/helpers/orderbookClient";
-import { ORDERBOOK_API_URLS } from "../../src/data";
+import type { Hex } from "viem";
 
-// Isolated chain ID that doesn't exist in production — safe to mutate and delete.
-const TEST_CHAIN_ID = 99_999;
+// Mock Ponder virtual modules that are not available outside the Ponder runtime.
+// vi.mock calls are hoisted by vitest so they resolve before any imports below.
+vi.mock("ponder:schema", () => ({
+  conditionalOrderGenerator: { $inferInsert: {}, eventId: "eventId", orderType: "orderType", chainId: "chainId", hash: "hash" },
+  discreteOrder: { $inferInsert: {}, chainId: "chainId", orderUid: "orderUid" },
+}));
 
-async function startServer(
-  handler: (req: IncomingMessage, res: ServerResponse) => void,
-): Promise<{ url: string; close: () => Promise<void> }> {
+vi.mock("ponder", () => ({
+  and: vi.fn(),
+  eq: vi.fn(),
+  sql: Object.assign(vi.fn(), { raw: vi.fn() }),
+}));
+
+import * as data from "../../src/data";
+import { fetchOrderStatusByUids, fetchOwnerOrderStatuses } from "../../src/application/helpers/orderbookClient";
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+type RequestHandler = (req: IncomingMessage, res: ServerResponse) => void;
+
+async function startServer(handler: RequestHandler): Promise<{ url: string; close: () => Promise<void> }> {
   const server: Server = createServer(handler);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
@@ -19,16 +33,34 @@ async function startServer(
   };
 }
 
-/**
- * Minimal Ponder context stub.
- * context.db.sql.execute returns [] (empty cache) so every UID goes to the live API path.
- * Cache writes are no-ops.
- */
+/** Temporarily override `ORDERBOOK_API_URLS[chainId]` for the duration of a test callback. */
+async function withFakeApi(
+  chainId: number,
+  serverUrl: string,
+  fn: () => Promise<void>,
+): Promise<void> {
+  const original = data.ORDERBOOK_API_URLS[chainId];
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (data.ORDERBOOK_API_URLS as any)[chainId] = serverUrl;
+    await fn();
+  } finally {
+    if (original === undefined) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      delete (data.ORDERBOOK_API_URLS as any)[chainId];
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (data.ORDERBOOK_API_URLS as any)[chainId] = original;
+    }
+  }
+}
+
+/** Minimal Ponder context stub for fetchOrderStatusByUids tests. */
 function makeContext() {
   return { db: { sql: { execute: async () => [] } } };
 }
 
-/** Build a single `{ order: {...} }` item matching the real CoW Orderbook API shape. */
+/** Build a single `{ order: {...} }` item matching the real CoW Orderbook API shape (by_uids endpoint). */
 function makeWrappedOrder(uid: string, status: "open" | "fulfilled" | "expired" | "cancelled") {
   return {
     order: {
@@ -47,19 +79,53 @@ function makeWrappedOrder(uid: string, status: "open" | "fulfilled" | "expired" 
   };
 }
 
+interface OrderStub {
+  uid: string;
+  status: string;
+  executedSellAmount: string;
+  executedBuyAmount: string;
+  sellAmount?: string;
+  buyAmount?: string;
+  feeAmount?: string;
+  validTo?: number;
+  creationDate?: string;
+  signingScheme?: string;
+  signature?: string;
+}
+
+function makeOrderStub(overrides: Partial<OrderStub> & Pick<OrderStub, "uid" | "status">): OrderStub {
+  return {
+    sellAmount: "1000000000000000000",
+    buyAmount: "2000000000",
+    feeAmount: "0",
+    validTo: 9999999999,
+    creationDate: "2024-01-01T00:00:00.000Z",
+    signingScheme: "eip1271",
+    signature: "0x",
+    executedSellAmount: "0",
+    executedBuyAmount: "0",
+    ...overrides,
+  };
+}
+
 // Realistic CoW order UIDs (orderHash + owner + validTo = 56 bytes each).
 const UID_A = `0x${"aa".repeat(56)}` as const;
 const UID_B = `0x${"bb".repeat(56)}` as const;
+
+// Isolated chain ID that doesn't exist in production — safe to mutate and delete.
+const TEST_CHAIN_ID = 99_999;
+
+// ─── fetchOrderStatusByUids tests ─────────────────────────────────────────────
 
 describe("fetchOrderStatusByUids", () => {
   beforeAll(() => {
     // Placeholder so the early-exit guard (!apiBaseUrl) passes for TEST_CHAIN_ID.
     // Individual tests replace this with the actual server URL before each call.
-    ORDERBOOK_API_URLS[TEST_CHAIN_ID] = "http://placeholder";
+    data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = "http://placeholder";
   });
 
   afterAll(() => {
-    delete (ORDERBOOK_API_URLS as Record<number, string | undefined>)[TEST_CHAIN_ID];
+    delete (data.ORDERBOOK_API_URLS as Record<number, string | undefined>)[TEST_CHAIN_ID];
   });
 
   it("returns empty map immediately when the uids array is empty", async () => {
@@ -68,15 +134,11 @@ describe("fetchOrderStatusByUids", () => {
   });
 
   it("correctly unwraps the { order } wrapper and maps uid → status (regression: COW-979)", async () => {
-    // Bug: the API returns [{ order: { uid, status, ... } }] but the code was reading
-    // the array items as flat OrderbookOrder objects, so order.uid was always undefined.
-    // This caused fetchOrderStatusByUids to return an empty map for every candidate,
-    // silently skipping C2/C3 promotions for fulfilled/expired orders.
     const { url, close } = await startServer((_req, res) => {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify([makeWrappedOrder(UID_A, "fulfilled")]));
     });
-    ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
+    data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
     try {
       const result = await fetchOrderStatusByUids(makeContext(), TEST_CHAIN_ID, [UID_A]);
       expect(result.has(UID_A)).toBe(true);
@@ -91,7 +153,7 @@ describe("fetchOrderStatusByUids", () => {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify([makeWrappedOrder(UID_A, "fulfilled")]));
     });
-    ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
+    data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
     try {
       const result = await fetchOrderStatusByUids(makeContext(), TEST_CHAIN_ID, [UID_A]);
       const info = result.get(UID_A);
@@ -110,7 +172,7 @@ describe("fetchOrderStatusByUids", () => {
         makeWrappedOrder(UID_B, "open"),
       ]));
     });
-    ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
+    data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
     try {
       const result = await fetchOrderStatusByUids(makeContext(), TEST_CHAIN_ID, [UID_A, UID_B]);
       expect(result.get(UID_A)?.status).toBe("fulfilled");
@@ -125,7 +187,7 @@ describe("fetchOrderStatusByUids", () => {
       res.writeHead(500);
       res.end("Internal Server Error");
     });
-    ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
+    data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
     try {
       const result = await fetchOrderStatusByUids(makeContext(), TEST_CHAIN_ID, [UID_A]);
       expect(result.size).toBe(0);
@@ -139,10 +201,201 @@ describe("fetchOrderStatusByUids", () => {
       res.writeHead(200, { "content-type": "application/json" });
       res.end("[]");
     });
-    ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
+    data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
     try {
       const result = await fetchOrderStatusByUids(makeContext(), TEST_CHAIN_ID, [UID_A]);
       expect(result.size).toBe(0);
+    } finally {
+      await close();
+    }
+  });
+});
+
+// ─── fetchOwnerOrderStatuses tests ────────────────────────────────────────────
+
+const FAKE_OWNER = "0xaabbccddEEff0011223344556677889900aabbcc" as Hex;
+const FAKE_CHAIN_ID = 1;
+const UNKNOWN_CHAIN_ID = 99999;
+
+describe("fetchOwnerOrderStatuses", () => {
+  it("returns an empty map for an unknown chainId (no API URL configured)", async () => {
+    const result = await fetchOwnerOrderStatuses(UNKNOWN_CHAIN_ID, FAKE_OWNER);
+    expect(result).toBeInstanceOf(Map);
+    expect(result.size).toBe(0);
+  });
+
+  it("happy path — server returns orders, Map is built with uid/status/executedAmounts", async () => {
+    const orders = [
+      makeOrderStub({ uid: "0xuid1", status: "fulfilled", executedSellAmount: "500", executedBuyAmount: "1000" }),
+      makeOrderStub({ uid: "0xuid2", status: "open", executedSellAmount: "0", executedBuyAmount: "0" }),
+      makeOrderStub({ uid: "0xuid3", status: "expired", executedSellAmount: "250", executedBuyAmount: "500" }),
+    ];
+
+    const { url, close } = await startServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(orders));
+    });
+
+    try {
+      await withFakeApi(FAKE_CHAIN_ID, url, async () => {
+        const result = await fetchOwnerOrderStatuses(FAKE_CHAIN_ID, FAKE_OWNER);
+
+        expect(result).toBeInstanceOf(Map);
+        expect(result.size).toBe(3);
+
+        expect(result.get("0xuid1")).toEqual({
+          status: "fulfilled",
+          executedSellAmount: "500",
+          executedBuyAmount: "1000",
+        });
+        expect(result.get("0xuid2")).toEqual({
+          status: "open",
+          executedSellAmount: "0",
+          executedBuyAmount: "0",
+        });
+        expect(result.get("0xuid3")).toEqual({
+          status: "expired",
+          executedSellAmount: "250",
+          executedBuyAmount: "500",
+        });
+      });
+    } finally {
+      await close();
+    }
+  });
+
+  it("handles null executedSellAmount and executedBuyAmount from the server", async () => {
+    const orders = [
+      {
+        uid: "0xuid-null",
+        status: "cancelled",
+        executedSellAmount: null,
+        executedBuyAmount: null,
+        sellAmount: "1000",
+        buyAmount: "2000",
+        feeAmount: "0",
+        validTo: 9999999999,
+        creationDate: "2024-01-01T00:00:00.000Z",
+        signingScheme: "eip1271",
+        signature: "0x",
+      },
+    ];
+
+    const { url, close } = await startServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(orders));
+    });
+
+    try {
+      await withFakeApi(FAKE_CHAIN_ID, url, async () => {
+        const result = await fetchOwnerOrderStatuses(FAKE_CHAIN_ID, FAKE_OWNER);
+
+        expect(result.size).toBe(1);
+        expect(result.get("0xuid-null")).toEqual({
+          status: "cancelled",
+          executedSellAmount: null,
+          executedBuyAmount: null,
+        });
+      });
+    } finally {
+      await close();
+    }
+  });
+
+  it("handles an empty orders array from the server", async () => {
+    const { url, close } = await startServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify([]));
+    });
+
+    try {
+      await withFakeApi(FAKE_CHAIN_ID, url, async () => {
+        const result = await fetchOwnerOrderStatuses(FAKE_CHAIN_ID, FAKE_OWNER);
+        expect(result).toBeInstanceOf(Map);
+        expect(result.size).toBe(0);
+      });
+    } finally {
+      await close();
+    }
+  });
+
+  it("paginates — fetches subsequent pages when first page is full (PAGE_LIMIT=1000)", async () => {
+    const PAGE_LIMIT = 1000;
+    const page1: OrderStub[] = Array.from({ length: PAGE_LIMIT }, (_, i) =>
+      makeOrderStub({ uid: `0xpage1-${i}`, status: "open" }),
+    );
+    const page2: OrderStub[] = [
+      makeOrderStub({ uid: "0xpage2-0", status: "fulfilled", executedSellAmount: "999", executedBuyAmount: "888" }),
+    ];
+
+    const receivedOffsets: number[] = [];
+
+    const { url, close } = await startServer((req, res) => {
+      const parsedUrl = new URL(req.url ?? "/", `http://127.0.0.1`);
+      const offset = parseInt(parsedUrl.searchParams.get("offset") ?? "0", 10);
+      receivedOffsets.push(offset);
+
+      const page = offset === 0 ? page1 : page2;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(page));
+    });
+
+    try {
+      await withFakeApi(FAKE_CHAIN_ID, url, async () => {
+        const result = await fetchOwnerOrderStatuses(FAKE_CHAIN_ID, FAKE_OWNER);
+
+        expect(receivedOffsets).toContain(0);
+        expect(receivedOffsets).toContain(PAGE_LIMIT);
+
+        expect(result.size).toBe(PAGE_LIMIT + 1);
+
+        expect(result.get("0xpage2-0")).toEqual({
+          status: "fulfilled",
+          executedSellAmount: "999",
+          executedBuyAmount: "888",
+        });
+      });
+    } finally {
+      await close();
+    }
+  });
+
+  it("handles a non-200 response gracefully — returns empty map without throwing", async () => {
+    const { url, close } = await startServer((_req, res) => {
+      res.writeHead(500, { "content-type": "application/json" });
+      res.end(JSON.stringify({ message: "Internal Server Error" }));
+    });
+
+    try {
+      await withFakeApi(FAKE_CHAIN_ID, url, async () => {
+        const result = await fetchOwnerOrderStatuses(FAKE_CHAIN_ID, FAKE_OWNER);
+        expect(result).toBeInstanceOf(Map);
+        expect(result.size).toBe(0);
+      });
+    } finally {
+      await close();
+    }
+  });
+
+  it("uses the correct /api/v1/account/{owner}/orders endpoint with limit and offset params", async () => {
+    const receivedPaths: string[] = [];
+
+    const { url, close } = await startServer((req, res) => {
+      receivedPaths.push(req.url ?? "");
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify([]));
+    });
+
+    try {
+      await withFakeApi(FAKE_CHAIN_ID, url, async () => {
+        await fetchOwnerOrderStatuses(FAKE_CHAIN_ID, FAKE_OWNER);
+      });
+
+      expect(receivedPaths.length).toBeGreaterThanOrEqual(1);
+      const firstPath = receivedPaths[0]!;
+      expect(firstPath).toContain(`/api/v1/account/${FAKE_OWNER}/orders`);
+      expect(firstPath).toContain("limit=1000");
+      expect(firstPath).toContain("offset=0");
     } finally {
       await close();
     }
