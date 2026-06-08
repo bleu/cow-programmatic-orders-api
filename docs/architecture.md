@@ -6,7 +6,7 @@ This document covers how the indexer works, from on-chain events to the GraphQL 
 
 The system is a Ponder 0.16.x indexer that watches the ComposableCoW contract on Ethereum mainnet and Gnosis Chain. When a user creates a programmatic order (TWAP, Stop Loss, etc.), the contract emits a `ConditionalOrderCreated` event. The indexer picks that up, decodes the order parameters, resolves the actual owner (which may be behind a proxy), and writes the result to Postgres. A Hono HTTP server exposes the data through GraphQL and a SQL passthrough endpoint.
 
-Ponder registers nine top-level handlers: four contract event handlers (`ComposableCow` backfill, `ComposableCowLive`, `CoWShedFactory`, `GPv2Settlement`) plus five live-only block handlers in `blockHandler.ts`. The contract handlers react to on-chain events; the block handlers poll contract state and the orderbook API during live sync. `settlement.ts` inspects `Settlement` receipts to detect Aave flash loan adapters — this is event-driven, not a block handler. Block handlers are generic: they apply to all ComposableCoW generators regardless of order type.
+Ponder registers nine top-level handlers: four contract event handlers (`ComposableCow` backfill, `ComposableCowLive`, `CoWShedFactory`, `GPv2Settlement`) plus five live-only block handlers in `blockHandler.ts`. The contract handlers react to on-chain events; the block handlers poll contract state and the orderbook API during live sync. `settlement.ts` inspects `Settlement` receipts to detect Aave flash loan adapters — this is event-driven, not a block handler. Block handlers are order-type-agnostic: they apply to all ComposableCoW generators regardless of order type.
 
 ## Contracts and Chains
 
@@ -57,7 +57,7 @@ settlement.ts handler
     |  - for each trade owner: check if it's an Aave adapter (FACTORY() call)
     |  - if yes: resolve EOA via owner(), write ownerMapping
     v
-blockHandler.ts (five live-only block handlers — generic, apply to all generators)
+blockHandler.ts (five live-only block handlers — order-type-agnostic, apply to all generators)
     |  OrderDiscoveryPoller  — multicall getTradeableOrderWithSignature for non-deterministic
     |                          generators; detects cancellation via SingleOrderNotAuthed error
     |  CandidateConfirmer    — confirms candidate orders via orderbook API → discreteOrder;
@@ -179,7 +179,7 @@ Stats are accumulated and logged every 30 seconds to track throughput without pe
 
 ### blockHandler.ts — five live-only block handlers
 
-All five are generic — they apply to all ComposableCoW generators regardless of order type. Aave flash loan adapter detection is separate and event-driven (see `settlement.ts`). All handlers run during live sync only (`startBlock: "latest"`); they never fire during historical backfill to avoid hammering the orderbook API. `OrderDiscoveryPoller` and `CancellationWatcher` share a per-chain batch cap (`MAX_GENERATORS_PER_BLOCK_<chainId>`, default 200), pulling from a priority queue ordered by oldest `lastCheckBlock` first.
+All five are order-type-agnostic — they apply to all ComposableCoW generators regardless of order type. Aave flash loan adapter detection is separate and event-driven (see `settlement.ts`). All handlers run during live sync only (`startBlock: "latest"`); they never fire during historical backfill to avoid hammering the orderbook API. `OrderDiscoveryPoller` and `CancellationWatcher` share a per-chain batch cap (`MAX_GENERATORS_PER_BLOCK_<chainId>`, default 200), pulling from a priority queue ordered by oldest `lastCheckBlock` first.
 
 **OrderDiscoveryPoller** (every block): Multicalls `getTradeableOrderWithSignature` on ComposableCoW for each `Active` generator where `allCandidatesKnown=false`. A success result creates a `candidateDiscreteOrder` entry. A `SingleOrderNotAuthed` error marks the generator as `Cancelled` with `lastPollResult='cancelled:SingleOrderNotAuthed'`. Other errors (tryNextBlock, tryAtEpoch, etc.) advance the generator's `nextCheckBlock` accordingly. Single-shot non-deterministic types (GoodAfterTime, TradeAboveThreshold) set `allCandidatesKnown=true` after first success. Can be disabled with `DISABLE_POLL_RESULT_CHECK=true`.
 
