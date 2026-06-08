@@ -95,6 +95,7 @@ PK: `(chainId, hash)`.
 The main table. One row per `ConditionalOrderCreated` event. Stores the raw order params, the decoded params (as JSON), and the resolved owner.
 
 Key columns:
+
 - `eventId` -- Ponder's event ID, used as the entity identifier
 - `owner` -- the address from the event (could be a proxy)
 - `resolvedOwner` -- EOA from `ownerMapping` when `owner` already has a row at insert time; otherwise the same as `owner`. Not rewritten when a new `owner_mapping` row is added later.
