@@ -118,6 +118,20 @@ function cmdUp(projectPrefix: string, revision: string): void {
     process.exit(1);
   }
 
+  // Stop the ponder container before touching the schema (leave DB running).
+  run("docker", ["compose", "-p", projectPrefix, "-f", "../docker-compose.yml", "--profile", "deploy", "stop", "ponder"], { ignoreError: true });
+
+  // Drop the app schema so the new build_id (derived from handler + config +
+  // schema source) is accepted without a "previously used by a different Ponder
+  // app" error. ponder_sync (raw-event log cache) and cow_cache live in
+  // separate schemas and are unaffected — reindex reuses cached RPC data
+  // (~minutes, not hours).
+  const dbContainer = `${projectPrefix}-db`;
+  const pgUser = process.env["POSTGRES_USER"] ?? "postgres";
+  const pgDb = process.env["POSTGRES_DB"] ?? "cow_programmatic";
+  const schema = process.env["DATABASE_SCHEMA"] ?? "programmatic_orders";
+  run("docker", ["exec", dbContainer, "psql", "-U", pgUser, "-d", pgDb, "-c", `DROP SCHEMA IF EXISTS "${schema}" CASCADE`], { ignoreError: true });
+
   run("docker", [
     "compose",
     "-p",
@@ -193,7 +207,6 @@ const { command, envFile, revision } = parseArgs(process.argv.slice(2));
 
 loadEnvFile(envFile);
 
-// Hardcoded per project convention
 process.env["DATABASE_SCHEMA"] = "programmatic_orders";
 
 const projectPrefix = process.env["PROJECT_PREFIX"];
