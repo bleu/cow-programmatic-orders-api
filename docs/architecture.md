@@ -169,6 +169,8 @@ All block handlers run only during live sync (`startBlock: "latest"`) to avoid h
 
 **CandidateConfirmer** (every block, mainnet + gnosis): First drains any `candidateDiscreteOrder` rows whose parent generator is `Cancelled` — promoting them into `discreteOrder` with `status='cancelled'` and deleting the candidate rows. Then checks remaining `candidateDiscreteOrder` rows against the orderbook API: when a candidate appears in the API, it's promoted to `discreteOrder` and deleted from candidates. Candidates past their `validTo` are also pruned.
 
+**TWAP aged-out fallback**: When a candidate's `orderUid` is no longer served by `/orders/by_uids` (typically after the order expires from the orderbook cache), `CandidateConfirmer` falls back to fetching the owner's full order list from `/account/{owner}/orders`. This resolves TWAP parts that the orderbook stopped tracking before C2 processed them. On timeout or API failure, the candidate defaults to `expired`.
+
 **OrderStatusTracker** (every block, mainnet + gnosis): Polls the orderbook API for all `open` discrete orders and updates their status from the API response. Then sweeps any remaining `open` rows whose parent generator is `Cancelled` to `status='cancelled'` (API-terminal statuses from the loop above still win for children that were traded before on-chain cancellation). Finally expires any orders past their `validTo` timestamp.
 
 **OwnerBackfill** (fires once at latest block, mainnet + gnosis): One-time fetch of historical orders for non-deterministic generators (PerpetualSwap, GoodAfterTime, TradeAboveThreshold, Unknown) that were active during backfill but have no discrete orders yet. Queries the CoW Protocol `/orders?owner=` endpoint per owner.

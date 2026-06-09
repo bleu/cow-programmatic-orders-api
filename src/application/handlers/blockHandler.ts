@@ -35,7 +35,7 @@ import {
   TRY_NEXT_BLOCK_BACKOFF_MID,
   TRY_NEXT_BLOCK_BACKOFF_COLD,
 } from "../../constants";
-import { fetchComposableOrders, fetchOrderStatusByUids, upsertDiscreteOrders } from "../helpers/orderbookClient";
+import { fetchComposableOrders, fetchOrderStatusByUids, fetchOwnerOrderStatuses, upsertDiscreteOrders } from "../helpers/orderbookClient";
 import { TimeoutError, withTimeout } from "../helpers/withTimeout";
 import {
   GET_TRADEABLE_ORDER_WITH_ERRORS_ABI,
@@ -529,6 +529,47 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
 
   if (stale.length > 0) {
     const staleStatuses = await fetchOrderStatusByUids(context, chainId, stale.map((c) => c.orderUid));
+
+    // TWAP parts can age out of /by_uids before C2 sees them, causing fulfilled
+    // parts to be recorded as "expired". For any missed UIDs, fall back to
+    // /account/{owner}/orders — one fetch per unique owner.
+    const missed = stale.filter((c) => !staleStatuses.has(c.orderUid));
+    if (missed.length > 0) {
+      const generatorIds = [...new Set(missed.map((c) => c.generatorId))];
+      const ownerRows = (await context.db.sql
+        .select({ eventId: conditionalOrderGenerator.eventId, owner: conditionalOrderGenerator.owner })
+        .from(conditionalOrderGenerator)
+        .where(inArray(conditionalOrderGenerator.eventId, generatorIds))) as {
+        eventId: string;
+        owner: string;
+      }[];
+      const ownerByGeneratorId = new Map(ownerRows.map((g) => [g.eventId, g.owner as Hex]));
+
+      const missedByOwner = new Map<Hex, Set<string>>();
+      for (const c of missed) {
+        const owner = ownerByGeneratorId.get(c.generatorId);
+        if (!owner) continue;
+        const ownerKey = owner.toLowerCase() as Hex;
+        if (!missedByOwner.has(ownerKey)) missedByOwner.set(ownerKey, new Set());
+        missedByOwner.get(ownerKey)!.add(c.orderUid);
+      }
+
+      for (const [owner, ownerMissedUids] of missedByOwner) {
+        try {
+          const ownerStatuses = await withTimeout(
+            fetchOwnerOrderStatuses(chainId, owner),
+            BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
+            "c2:stale:accountFallback",
+          );
+          for (const [uid, info] of ownerStatuses) {
+            if (ownerMissedUids.has(uid)) staleStatuses.set(uid, info);
+          }
+        } catch (err) {
+          console.warn(`[COW:C2] block=${event.block.number} chain=${chainId} accountFallback failed owner=${owner}`, err);
+        }
+      }
+    }
+
     const staleRows: (typeof discreteOrder.$inferInsert)[] = stale.map((c) => {
       const entry = staleStatuses.get(c.orderUid);
       return {

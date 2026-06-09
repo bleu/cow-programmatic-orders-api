@@ -293,15 +293,42 @@ export async function fetchOrderStatusByUids(
   return result;
 }
 
+/**
+ * Fallback status lookup via GET /account/{owner}/orders.
+ * Used when /orders/by_uids returns nothing for UIDs that may have aged out
+ * of the API's retention window (e.g. TWAP parts near or past validTo).
+ * Returns a Map of uid -> OrderStatusInfo for all orders found for this owner.
+ */
+export async function fetchOwnerOrderStatuses(
+  chainId: number,
+  owner: Hex,
+  maxPages = 3,
+): Promise<Map<string, OrderStatusInfo>> {
+  const result = new Map<string, OrderStatusInfo>();
+  const apiBaseUrl = ORDERBOOK_API_URLS[chainId];
+  if (!apiBaseUrl) return result;
+  const orders = await fetchAccountOrders(apiBaseUrl, owner, maxPages);
+  for (const order of orders) {
+    result.set(order.uid, {
+      status: order.status,
+      executedSellAmount: order.executedSellAmount,
+      executedBuyAmount: order.executedBuyAmount,
+    });
+  }
+  return result;
+}
+
 // ─── API calls ───────────────────────────────────────────────────────────────
 
-/** Fetch all orders for an owner with pagination. */
+/** Fetch orders for an owner with pagination. maxPages limits how many pages are fetched (0 = unlimited). */
 async function fetchAccountOrders(
   apiBaseUrl: string,
   owner: Hex,
+  maxPages = 0,
 ): Promise<OrderbookOrder[]> {
   const allOrders: OrderbookOrder[] = [];
   let offset = 0;
+  let pagesFetched = 0;
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -319,7 +346,9 @@ async function fetchAccountOrders(
       }
       const page = (await response.json()) as OrderbookOrder[];
       allOrders.push(...page);
+      pagesFetched++;
       if (page.length < PAGE_LIMIT) break; // last page
+      if (maxPages > 0 && pagesFetched >= maxPages) break; // page cap reached
       offset += page.length;
     } catch (err) {
       if (err instanceof TimeoutError) {
