@@ -21,6 +21,9 @@ export type OrderType =
   | "CirclesBackingOrder"
   | "SwapOrderHandler"
   | "ERC4626CowSwapFeeBurner"
+  | "CurveCowSwapBurner"
+  | "BalancerCowSwapFeeBurner"
+  | "CowAmmConstantProduct"
   | "Unknown";
 
 /**
@@ -43,12 +46,27 @@ export const HANDLER_ADDRESS_TO_TYPE: Record<string, OrderType> = {
 const MAINNET_ONLY_HANDLERS: Record<string, OrderType> = {
   "0xd506fe0b3ddf9e685c16e000514a835d3a511b26": "SwapOrderHandler",
   "0x816e90dc85bf016455017a76bc09cc0451eeb308": "ERC4626CowSwapFeeBurner",
+  // Curve Finance fee-burn handler: converts protocol fees → target token via CoW swap.
+  // Source: https://docs.curve.finance/fees/CowSwapBurner/ — Vyper 0.3.10, verified.
+  "0xc0fc3ddfec95ca45a0d2393f518d3ea1ccf44f8b": "CurveCowSwapBurner",
+  // Balancer v3 CowSwapFeeBurner: burns protocol fees via CoW swap.
+  // v2 (current): deployed via 20250530-v3-cow-swap-fee-burner-v2 task.
+  "0x9958317b80ee5f10457017d54c2484d722059157": "BalancerCowSwapFeeBurner",
+  // v1 (deprecated): deployed via 20250221-v3-cow-swap-fee-burner (now in deprecated/).
+  "0x0e800d8d2e8b4694610aedc385aa6d763492b106": "BalancerCowSwapFeeBurner",
 };
 
 const GNOSIS_ONLY_HANDLERS: Record<string, OrderType> = {
   "0x43866c5602b0e3b3272424396e88b849796dc608": "CirclesBackingOrder",
   "0x7a77934d32d78bfe8dc1e23415b5679960a1c610": "SwapOrderHandler",
   "0x5915dea04ce390f0f44ca0806f7c6dd99ce2f941": "ERC4626CowSwapFeeBurner",
+  // Balancer v3 CowSwapFeeBurner v2 on Gnosis.
+  // Deployed via 20250530-v3-cow-swap-fee-burner-v2 task.
+  "0x254f3a2974b97dc2e675f6115c845567c55f83b0": "BalancerCowSwapFeeBurner",
+  // CoW AMM ConstantProduct pool (verified). Each pool instance IS its own handler —
+  // the pool address equals the handler address. Factory: ConstantProductFactory.
+  // Source: https://github.com/cowprotocol/cow-amm
+  "0xb148f40fff05b5ce6b22752cf8e454b556f7a851": "CowAmmConstantProduct",
 };
 
 const HANDLER_MAP: Record<number, Record<string, OrderType>> = {
@@ -86,5 +104,8 @@ export const DETERMINISTIC_ORDER_TYPE: Record<OrderType, boolean> = {
   TradeAboveThreshold: false,
   SwapOrderHandler: false,
   ERC4626CowSwapFeeBurner: false,
+  CurveCowSwapBurner: false,
+  BalancerCowSwapFeeBurner: false,
+  CowAmmConstantProduct: false,
   Unknown: false,
 };
