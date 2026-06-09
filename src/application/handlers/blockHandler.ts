@@ -368,41 +368,46 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
 
       // onConflictDoNothing: if C3 already promoted this UID with a terminal status
       // (e.g. 'fulfilled'), the existing row wins and this insert is a no-op.
+      // Chunked to avoid PostgreSQL bind-message parameter limits on large cascades.
       // preflightKnown counts API hits, not rows actually written.
-      await context.db.sql
-        .insert(discreteOrder)
-        .values(
-          orphanCandidates.map((c) => {
-            const apiEntry = preflightStatuses.get(c.orderUid);
-            return {
-              orderUid: c.orderUid,
-              chainId,
-              conditionalOrderGeneratorId: c.generatorId,
-              status: (apiEntry?.status ?? "cancelled") as DiscreteStatus,
-              sellAmount: c.sellAmount,
-              buyAmount: c.buyAmount,
-              feeAmount: c.feeAmount,
-              validTo: c.validTo,
-              creationDate: c.creationDate,
-              executedSellAmount: apiEntry?.executedSellAmount ?? null,
-              executedBuyAmount: apiEntry?.executedBuyAmount ?? null,
-              promotedAt: event.block.timestamp,
-            };
-          }),
-        )
-        .onConflictDoNothing();
+      const CASCADE_CHUNK_SIZE = 500;
+      for (let i = 0; i < orphanCandidates.length; i += CASCADE_CHUNK_SIZE) {
+        const chunk = orphanCandidates.slice(i, i + CASCADE_CHUNK_SIZE);
+        await context.db.sql
+          .insert(discreteOrder)
+          .values(
+            chunk.map((c) => {
+              const apiEntry = preflightStatuses.get(c.orderUid);
+              return {
+                orderUid: c.orderUid,
+                chainId,
+                conditionalOrderGeneratorId: c.generatorId,
+                status: (apiEntry?.status ?? "cancelled") as DiscreteStatus,
+                sellAmount: c.sellAmount,
+                buyAmount: c.buyAmount,
+                feeAmount: c.feeAmount,
+                validTo: c.validTo,
+                creationDate: c.creationDate,
+                executedSellAmount: apiEntry?.executedSellAmount ?? null,
+                executedBuyAmount: apiEntry?.executedBuyAmount ?? null,
+                promotedAt: event.block.timestamp,
+              };
+            }),
+          )
+          .onConflictDoNothing();
 
-      await context.db.sql
-        .delete(candidateDiscreteOrder)
-        .where(
-          and(
-            eq(candidateDiscreteOrder.chainId, chainId),
-            inArray(
-              candidateDiscreteOrder.orderUid,
-              orphanCandidates.map((c) => c.orderUid),
+        await context.db.sql
+          .delete(candidateDiscreteOrder)
+          .where(
+            and(
+              eq(candidateDiscreteOrder.chainId, chainId),
+              inArray(
+                candidateDiscreteOrder.orderUid,
+                chunk.map((c) => c.orderUid),
+              ),
             ),
-          ),
-        );
+          );
+      }
 
       const preflightKnown = preflightStatuses.size;
       log("info", "CandidateConfirmer:parent_cancelled", { block: String(event.block.number), chainId, parentCancelled: orphanCandidates.length, preflightKnown });
