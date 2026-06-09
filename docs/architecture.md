@@ -6,7 +6,7 @@ This document covers how the indexer works, from on-chain events to the GraphQL 
 
 The system is a Ponder 0.16.x indexer that watches the ComposableCoW contract on Ethereum mainnet and Gnosis Chain. When a user creates a programmatic order (TWAP, Stop Loss, etc.), the contract emits a `ConditionalOrderCreated` event. The indexer picks that up, decodes the order parameters, resolves the actual owner (which may be behind a proxy), and writes the result to Postgres. A Hono HTTP server exposes the data through GraphQL and a SQL passthrough endpoint.
 
-Ponder registers handlers for three independent on-chain event streams: `ComposableCow` (conditional order creation), `CoWShedFactory` (proxy wallet deployment), and `GPv2Settlement` (Aave adapter detection via `Settlement` events — `Trade` logs in the receipt identify the adapter address). During live sync, additional block handlers in `blockHandler.ts` poll contract state and the CoW orderbook API. See `blockHandler.ts` for the current handler list and responsibilities.
+Ponder registers handlers for three independent on-chain event streams: `ComposableCow` (conditional order creation), `CoWShedFactory` (proxy wallet deployment), and `GPv2Settlement` (Aave adapter detection via `Settlement` events — `Trade` logs in the receipt identify the adapter address). During live sync, additional block handlers in `blockHandler.ts` poll contract state and the CoW orderbook API. See `blockHandler.ts` for the current handler list and responsibilities. `settlement.ts` detects Aave flash loan adapters via a queue-based approach: the `GPv2Settlement:Settlement` event handler enqueues tx hashes, and `SettlementResolver:block` drains the queue and does all RPC work so errors never crash the event handler.
 
 ## Contracts and Chains
 
@@ -144,22 +144,32 @@ This is the primary event handler. When a `ConditionalOrderCreated` fires:
 
 When a CoWShed proxy wallet is deployed, this handler stores the mapping from the proxy address (`shed`) to the deploying user address in `ownerMapping`. This mapping is then available for the composableCow handler to resolve owners.
 
-### settlement.ts -- GPv2Settlement Settlement
+### settlement.ts -- Flash Loan Adapter Detection
 
-This handler detects Aave V3 flash loan adapter contracts. The GPv2Settlement contract is filtered (in `ponder.config.ts`) to only index settlements from the FlashLoanRouter solver, which keeps the event volume low.
+This file detects Aave V3 flash loan adapter contracts using a queue-based two-stage approach. The GPv2Settlement contract is filtered (in `ponder.config.ts`) to only index settlements from the FlashLoanRouter solver, so the event volume is very low.
 
-For each Settlement event:
+**Stage 1 — `GPv2Settlement:Settlement` event handler (enqueue only):**
 
-1. Fetch the full transaction receipt and iterate over all logs.
-2. Filter for Trade logs emitted by the settlement contract (matching the Trade event topic).
-3. For each trade, extract the `owner` from the indexed topic.
-4. Skip if already mapped, skip if the address is an EOA (no bytecode).
-5. Call `FACTORY()` on the address using raw `eth_call` (not `readContract`, which would log warnings on reverts). If the returned address matches the known AaveV3AdapterFactory address, this is a flash loan adapter.
-6. Call `owner()` on the adapter to get the EOA, then write the `ownerMapping` entry.
+When a Settlement event fires, the handler writes the transaction hash into the `settlementQueue` table and returns immediately. No RPC calls are made here — errors in RPC never crash the event handler, keeping the indexer stable.
 
-The handler uses raw `eth_call` for the FACTORY() check specifically to avoid Ponder's built-in WARN logging on contract call reverts. Most trade addresses are not Aave adapters, so FACTORY() reverts are the common case, and the warnings would flood the logs.
+**Stage 2 — `SettlementResolver:block` block handler (drain and resolve):**
 
-Stats are accumulated and logged every 30 seconds to track throughput without per-event log spam.
+Every block, this handler drains up to `MAX_SETTLEMENTS_PER_BLOCK` rows from `settlementQueue` for the current chain. For each queued transaction:
+
+1. Fetch the full transaction receipt (with timeout). On error, log a warning and delete the queue row (skip it).
+2. Iterate over all logs in the receipt. Keep only Trade logs emitted by the GPv2Settlement contract.
+3. For each trade, extract the `owner` address from the indexed topic.
+4. Skip if already in `ownerMapping` (adapter seen in a prior settlement).
+5. Call `getCode` on the address (with timeout). Skip if EOA (no bytecode).
+6. Call `FACTORY()` via raw `eth_call` (not `readContract`, which logs a WARN on every revert). If the returned address doesn't match the known AaveV3AdapterFactory address, skip.
+7. Call `owner()` on the adapter to retrieve the underlying EOA.
+8. Write a row to `ownerMapping` (`address` → `owner`, `addressType = FlashLoanHelper`).
+9. Update any `conditionalOrderGenerator` rows owned by the adapter address to set `ownerAddressType = FlashLoanHelper`.
+10. Delete the queue row.
+
+The raw `eth_call` for `FACTORY()` avoids Ponder's built-in WARN logs on reverts — most addresses are not Aave adapters, so reverts are the common case and would flood the logs if `readContract` were used.
+
+Stats (total settlements, trade logs found, EOA skips, adapter mappings, avg FACTORY() latency) are accumulated and logged every 30 seconds.
 
 ### blockHandler.ts -- live block handlers
 
