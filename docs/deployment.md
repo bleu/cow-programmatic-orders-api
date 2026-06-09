@@ -30,11 +30,10 @@ Example: `DATABASE_URL=postgresql://cow_programmatic:secretpass@localhost:5433/c
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `DISABLE_POLL_RESULT_CHECK` | No | Disables the OrderDiscoveryPoller block handler. Skips RPC multicalls for non-deterministic generators. Saves RPC calls during initial sync at the cost of not detecting poll results until re-enabled. |
-| `DISABLE_DETERMINISTIC_CANCEL_SWEEP` | No | Disables the CancellationWatcher. Skips periodic `singleOrders()` reads on deterministic generators. While disabled, on-chain `ComposableCoW.remove()` calls on TWAP/StopLoss/CirclesBackingOrder generators will not be detected and those generators stay `Active`. |
-| `MAX_GENERATORS_PER_BLOCK_<chainId>` | No | Per-block cap on how many generators OrderDiscoveryPoller and CancellationWatcher will touch on the given chain (e.g. `MAX_GENERATORS_PER_BLOCK_1=200`, `MAX_GENERATORS_PER_BLOCK_100=400`). Default is 200. Excess generators defer to the next block, prioritized by oldest `lastCheckBlock` first. |
+| `DISABLE_POLL_RESULT_CHECK` | No | Disables the `OrderDiscoveryPoller` block handler. Skips RPC multicalls for non-deterministic generators. Saves RPC calls during initial sync at the cost of not detecting poll results until re-enabled. |
+| `DISABLE_DETERMINISTIC_CANCEL_SWEEP` | No | Disables the `CancellationWatcher`. Skips periodic `singleOrders()` reads on deterministic generators. While disabled, on-chain `ComposableCoW.remove()` calls on TWAP/StopLoss/CirclesBackingOrder generators will not be detected and those generators stay `Active`. |
+| `MAX_GENERATORS_PER_BLOCK_<chainId>` | No | Per-block cap on how many generators `OrderDiscoveryPoller` and `CancellationWatcher` will touch on the given chain (e.g. `MAX_GENERATORS_PER_BLOCK_1=200`, `MAX_GENERATORS_PER_BLOCK_100=400`). Default is 200. Excess generators defer to the next block, prioritized by oldest `lastCheckBlock` first. |
 | `DISABLE_SETTLEMENT_FACTORY_CHECK` | No | Skips `getCode` + `FACTORY()` RPC calls in the GPv2Settlement handler. Useful for benchmarking base sync throughput. |
-| `ETH_GET_LOGS_BLOCK_RANGE_<chainId>` | No | Overrides the `ethGetLogsBlockRange` Ponder config per chain (e.g. `ETH_GET_LOGS_BLOCK_RANGE_1=2000`, `ETH_GET_LOGS_BLOCK_RANGE_100=5000`). Default is 1000. Increase if your RPC provider supports a larger range to speed up backfill. |
 | `PINO_LOG_LEVEL` | No | Log verbosity: `debug`, `info`, `warn`, `error`. Defaults to Ponder's built-in default. |
 
 ### Production Docker Variables
@@ -52,41 +51,6 @@ Used by `docker-compose.yml` (deploy profile) and `deployment/manage.ts`:
 | `PONDER_EXPOSED_PORT` | No | Host port mapped to the Ponder API. Default: `40000`. Inside the container, Ponder listens on `3000`. |
 
 If you're using the `deploy-remotely.ts` workflow, these variables also need to be set as GitHub Actions secrets (or equivalent) in your CI environment.
-
-## pnpm dev vs pnpm start
-
-| | `pnpm dev` | `pnpm start` |
-|---|---|---|
-| Port | **42069** | **3000** (mapped by Docker via `PONDER_EXPOSED_PORT`) |
-| Restart | **Full re-index from scratch** — no checkpoint; re-starts from the configured start blocks | **Resumes from last checkpoint** — picks up where it left off |
-| Hot-reload | Yes (schema/handler/config changes auto-restart) | No |
-| Use case | Local development | Production |
-
-Use `pnpm start` (or the Docker image) in production. Restarting `pnpm dev` silently triggers a full multi-hour re-index every time.
-
-Config or schema changes always force a full re-index regardless of which command you use, because Ponder detects the change and clears the checkpoint.
-
-## Multichain Ordering
-
-Ponder defaults to `ordering: "multichain"` (also called "parallel" mode), which processes each chain's historical backlog independently. In practice during a cold start this means one chain's blocks are indexed before the other gets meaningful progress — e.g. Gnosis may reach 20% while mainnet sits at 0%.
-
-If you need cross-chain consistency (e.g. an API endpoint that joins mainnet + gnosis rows in real-time), set `ordering: "omnichain"` in `ponder.config.ts`. Omnichain mode interleaves blocks across chains by timestamp so both chains advance together, at the cost of slower overall throughput.
-
-For this indexer the default multichain mode is fine: the REST endpoints and GraphQL queries are per-chain.
-
-## RPC Provider Limits and ethGetLogsBlockRange
-
-Many RPC providers cap `eth_getLogs` to 1000–2000 blocks per request. Without an explicit `ethGetLogsBlockRange` in `ponder.config.ts`, Ponder uses a larger internal default, which causes repeated `InvalidInputRpcError: query block range exceeds server limit` warnings and retry storms during backfill.
-
-`ponder.config.ts` sets `ethGetLogsBlockRange: 1000` for both mainnet and gnosis as a safe conservative default. If your provider allows higher limits (e.g. Alchemy allows 10 000), you can increase it:
-
-```ts
-// ponder.config.ts
-chains: {
-  mainnet: { id: 1, rpc: ..., ethGetLogsBlockRange: 10_000 },
-  gnosis:  { id: 100, rpc: ..., ethGetLogsBlockRange: 10_000 },
-}
-```
 
 ## Database Setup
 
@@ -131,63 +95,6 @@ docker compose --profile deploy up -d
 
 The `Dockerfile` in the project root builds the Ponder image: two-stage Node 22 Alpine, installs dependencies with `--frozen-lockfile`, exposes port 3000, runs `pnpm start`. The health check hits `/ready` with a 24-hour start period (initial sync takes hours).
 
-### Kubernetes Probes
-
-The indexer exposes two health endpoints with distinct semantics:
-
-| Endpoint | Semantic | Returns 200 when |
-|----------|----------|-----------------|
-| `/health` | **Liveness** — is the process alive? | Always, once the server starts |
-| `/ready` | **Readiness** — is the index fully synced? | Only when fully synced |
-
-Map these to different K8s probe types. The specific timing values (`periodSeconds`, `failureThreshold`, `initialDelaySeconds`) depend on your cluster's SLOs; what matters is which path and port to use:
-
-```yaml
-livenessProbe:
-  httpGet:
-    path: /health
-    port: 3000
-readinessProbe:
-  httpGet:
-    path: /ready
-    port: 3000
-```
-
-**Do not** use `/ready` as the liveness probe. A pod that is still indexing (which takes hours on a cold start) returns 200 on `/health` but not on `/ready`. Using `/ready` for liveness would kill the pod before it ever finishes syncing.
-
-A pod in `NotReady` state is not killed — it is simply removed from load-balancer rotation. On a cold start (no existing database), the pod will be `NotReady` for the duration of the historical backfill (hours). That is expected: the old pod (if any) keeps serving traffic during this window, and once the new pod catches up, K8s starts routing to it.
-
-The Docker Compose health check uses `/ready` with a 24-hour start period as a pragmatic fallback for single-container deployments, not as a K8s-style probe.
-
-### Structured Logging
-
-`pnpm start` runs with `--log-format json`, which makes both Ponder's internal log lines and the handler log lines emit newline-delimited JSON. Each handler log line includes structured fields (e.g. `chainId`, `block`) enabling log aggregators (Datadog, CloudWatch, Loki) to filter and alert by chain.
-
-`pnpm dev` uses Ponder's default pretty format for readability during local development.
-
-**Convention:** all code under `src/application/` uses `log()` from `src/application/helpers/logger.ts` instead of `console.log/warn/error` directly. The `src/api/` layer (Hono routes) is exempt — Hono handles its own logging. Example:
-
-```ts
-import { log } from "../helpers/logger";
-
-log("info", "c2:confirmed", { chainId, orderUid, block: String(event.block.number) });
-log("warn", "c2:timeout",   { chainId, block: String(event.block.number) });
-```
-
-`warn` and `error` level messages go to `stderr`; `info` goes to `stdout`. The `level` field in the JSON payload is what log aggregators use to route and alert.
-
-### PostgreSQL Memory Flags
-
-Memory settings are hardcoded in the `command:` block of `docker-compose.yml`, tuned for 1G RAM:
-
-- `shared_buffers`: 204MB (~20% RAM)
-- `work_mem`: 2MB per connection (~25% RAM / max_connections)
-- `effective_cache_size`: 512MB (~50% RAM)
-- `maintenance_work_mem`: 51MB
-
-Adjust these proportionally if you change the host's available memory.
-
-
 ## Deploying
 
 ### How it works in practice
@@ -211,39 +118,3 @@ On the target machine, you need Docker and DNS configured to point at the contai
 
 To tear down: `npx tsx deployment/manage.ts down --env-file deployment/.env`
 
-### Production architecture
-
-For a production setup, run at least two containers: one dedicated to indexing and one (or more) serving the API. This way if a user overloads the API with queries, the indexer keeps working. And if the indexer crashes or restarts, the API stays up with the last-synced data.
-
-The current deploy profile in `docker-compose.yml` runs a single container doing both. Splitting indexer and API is a straightforward change: run two instances of the same image, one with indexing enabled and one configured as API-only (Ponder supports this via its `--api-only` flag or by disabling indexing).
-
-### API Endpoints
-
-Once running, the indexer exposes:
-
-- `GET /graphql` and `POST /graphql` -- GraphQL API
-- `/sql/*` -- Ponder SQL client (direct Drizzle-based queries)
-- `GET /healthz` -- liveness probe; returns `{"status":"ok"}` as soon as the server starts
-- `GET /ready` -- readiness probe; returns 200 only after the historical backfill is complete
-- `GET /api/sync-progress` -- per-chain sync status with `historicalSyncProgressPct` (0–100)
-
-### Checking If the Indexer Is Caught Up
-
-`GET /ready` returns HTTP 200 when fully synced and 503 while still indexing. For a more granular view, `GET /api/sync-progress` returns the historical backfill percentage per chain:
-
-```json
-{
-  "chains": [
-    { "chainId": 1,   "chainName": "mainnet", "historicalSyncProgressPct": 100.0, "isSynced": true },
-    { "chainId": 100, "chainName": "gnosis",  "historicalSyncProgressPct": 100.0, "isSynced": true }
-  ]
-}
-```
-
-`isSynced: true` means the backfill is complete and the indexer is processing new blocks in realtime. While `isSynced` is false the GraphQL/SQL data is partial — queries will succeed but results are incomplete.
-
-## What's Not Implemented
-
-- No monitoring or alerting. Watch container logs and the `/healthz` endpoint. Standard observability tooling (Prometheus, Grafana) can be wired up but nothing is preconfigured.
-- No automated backups. Use standard PostgreSQL tools (`pg_dump`, WAL archiving).
-- Single-instance deployment by default. See the production architecture section above for multi-container guidance.

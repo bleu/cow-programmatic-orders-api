@@ -72,7 +72,7 @@ const SINGLE_ORDERS_ABI = [
 // allCandidatesKnown=false. Normally only non-deterministic types, but also
 // serves as fallback for deterministic types whose precompute failed.
 
-ponder.on("ContractPoller:block", async ({ event, context }) => {
+ponder.on("OrderDiscoveryPoller:block", async ({ event, context }) => {
   if (process.env.DISABLE_POLL_RESULT_CHECK) return;
 
   const chainId = context.chain.id as SupportedChainId;
@@ -123,7 +123,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
 
   if (dueOrders.length === 0) return;
 
-  log("info", "C1:ENTER", { block: String(currentBlock), chainId, due: dueOrders.length });
+  log("info", "OrderDiscoveryPoller:ENTER", { block: String(currentBlock), chainId, due: dueOrders.length });
 
   const c1MulticallPromise = context.client.multicall({
     contracts: dueOrders.map((order) => ({
@@ -149,7 +149,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
     );
   } catch (err) {
     if (err instanceof TimeoutError) {
-      log("warn", "C1:multicall_timeout", { block: String(currentBlock), chainId, due: dueOrders.length });
+      log("warn", "OrderDiscoveryPoller:multicall_timeout", { block: String(currentBlock), chainId, due: dueOrders.length });
       return;
     }
     throw err;
@@ -263,7 +263,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
                 eq(conditionalOrderGenerator.eventId, order.generatorId),
               ),
             );
-          log("info", "C1:NEVER", { block: String(currentBlock), chainId, generatorId: order.generatorId, reason: pollResult.reason });
+          log("info", "OrderDiscoveryPoller:NEVER", { block: String(currentBlock), chainId, generatorId: order.generatorId, reason: pollResult.reason });
           neverCount++;
           break;
 
@@ -282,7 +282,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
                 eq(conditionalOrderGenerator.eventId, order.generatorId),
               ),
             );
-          log("info", "C1:CANCELLED", { block: String(currentBlock), chainId, generatorId: order.generatorId });
+          log("info", "OrderDiscoveryPoller:CANCELLED", { block: String(currentBlock), chainId, generatorId: order.generatorId });
           break;
       }
     }
@@ -291,7 +291,7 @@ ponder.on("ContractPoller:block", async ({ event, context }) => {
   await Promise.all(successPromises);
 
   const capped = dueOrders.length === maxGeneratorsPerBlock;
-  log("info", "C1:DONE", { block: String(currentBlock), chainId, due: dueOrders.length, success: successCount, never: neverCount, backedOff: backedOffCount, capped });
+  log("info", "OrderDiscoveryPoller:DONE", { block: String(currentBlock), chainId, due: dueOrders.length, success: successCount, never: neverCount, backedOff: backedOffCount, capped });
 });
 
 // ─── C2: Candidate Confirmer ─────────────────────────────────────────────────
@@ -404,7 +404,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
         );
 
       const preflightKnown = preflightStatuses.size;
-      log("info", "C2:parent_cancelled", { block: String(event.block.number), chainId, parentCancelled: orphanCandidates.length, preflightKnown });
+      log("info", "CandidateConfirmer:parent_cancelled", { block: String(event.block.number), chainId, parentCancelled: orphanCandidates.length, preflightKnown });
     }
   }
 
@@ -563,14 +563,14 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
   }
 
   if (confirmed > 0 || stale.length > 0) {
-    log("info", "C2:DONE", { block: String(event.block.number), chainId, candidates: unconfirmed.length, confirmed, expired: stale.length });
+    log("info", "CandidateConfirmer:DONE", { block: String(event.block.number), chainId, candidates: unconfirmed.length, confirmed, expired: stale.length });
   }
 });
 
 // ─── C3: Status Updater ──────────────────────────────────────────────────────
 // Polls the API for status updates on open discrete orders. Expires past validTo.
 
-ponder.on("StatusUpdater:block", async ({ event, context }) => {
+ponder.on("OrderStatusTracker:block", async ({ event, context }) => {
   const chainId = context.chain.id as SupportedChainId;
   const currentTimestamp = event.block.timestamp;
 
@@ -615,7 +615,7 @@ ponder.on("StatusUpdater:block", async ({ event, context }) => {
     }
 
     if (updated > 0) {
-      log("info", "C3:DONE", { block: String(event.block.number), chainId, open: openOrders.length, updated });
+      log("info", "OrderStatusTracker:DONE", { block: String(event.block.number), chainId, open: openOrders.length, updated });
     }
   }
 
@@ -669,7 +669,7 @@ ponder.on("StatusUpdater:block", async ({ event, context }) => {
 // One-time discovery of historical discrete orders for non-deterministic
 // generators created during backfill. Fires once at startBlock=endBlock="latest".
 
-ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
+ponder.on("OwnerBackfill:block", async ({ event, context }) => {
   const chainId = context.chain.id as SupportedChainId;
   const currentBlock = event.block.number;
 
@@ -679,7 +679,7 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
     .from(bootstrapRetryQueue)
     .where(eq(bootstrapRetryQueue.chainId, chainId));
 
-  log("info", "C4:START", { block: String(currentBlock), chainId, pendingRetry: queued.length });
+  log("info", "OwnerBackfill:START", { block: String(currentBlock), chainId, pendingRetry: queued.length });
 
   let totalDiscovered = 0;
   const retriedOwners = new Set<Hex>();
@@ -699,7 +699,7 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
         .where(and(eq(bootstrapRetryQueue.chainId, chainId), eq(bootstrapRetryQueue.owner, owner as Hex)));
     } catch (err) {
       if (err instanceof TimeoutError) {
-        log("warn", "C4:owner_retry_timeout", { block: String(currentBlock), chainId, owner, retryCount: retryCount + 1, timeoutMs: BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS });
+        log("warn", "OwnerBackfill:owner_retry_timeout", { block: String(currentBlock), chainId, owner, retryCount: retryCount + 1, timeoutMs: BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS });
         await context.db.sql
           .update(bootstrapRetryQueue)
           .set({ retryCount: retryCount + 1, lastRetryAt: currentBlock })
@@ -742,12 +742,12 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
   const freshOwners = new Set(generators.map((g) => g.owner).filter((o) => !retriedOwners.has(o)));
 
   if (freshOwners.size === 0 && retriedOwners.size === 0) {
-    log("info", "C4:no_bootstrap_needed", { block: String(currentBlock), chainId });
+    log("info", "OwnerBackfill:no_bootstrap_needed", { block: String(currentBlock), chainId });
     return;
   }
 
   if (freshOwners.size > 0) {
-    log("info", "C4:bootstrap_start", { block: String(currentBlock), chainId, generators: generators.length, freshOwners: freshOwners.size });
+    log("info", "OwnerBackfill:bootstrap_start", { block: String(currentBlock), chainId, generators: generators.length, freshOwners: freshOwners.size });
   }
 
   for (const owner of freshOwners) {
@@ -761,7 +761,7 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
       totalDiscovered += count;
     } catch (err) {
       if (err instanceof TimeoutError) {
-        log("warn", "C4:owner_timeout", { block: String(currentBlock), chainId, owner, timeoutMs: BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS });
+        log("warn", "OwnerBackfill:owner_timeout", { block: String(currentBlock), chainId, owner, timeoutMs: BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS });
         await context.db.sql
           .insert(bootstrapRetryQueue)
           .values({ chainId, owner, firstTimeoutAt: currentBlock, retryCount: 1, lastRetryAt: currentBlock })
@@ -772,7 +772,7 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
     }
   }
 
-  log("info", "C4:DONE", { block: String(currentBlock), chainId, discovered: totalDiscovered });
+  log("info", "OwnerBackfill:DONE", { block: String(currentBlock), chainId, discovered: totalDiscovered });
 });
 
 // ─── C5: Deterministic Cancellation Sweeper ──────────────────────────────────
@@ -784,7 +784,7 @@ ponder.on("HistoricalBootstrap:block", async ({ event, context }) => {
 // Cancelled, which lets the C2/C3 parent-cancelled cascade (COW-918) reconcile
 // the child discrete / candidate rows on the next block.
 
-ponder.on("DeterministicCancellationSweeper:block", async ({ event, context }) => {
+ponder.on("CancellationWatcher:block", async ({ event, context }) => {
   if (process.env.DISABLE_DETERMINISTIC_CANCEL_SWEEP) return;
 
   const chainId = context.chain.id as SupportedChainId;
@@ -826,7 +826,7 @@ ponder.on("DeterministicCancellationSweeper:block", async ({ event, context }) =
 
   if (dueGenerators.length === 0) return;
 
-  log("info", "C5:ENTER", { block: String(currentBlock), chainId, due: dueGenerators.length });
+  log("info", "CancellationWatcher:ENTER", { block: String(currentBlock), chainId, due: dueGenerators.length });
 
   const c5MulticallPromise = context.client.multicall({
     contracts: dueGenerators.map((g) => ({
@@ -847,7 +847,7 @@ ponder.on("DeterministicCancellationSweeper:block", async ({ event, context }) =
     );
   } catch (err) {
     if (err instanceof TimeoutError) {
-      log("warn", "C5:multicall_timeout", { block: String(currentBlock), chainId, due: dueGenerators.length });
+      log("warn", "CancellationWatcher:multicall_timeout", { block: String(currentBlock), chainId, due: dueGenerators.length });
       return;
     }
     throw err;
@@ -884,7 +884,7 @@ ponder.on("DeterministicCancellationSweeper:block", async ({ event, context }) =
             eq(conditionalOrderGenerator.eventId, gen.generatorId),
           ),
         );
-      log("info", "C5:CANCELLED", { block: String(currentBlock), chainId, generatorId: gen.generatorId, orderType: gen.orderType });
+      log("info", "CancellationWatcher:CANCELLED", { block: String(currentBlock), chainId, generatorId: gen.generatorId, orderType: gen.orderType });
       cancelledCount++;
     } else {
       await context.db.sql
@@ -904,7 +904,7 @@ ponder.on("DeterministicCancellationSweeper:block", async ({ event, context }) =
     }
   }
 
-  log("info", "C5:DONE", { block: String(currentBlock), chainId, due: dueGenerators.length, cancelled: cancelledCount, stillActive: stillActiveCount, errors: errorCount });
+  log("info", "CancellationWatcher:DONE", { block: String(currentBlock), chainId, due: dueGenerators.length, cancelled: cancelledCount, stillActive: stillActiveCount, errors: errorCount });
 });
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────
