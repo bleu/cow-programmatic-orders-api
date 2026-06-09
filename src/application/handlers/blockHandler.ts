@@ -16,7 +16,7 @@
 
 import { ponder } from "ponder:registry";
 import { bootstrapRetryQueue, candidateDiscreteOrder, conditionalOrderGenerator, discreteOrder, discreteOrderStatusEnum } from "ponder:schema";
-import { and, asc, eq, inArray, isNull, lte, or, sql } from "ponder";
+import { and, asc, eq, gt, inArray, isNull, lte, or, sql } from "ponder";
 import type { Hex } from "viem";
 import {
   COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID,
@@ -410,6 +410,10 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
 
   // Promoted candidates are always deleted below — no join needed to filter them.
   // Skip TWAP parts whose validity window hasn't started (possibleValidAfterTimestamp).
+  // Also exclude already-expired candidates (validTo in the past) — the stale path
+  // below handles those via /account/{owner}/orders fallback. Without this filter,
+  // every block would call /by_uids for all remaining stale UIDs (which always miss),
+  // wasting API quota until the stale drain completes.
   const unconfirmed = await context.db.sql
     .select({
       orderUid: candidateDiscreteOrder.orderUid,
@@ -427,6 +431,10 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
         or(
           isNull(candidateDiscreteOrder.possibleValidAfterTimestamp),
           lte(candidateDiscreteOrder.possibleValidAfterTimestamp, event.block.timestamp),
+        ),
+        or(
+          isNull(candidateDiscreteOrder.validTo),
+          gt(candidateDiscreteOrder.validTo, Number(event.block.timestamp)),
         ),
       ),
     ) as {
