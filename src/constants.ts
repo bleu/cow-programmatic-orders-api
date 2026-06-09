@@ -84,7 +84,7 @@ export const SETTLEMENT_INNER_RPC_TIMEOUT_MS = 5_000;
 export const BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS = 30_000;
 
 /**
- * COW-988: Hard per-block ceiling on how many open discrete orders the C3
+ * Hard per-block ceiling on how many open discrete orders the C3
  * StatusUpdater will check in a single block. Caps the /by_uids batch size
  * and keeps block handler transactions short.
  *
