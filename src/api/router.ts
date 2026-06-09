@@ -1,7 +1,12 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
-import { ordersByOwnerRoute, executionSummaryRoute } from "./routes";
+import {
+  ordersByOwnerRoute,
+  executionSummaryRoute,
+  syncProgressRoute,
+} from "./routes";
 import { ordersByOwnerHandler } from "./endpoints/orders-by-owner";
 import { executionSummaryHandler } from "./endpoints/execution-summary";
+import { syncProgressHandler } from "./endpoints/sync-progress";
 
 export const apiRouter = new OpenAPIHono();
 
@@ -18,3 +23,4 @@ apiRouter.onError((err, c) => {
 
 apiRouter.openapi(ordersByOwnerRoute, ordersByOwnerHandler);
 apiRouter.openapi(executionSummaryRoute, executionSummaryHandler);
+apiRouter.openapi(syncProgressRoute, syncProgressHandler);
