@@ -550,8 +550,8 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
           for (const [uid, info] of ownerStatuses) {
             if (ownerMissedUids.has(uid)) staleStatuses.set(uid, info);
           }
-        } catch {
-          // Fallback failed — these UIDs will default to "expired"
+        } catch (err) {
+          console.warn(`[COW:C2] block=${event.block.number} chain=${chainId} accountFallback failed owner=${owner}`, err);
         }
       }
     }
