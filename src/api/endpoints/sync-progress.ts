@@ -56,7 +56,7 @@ export const syncProgressHandler: RouteHandler<typeof syncProgressRoute> =
       {
         totalBlocks: number;
         processedBlocks: number;
-        progressPct: number;
+        historicalBlocksFetchedPct: number;
         isRealtime: boolean;
         isComplete: boolean;
       }
@@ -72,7 +72,7 @@ export const syncProgressHandler: RouteHandler<typeof syncProgressRoute> =
       result[chain] = {
         totalBlocks: t,
         processedBlocks: processed,
-        progressPct: pct,
+        historicalBlocksFetchedPct: pct,
         isRealtime: (isRealtime.get(chain) ?? 0) === 1,
         isComplete: (isComplete.get(chain) ?? 0) === 1,
       };

@@ -7,7 +7,16 @@ import { GPv2SettlementAbi } from "./abis/GPv2SettlementAbi";
 
 // Build chain entries: { mainnet: { id: 1, rpc: "..." }, gnosis: { id: 100, rpc: "..." }, ... }
 const chains = Object.fromEntries(
-  ACTIVE_CHAINS.map((c) => [c.name, { id: c.chainId, rpc: process.env[c.rpcEnvVar]! }]),
+  ACTIVE_CHAINS.map((c) => [
+    c.name,
+    {
+      id: c.chainId,
+      rpc: process.env[c.rpcEnvVar]!,
+      // Many RPC providers cap eth_getLogs at 1000–2000 blocks; set conservatively to avoid
+      // InvalidInputRpcError retry storms during backfill. Override via ETH_GET_LOGS_BLOCK_RANGE_<chainId>.
+      ethGetLogsBlockRange: Number(process.env[`ETH_GET_LOGS_BLOCK_RANGE_${c.chainId}`] ?? 1000),
+    },
+  ]),
 );
 
 const cowShedChains = ACTIVE_CHAINS.filter((c) => c.cowShedFactory !== null);
@@ -63,12 +72,12 @@ export default createConfig({
     },
   },
   blocks: {
-    // C1: Contract Poller — RPC multicall for non-deterministic generators
+    // OrderDiscoveryPoller — RPC multicall for non-deterministic generators.
     // Gnosis interval=4 (~20s) vs mainnet interval=1 (~12s).
     // The CoW watch-tower processes orders sequentially — with 1,461+ gnosis
     // generators, a full cycle takes many blocks. Polling every 5s gnosis block
     // wastes RPC calls since state rarely changes between blocks.
-    ContractPoller: {
+    OrderDiscoveryPoller: {
       chain: Object.fromEntries(
         ACTIVE_CHAINS.map((c) => [
           c.name,
@@ -80,22 +89,22 @@ export default createConfig({
       ),
       interval: 1,
     },
-    // C2: Candidate Confirmer — checks API for unconfirmed candidates
+    // CandidateConfirmer — checks API for unconfirmed candidates.
     CandidateConfirmer: {
       chain: Object.fromEntries(
         ACTIVE_CHAINS.map((c) => [c.name, { startBlock: "latest" as const }]),
       ),
       interval: 1,
     },
-    // C3: Status Updater — polls API for open discrete order status
-    StatusUpdater: {
+    // OrderStatusTracker — polls API for open discrete order status.
+    OrderStatusTracker: {
       chain: Object.fromEntries(
         ACTIVE_CHAINS.map((c) => [c.name, { startBlock: "latest" as const }]),
       ),
       interval: 1,
     },
-    // C4: Historical Bootstrap — one-time owner fetch for non-deterministic backfill orders
-    HistoricalBootstrap: {
+    // OwnerBackfill — one-time owner fetch for non-deterministic backfill orders.
+    OwnerBackfill: {
       chain: Object.fromEntries(
         ACTIVE_CHAINS.map((c) => [
           c.name,
@@ -104,11 +113,10 @@ export default createConfig({
       ),
       interval: 1,
     },
-    // C5: Deterministic Cancellation Sweeper — singleOrders() mapping read for
-    // generators C1 skips (allCandidatesKnown=true). Cadence per generator is
-    // DETERMINISTIC_CANCEL_SWEEP_INTERVAL blocks; the handler itself is cheap
-    // when nothing is due.
-    DeterministicCancellationSweeper: {
+    // CancellationWatcher — singleOrders() mapping read for deterministic
+    // generators (allCandidatesKnown=true). Cadence per generator is
+    // DETERMINISTIC_CANCEL_SWEEP_INTERVAL blocks; the handler itself is cheap when nothing is due.
+    CancellationWatcher: {
       chain: Object.fromEntries(
         ACTIVE_CHAINS.map((c) => [c.name, { startBlock: "latest" as const }]),
       ),
