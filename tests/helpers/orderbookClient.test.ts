@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { AddressInfo } from "node:net";
 import type { Hex } from "viem";
@@ -16,43 +16,10 @@ vi.mock("ponder", () => ({
   sql: Object.assign(vi.fn(), { raw: vi.fn() }),
 }));
 
-// We import the module under test after patching ORDERBOOK_API_URLS via a
-// helper that starts a local HTTP server and temporarily overrides the URL.
-// Because orderbookClient.ts reads ORDERBOOK_API_URLS at call time (not at
-// module load time) we can monkey-patch it for each test.
 import * as data from "../../src/data";
-import { fetchOwnerOrderStatuses } from "../../src/application/helpers/orderbookClient";
+import { fetchOrderStatusByUids, fetchOwnerOrderStatuses } from "../../src/application/helpers/orderbookClient";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-interface OrderStub {
-  uid: string;
-  status: string;
-  executedSellAmount: string;
-  executedBuyAmount: string;
-  sellAmount?: string;
-  buyAmount?: string;
-  feeAmount?: string;
-  validTo?: number;
-  creationDate?: string;
-  signingScheme?: string;
-  signature?: string;
-}
-
-function makeOrderStub(overrides: Partial<OrderStub> & Pick<OrderStub, "uid" | "status">): OrderStub {
-  return {
-    sellAmount: "1000000000000000000",
-    buyAmount: "2000000000",
-    feeAmount: "0",
-    validTo: 9999999999,
-    creationDate: "2024-01-01T00:00:00.000Z",
-    signingScheme: "eip1271",
-    signature: "0x",
-    executedSellAmount: "0",
-    executedBuyAmount: "0",
-    ...overrides,
-  };
-}
 
 type RequestHandler = (req: IncomingMessage, res: ServerResponse) => void;
 
@@ -88,11 +55,167 @@ async function withFakeApi(
   }
 }
 
+/** Minimal Ponder context stub for fetchOrderStatusByUids tests. */
+function makeContext() {
+  return { db: { sql: { execute: async () => [] } } };
+}
+
+/** Build a single `{ order: {...} }` item matching the real CoW Orderbook API shape (by_uids endpoint). */
+function makeWrappedOrder(uid: string, status: "open" | "fulfilled" | "expired" | "cancelled") {
+  return {
+    order: {
+      uid,
+      status,
+      sellAmount: "1000000000000000000",
+      buyAmount: "2000000000000000000",
+      feeAmount: "1000000000000000",
+      validTo: 9_999_999_999,
+      creationDate: "2024-01-01T00:00:00Z",
+      signingScheme: "eip1271",
+      signature: "0x",
+      executedSellAmount: status === "fulfilled" ? "1000000000000000000" : "0",
+      executedBuyAmount: status === "fulfilled" ? "2000000000000000000" : "0",
+    },
+  };
+}
+
+interface OrderStub {
+  uid: string;
+  status: string;
+  executedSellAmount: string;
+  executedBuyAmount: string;
+  sellAmount?: string;
+  buyAmount?: string;
+  feeAmount?: string;
+  validTo?: number;
+  creationDate?: string;
+  signingScheme?: string;
+  signature?: string;
+}
+
+function makeOrderStub(overrides: Partial<OrderStub> & Pick<OrderStub, "uid" | "status">): OrderStub {
+  return {
+    sellAmount: "1000000000000000000",
+    buyAmount: "2000000000",
+    feeAmount: "0",
+    validTo: 9999999999,
+    creationDate: "2024-01-01T00:00:00.000Z",
+    signingScheme: "eip1271",
+    signature: "0x",
+    executedSellAmount: "0",
+    executedBuyAmount: "0",
+    ...overrides,
+  };
+}
+
+// Realistic CoW order UIDs (orderHash + owner + validTo = 56 bytes each).
+const UID_A = `0x${"aa".repeat(56)}` as const;
+const UID_B = `0x${"bb".repeat(56)}` as const;
+
+// Isolated chain ID that doesn't exist in production — safe to mutate and delete.
+const TEST_CHAIN_ID = 99_999;
+
+// ─── fetchOrderStatusByUids tests ─────────────────────────────────────────────
+
+describe("fetchOrderStatusByUids", () => {
+  beforeAll(() => {
+    // Placeholder so the early-exit guard (!apiBaseUrl) passes for TEST_CHAIN_ID.
+    // Individual tests replace this with the actual server URL before each call.
+    data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = "http://placeholder";
+  });
+
+  afterAll(() => {
+    delete (data.ORDERBOOK_API_URLS as Record<number, string | undefined>)[TEST_CHAIN_ID];
+  });
+
+  it("returns empty map immediately when the uids array is empty", async () => {
+    const result = await fetchOrderStatusByUids(makeContext(), TEST_CHAIN_ID, []);
+    expect(result.size).toBe(0);
+  });
+
+  it("correctly unwraps the { order } wrapper and maps uid → status (regression: COW-979)", async () => {
+    const { url, close } = await startServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify([makeWrappedOrder(UID_A, "fulfilled")]));
+    });
+    data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
+    try {
+      const result = await fetchOrderStatusByUids(makeContext(), TEST_CHAIN_ID, [UID_A]);
+      expect(result.has(UID_A)).toBe(true);
+      expect(result.get(UID_A)?.status).toBe("fulfilled");
+    } finally {
+      await close();
+    }
+  });
+
+  it("populates executed amounts from the unwrapped response", async () => {
+    const { url, close } = await startServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify([makeWrappedOrder(UID_A, "fulfilled")]));
+    });
+    data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
+    try {
+      const result = await fetchOrderStatusByUids(makeContext(), TEST_CHAIN_ID, [UID_A]);
+      const info = result.get(UID_A);
+      expect(info?.executedSellAmount).toBe("1000000000000000000");
+      expect(info?.executedBuyAmount).toBe("2000000000000000000");
+    } finally {
+      await close();
+    }
+  });
+
+  it("returns statuses for multiple orders in a single batch", async () => {
+    const { url, close } = await startServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify([
+        makeWrappedOrder(UID_A, "fulfilled"),
+        makeWrappedOrder(UID_B, "open"),
+      ]));
+    });
+    data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
+    try {
+      const result = await fetchOrderStatusByUids(makeContext(), TEST_CHAIN_ID, [UID_A, UID_B]);
+      expect(result.get(UID_A)?.status).toBe("fulfilled");
+      expect(result.get(UID_B)?.status).toBe("open");
+    } finally {
+      await close();
+    }
+  });
+
+  it("returns empty map on HTTP error response without throwing", async () => {
+    const { url, close } = await startServer((_req, res) => {
+      res.writeHead(500);
+      res.end("Internal Server Error");
+    });
+    data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
+    try {
+      const result = await fetchOrderStatusByUids(makeContext(), TEST_CHAIN_ID, [UID_A]);
+      expect(result.size).toBe(0);
+    } finally {
+      await close();
+    }
+  });
+
+  it("returns empty map when the response body is an empty array", async () => {
+    const { url, close } = await startServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end("[]");
+    });
+    data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
+    try {
+      const result = await fetchOrderStatusByUids(makeContext(), TEST_CHAIN_ID, [UID_A]);
+      expect(result.size).toBe(0);
+    } finally {
+      await close();
+    }
+  });
+});
+
+// ─── fetchOwnerOrderStatuses tests ────────────────────────────────────────────
+
 const FAKE_OWNER = "0xaabbccddEEff0011223344556677889900aabbcc" as Hex;
 const FAKE_CHAIN_ID = 1;
 const UNKNOWN_CHAIN_ID = 99999;
-
-// ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe("fetchOwnerOrderStatuses", () => {
   it("returns an empty map for an unknown chainId (no API URL configured)", async () => {
@@ -197,8 +320,6 @@ describe("fetchOwnerOrderStatuses", () => {
   });
 
   it("paginates — fetches subsequent pages when first page is full (PAGE_LIMIT=1000)", async () => {
-    // PAGE_LIMIT is 1000 in orderbookClient.ts. Build two pages: first exactly
-    // 1000 orders (triggers another fetch), second with fewer (terminates pagination).
     const PAGE_LIMIT = 1000;
     const page1: OrderStub[] = Array.from({ length: PAGE_LIMIT }, (_, i) =>
       makeOrderStub({ uid: `0xpage1-${i}`, status: "open" }),
@@ -223,14 +344,11 @@ describe("fetchOwnerOrderStatuses", () => {
       await withFakeApi(FAKE_CHAIN_ID, url, async () => {
         const result = await fetchOwnerOrderStatuses(FAKE_CHAIN_ID, FAKE_OWNER);
 
-        // Should have fetched both pages
         expect(receivedOffsets).toContain(0);
         expect(receivedOffsets).toContain(PAGE_LIMIT);
 
-        // Total entries = 1000 + 1
         expect(result.size).toBe(PAGE_LIMIT + 1);
 
-        // Spot-check the page-2 entry
         expect(result.get("0xpage2-0")).toEqual({
           status: "fulfilled",
           executedSellAmount: "999",
@@ -250,8 +368,6 @@ describe("fetchOwnerOrderStatuses", () => {
 
     try {
       await withFakeApi(FAKE_CHAIN_ID, url, async () => {
-        // fetchAccountOrders breaks out of the loop on non-ok response and
-        // returns whatever was accumulated so far (nothing). So result is empty.
         const result = await fetchOwnerOrderStatuses(FAKE_CHAIN_ID, FAKE_OWNER);
         expect(result).toBeInstanceOf(Map);
         expect(result.size).toBe(0);

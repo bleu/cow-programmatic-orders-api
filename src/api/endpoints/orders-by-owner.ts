@@ -54,6 +54,7 @@ export const ordersByOwnerHandler: RouteHandler<
       owner: schema.conditionalOrderGenerator.owner,
       resolvedOwner: schema.conditionalOrderGenerator.resolvedOwner,
       status: schema.conditionalOrderGenerator.status,
+      hash: schema.conditionalOrderGenerator.hash,
       ownerAddressType: schema.conditionalOrderGenerator.ownerAddressType,
     })
     .from(schema.conditionalOrderGenerator)

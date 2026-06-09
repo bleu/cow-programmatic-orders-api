@@ -8,6 +8,7 @@ import {
   ExecutionSummaryQuery,
   ExecutionSummaryResponse,
 } from "./schemas/execution-summary";
+import { SyncProgressResponse } from "./schemas/sync-progress";
 
 export const ordersByOwnerRoute = createRoute({
   method: "get",
@@ -25,6 +26,23 @@ export const ordersByOwnerRoute = createRoute({
       },
     },
     400: { description: "Invalid address or query parameters." },
+  },
+});
+
+export const syncProgressRoute = createRoute({
+  method: "get",
+  path: "/sync-progress",
+  tags: ["Indexer"],
+  summary: "Per-chain historical sync progress",
+  description:
+    "Returns the indexer's historical backfill progress per chain: total blocks to process, blocks already processed, percentage complete, and whether the chain is in realtime mode. Reads from Ponder's built-in Prometheus metrics. During initial sync, historicalBlocksFetchedPct will rise from 0 to 100 and isComplete will flip to true once the chain is fully caught up.",
+  responses: {
+    200: {
+      description: "Per-chain sync progress.",
+      content: {
+        "application/json": { schema: SyncProgressResponse },
+      },
+    },
   },
 });
 

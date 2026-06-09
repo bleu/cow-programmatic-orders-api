@@ -1,7 +1,8 @@
 import { ponder } from "ponder:registry";
 import { AddressType, conditionalOrderGenerator, ownerMapping, transaction } from "ponder:schema";
 import { and, eq } from "ponder";
-import { decodeAbiParameters, keccak256, toBytes } from "viem";
+import { keccak256, toBytes } from "viem";
+import { log } from "../helpers/logger";
 import { AaveV3AdapterHelperAbi } from "../../../abis/AaveV3AdapterHelperAbi";
 import {
   AAVE_V3_ADAPTER_FACTORY_ADDRESSES,
@@ -31,15 +32,15 @@ function logStatsIfIntervalPassed() {
   if (Date.now() - statsLastLogAt < LOG_INTERVAL_MS) return;
   const contractAddresses =
     stats.tradeLogsFound - stats.skippedAlreadyMapped - stats.skippedEOA;
-  console.log(
-    `[SETTLEMENT:STATS] settlements=${stats.total}` +
-      ` tradeLogs=${stats.tradeLogsFound}` +
-      ` alreadyMapped=${stats.skippedAlreadyMapped}` +
-      ` eoa=${stats.skippedEOA}` +
-      ` notAdapter=${stats.skippedNotAdapter}` +
-      ` mapped=${stats.mapped}` +
-      ` | avgFactory=${contractAddresses > 0 ? (stats.msFactory / contractAddresses).toFixed(1) : 0}ms`,
-  );
+  log("info", "settlement:stats", {
+    settlements: stats.total,
+    tradeLogs: stats.tradeLogsFound,
+    alreadyMapped: stats.skippedAlreadyMapped,
+    eoa: stats.skippedEOA,
+    notAdapter: stats.skippedNotAdapter,
+    mapped: stats.mapped,
+    avgFactoryMs: contractAddresses > 0 ? Number((stats.msFactory / contractAddresses).toFixed(1)) : 0,
+  });
   statsLastLogAt = Date.now();
 }
 
@@ -79,15 +80,15 @@ ponder.on("GPv2Settlement:Settlement", async ({ event, context }) => {
     hash: event.transaction.hash,
   });
 
-  for (const log of receipt.logs) {
+  for (const txLog of receipt.logs) {
     // Only Trade logs emitted by GPv2Settlement in this same transaction
-    if (log.address.toLowerCase() !== settlementAddress) continue;
-    if (log.topics[0] !== TRADE_TOPIC) continue;
+    if (txLog.address.toLowerCase() !== settlementAddress) continue;
+    if (txLog.topics[0] !== TRADE_TOPIC) continue;
 
     stats.tradeLogsFound++;
 
     // Decode owner from topics[1] — ABI-encoded 32-byte padded address
-    const owner = `0x${log.topics[1]!.slice(26)}` as `0x${string}`;
+    const owner = `0x${txLog.topics[1]!.slice(26)}` as `0x${string}`;
     const ownerAddress = owner.toLowerCase() as `0x${string}`;
 
     // Skip if already mapped (adapter seen in a prior settlement)
@@ -191,35 +192,15 @@ ponder.on("GPv2Settlement:Settlement", async ({ event, context }) => {
         ),
       );
 
-    // Decode non-indexed Trade log fields: sellToken, buyToken, amounts, orderUid
-    const [sellToken, buyToken, sellAmount, buyAmount, , orderUid] =
-      decodeAbiParameters(
-        [
-          { type: "address" },
-          { type: "address" },
-          { type: "uint256" },
-          { type: "uint256" },
-          { type: "uint256" },
-          { type: "bytes" },
-        ],
-        log.data,
-      );
-
     stats.mapped++;
     logStatsIfIntervalPassed();
 
-    console.log(
-      `[COW:SETTLEMENT:TRADE] AAVE_ADAPTER_MAPPED` +
-        ` adapter=${ownerAddress}` +
-        ` eoa=${eoaOwner.toLowerCase()}` +
-        ` orderUid=${orderUid}` +
-        ` sellToken=${sellToken.toLowerCase()}` +
-        ` buyToken=${buyToken.toLowerCase()}` +
-        ` sellAmount=${sellAmount}` +
-        ` buyAmount=${buyAmount}` +
-        ` block=${event.block.number}` +
-        ` chain=${chainId}`,
-    );
+    log("info", "settlement:aave_adapter_mapped", {
+      block: String(event.block.number),
+      chainId,
+      adapter: ownerAddress,
+      eoa: eoaOwner.toLowerCase(),
+    });
   }
 
   logStatsIfIntervalPassed();
