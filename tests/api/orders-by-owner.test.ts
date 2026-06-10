@@ -214,7 +214,7 @@ describe("GeneratorSummary schema", () => {
     const shape = GeneratorSummary.shape;
     const description = shape.hash.description;
     expect(description).toBe(
-      "On-chain canonical identifier: keccak256(abi.encode((handler, salt, staticInput))). Used by ComposableCow.singleOrders(owner, hash) and remove(owner, hash).",
+      "On-chain canonical identifier: keccak256(abi.encode(ConditionalOrderParams { handler, salt, staticInput })) — the value returned by ComposableCow.hash(params) and used as the key in singleOrders(owner, hash) and remove(owner, hash).",
     );
   });
 
