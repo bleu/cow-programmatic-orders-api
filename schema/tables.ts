@@ -11,6 +11,9 @@ export const orderTypeEnum = onchainEnum("order_type", [
   "CirclesBackingOrder",
   "SwapOrderHandler",
   "ERC4626CowSwapFeeBurner",
+  "CurveCowSwapBurner",
+  "BalancerCowSwapFeeBurner",
+  "CowAmmConstantProduct",
   "Unknown",
 ]);
 

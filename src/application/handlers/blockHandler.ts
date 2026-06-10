@@ -46,7 +46,7 @@ import { log } from "../helpers/logger";
 import { type OrderType } from "../../utils/order-types";
 type DiscreteStatus = (typeof discreteOrderStatusEnum.enumValues)[number];
 
-const NON_DETERMINISTIC_TYPES: readonly OrderType[] = ["PerpetualSwap", "GoodAfterTime", "TradeAboveThreshold", "Unknown"];
+const NON_DETERMINISTIC_TYPES: readonly OrderType[] = ["PerpetualSwap", "GoodAfterTime", "TradeAboveThreshold", "CurveCowSwapBurner", "BalancerCowSwapFeeBurner", "CowAmmConstantProduct", "Unknown"];
 const SINGLE_SHOT_NON_DETERMINISTIC: readonly OrderType[] = ["GoodAfterTime", "TradeAboveThreshold"];
 const BLOCK_NEVER = 2n ** 63n - 1n; // sentinel for epoch-scheduled generators (PollTryAtEpoch)
 const VALID_DISCRETE_STATUSES = new Set(["fulfilled", "unfilled", "expired", "cancelled"]);
