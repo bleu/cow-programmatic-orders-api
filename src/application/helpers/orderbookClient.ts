@@ -46,8 +46,7 @@ interface OrderbookOrder {
 }
 
 /** Processed composable order stored in cache and returned to callers.
- *  Shares field types with the discreteOrder schema for the DB-mapped fields.
- *  creationDate is number here (unix seconds) and converted to bigint at insert time. */
+ *  Shares field types with the discreteOrder schema for the DB-mapped fields. */
 export type ComposableOrder = Pick<
   typeof discreteOrder.$inferInsert,
   "status" | "sellAmount" | "buyAmount" | "feeAmount" | "validTo" | "executedSellAmount" | "executedBuyAmount"
@@ -56,7 +55,7 @@ export type ComposableOrder = Pick<
   generatorId: string;
   generatorHash: string;
   orderType: OrderType;
-  creationDate: number;
+  creationDate: bigint;
 };
 
 /** Status + executed amounts returned by fetchOrderStatusByUids. */
@@ -187,7 +186,7 @@ export async function upsertDiscreteOrders(
         buyAmount: order.buyAmount,
         feeAmount: order.feeAmount,
         validTo: order.validTo,
-        creationDate: BigInt(order.creationDate),
+        creationDate: order.creationDate,
         executedSellAmount: order.executedSellAmount,
         executedBuyAmount: order.executedBuyAmount,
       })
@@ -278,7 +277,7 @@ export async function fetchOrderStatusByUids(
           buyAmount: order.buyAmount,
           feeAmount: order.feeAmount,
           validTo: order.validTo,
-          creationDate: 0,
+          creationDate: 0n,
           executedSellAmount: order.executedSellAmount,
           executedBuyAmount: order.executedBuyAmount,
         });
@@ -473,7 +472,7 @@ async function filterAndProcess(
       buyAmount: order.buyAmount,
       feeAmount: order.feeAmount,
       validTo: order.validTo,
-      creationDate: Math.floor(new Date(order.creationDate).getTime() / 1000),
+      creationDate: BigInt(Math.floor(new Date(order.creationDate).getTime() / 1000)),
       executedSellAmount: order.executedSellAmount,
       executedBuyAmount: order.executedBuyAmount,
     });
