@@ -192,7 +192,7 @@ ponder.on("OrderDiscoveryPoller:block", async ({ event, context }) => {
             buyAmount: orderData.buyAmount.toString(),
             feeAmount: orderData.feeAmount.toString(),
             validTo: orderData.validTo,
-            creationDate: BigInt(Number(event.block.timestamp)),
+            creationDate: event.block.timestamp,
           })
           .onConflictDoNothing(),
       );
