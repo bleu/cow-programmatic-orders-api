@@ -113,23 +113,20 @@ ponder.on("SettlementResolver:block", async ({ event: _event, context }) => {
         "settlement:getTransactionReceipt",
       );
     } catch (err) {
-      console.warn(
-        `[COW:SETTLEMENT:RESOLVER] receipt failed txHash=${item.txHash}` +
-          ` err=${err instanceof Error ? err.message : String(err)}`,
-      );
+      log("warn", "SettlementResolver:receipt_failed", { chainId, txHash: item.txHash, err: err instanceof Error ? err.message : String(err) });
       await context.db.sql
         .delete(settlementQueue)
         .where(and(eq(settlementQueue.chainId, chainId), eq(settlementQueue.txHash, item.txHash)));
       continue;
     }
 
-    for (const log of receipt.logs) {
-      if (log.address.toLowerCase() !== settlementAddress) continue;
-      if (log.topics[0] !== TRADE_TOPIC) continue;
+    for (const txLog of receipt.logs) {
+      if (txLog.address.toLowerCase() !== settlementAddress) continue;
+      if (txLog.topics[0] !== TRADE_TOPIC) continue;
 
       stats.tradeLogsFound++;
 
-      const owner = `0x${log.topics[1]!.slice(26)}` as `0x${string}`;
+      const owner = `0x${txLog.topics[1]!.slice(26)}` as `0x${string}`;
       const ownerAddress = owner.toLowerCase() as `0x${string}`;
 
       const existing = await context.db.sql
@@ -152,10 +149,7 @@ ponder.on("SettlementResolver:block", async ({ event: _event, context }) => {
           "settlement:getCode",
         );
       } catch (err) {
-        console.warn(
-          `[COW:SETTLEMENT:RESOLVER] getCode failed owner=${owner}` +
-            ` err=${err instanceof Error ? err.message : String(err)}`,
-        );
+        log("warn", "SettlementResolver:getCode_failed", { chainId, owner, err: err instanceof Error ? err.message : String(err) });
         continue;
       }
       if (!code || code === "0x") {
@@ -206,10 +200,7 @@ ponder.on("SettlementResolver:block", async ({ event: _event, context }) => {
           "settlement:readContract:owner",
         );
       } catch (err) {
-        console.warn(
-          `[COW:SETTLEMENT:RESOLVER] readContract:owner failed owner=${owner}` +
-            ` err=${err instanceof Error ? err.message : String(err)}`,
-        );
+        log("warn", "SettlementResolver:readOwner_failed", { chainId, owner, err: err instanceof Error ? err.message : String(err) });
         continue;
       }
 
@@ -249,13 +240,7 @@ ponder.on("SettlementResolver:block", async ({ event: _event, context }) => {
       stats.mapped++;
       logStatsIfIntervalPassed();
 
-      console.log(
-        `[COW:SETTLEMENT:TRADE] AAVE_ADAPTER_MAPPED` +
-          ` adapter=${ownerAddress}` +
-          ` eoa=${eoaOwner.toLowerCase()}` +
-          ` block=${item.blockNumber}` +
-          ` chain=${chainId}`,
-      );
+      log("info", "SettlementResolver:aave_adapter_mapped", { chainId, adapter: ownerAddress, eoa: eoaOwner.toLowerCase(), block: String(item.blockNumber) });
     }
 
     await context.db.sql

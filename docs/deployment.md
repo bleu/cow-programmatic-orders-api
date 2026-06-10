@@ -183,14 +183,36 @@ On the target machine, you need Docker and DNS configured to point at the contai
 
 To tear down: `npx tsx deployment/manage.ts down --env-file deployment/.env`
 
-### Production architecture
+## Cold-Start and Backfill Behavior
 
-For a production setup, run at least two containers: one dedicated to indexing and one (or more) serving the API. This way if a user overloads the API with queries, the indexer keeps working. And if the indexer crashes or restarts, the API stays up with the last-synced data.
+### Timeline
 
-The current deploy profile in `docker-compose.yml` runs a single container doing both. Splitting indexer and API is a straightforward change: run two instances of the same image, one with indexing enabled and one configured as API-only (Ponder supports this via its `--api-only` flag or by disabling indexing).
+A fresh deployment (no prior `ponder_sync` cache) reindexes from the configured start blocks. Expected durations:
 
-## What's Not Implemented
+| Phase | Typical duration | Notes |
+|-------|-----------------|-------|
+| Event backfill | 4–10 hours | Fetches `eth_getLogs` from start block to tip. Bottleneck is RPC throughput; a generous RPC endpoint shortens this. |
+| Live-sync catch-up | 5–15 minutes | Block handlers (C1–C5) run at "latest" only. Stale TWAP candidates drain at 500/block. |
+| Full data completeness | After live-sync catch-up | All generators have candidates or discrete orders; historical TWAP parts resolved via account fallback. |
 
-- No monitoring or alerting. Watch container logs and the `/healthz` endpoint. Standard observability tooling (Prometheus, Grafana) can be wired up but nothing is preconfigured.
-- No automated backups. Use standard PostgreSQL tools (`pg_dump`, WAL archiving).
-- Single-instance deployment by default. See the production architecture section above for multi-container guidance.
+A reindex that reuses an existing `ponder_sync` cache (same chain, same start blocks) skips the event backfill and completes in minutes.
+
+### `/ready` Semantics
+
+`GET /ready` returns `200` when Ponder has processed all historical blocks up to the tip and the live indexer is running. It does **not** guarantee that all historical discrete-order data is complete — that depends on the live-sync catch-up phase completing (see above).
+
+During backfill, `GET /ready` returns `503`. GraphQL queries are still available but data is incomplete (generators and transactions accumulate; discrete orders are absent until live sync starts).
+
+### Historical Discrete Order Gap
+
+Block handlers only run during live sync. TWAP parts computed during backfill land in `candidate_discrete_order` with past `validTo` dates. When live sync starts, C2 (CandidateConfirmer) promotes these via the stale sweep path:
+
+1. Tries `/orders/by_uids` — aged-out UIDs return empty
+2. Falls back to `/account/{owner}/orders` for each owner with missed UIDs
+3. Promotes with the actual API status (fulfilled/expired/cancelled) instead of defaulting to `expired`
+
+**Residual gap**: Orders that no longer appear in `/account/{owner}/orders` (beyond the CoW API's retention window) will be recorded as `expired` regardless of their actual fill status. This affects only very old orders for users with a large order history.
+
+Non-deterministic generators (PerpetualSwap, GoodAfterTime, TradeAboveThreshold, Unknown) are handled by C4 (OwnerBackfill), which calls `/account/{owner}/orders` once at live-sync start and upserts discovered orders directly into `discrete_order`.
+
+

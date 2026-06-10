@@ -19,7 +19,7 @@ export const RECHECK_INTERVAL = BigInt(ORDERBOOK_POLL_INTERVAL);
 export const SIGNING_SCHEME_EIP1271 = "eip1271";
 
 /**
- * COW-908: Hard per-block ceiling on how many generators the OrderDiscoveryPoller
+ * Hard per-block ceiling on how many generators the OrderDiscoveryPoller
  * will multicall in a single block. Generators exceeding the cap defer to the
  * next block (prioritized by oldest lastCheckBlock first).
  *
