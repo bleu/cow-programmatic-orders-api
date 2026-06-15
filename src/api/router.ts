@@ -16,7 +16,7 @@ apiRouter.onError((err, c) => {
   return c.json(
     {
       error: "Internal server error",
-      message: err instanceof Error ? err.message : "Unknown error",
+      message: "An unexpected error occurred",
     },
     500,
   );
