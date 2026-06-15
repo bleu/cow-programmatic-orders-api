@@ -7,11 +7,12 @@ import {
 import { ordersByOwnerHandler } from "./endpoints/orders-by-owner";
 import { executionSummaryHandler } from "./endpoints/execution-summary";
 import { syncProgressHandler } from "./endpoints/sync-progress";
+import { log } from "../application/helpers/logger";
 
 export const apiRouter = new OpenAPIHono();
 
 apiRouter.onError((err, c) => {
-  console.error("API Error:", err);
+  log("error", "api:error", { err: err instanceof Error ? err.message : String(err) });
   return c.json(
     {
       error: "Internal server error",

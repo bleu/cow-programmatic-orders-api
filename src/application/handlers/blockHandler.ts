@@ -579,7 +579,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
             if (ownerMissedUids.has(uid)) staleStatuses.set(uid, info);
           }
         } catch (err) {
-          console.warn(`[COW:C2] block=${event.block.number} chain=${chainId} accountFallback failed owner=${owner}`, err);
+          log("warn", "CandidateConfirmer:accountFallback_failed", { block: String(event.block.number), chainId, owner, err: err instanceof Error ? err.message : String(err) });
         }
       }
     }
