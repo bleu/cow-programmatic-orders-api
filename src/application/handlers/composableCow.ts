@@ -43,7 +43,7 @@ import {
   transaction,
 } from "ponder:schema";
 import { encodeAbiParameters, keccak256, type Hex } from "viem";
-import { getOrderTypeFromHandler } from "../../utils/order-types";
+import { getOrderTypeFromHandler, type OrderType } from "../../utils/order-types";
 import { decodeStaticInput } from "../../decoders/index";
 import { precomputeAndDiscover } from "../helpers/uidPrecompute";
 import { CirclesBackingOrderAbi } from "../../../abis/CirclesBackingOrderAbi";
@@ -107,6 +107,7 @@ async function insertGenerator(
   ownerAddress: Hex;
   chainId: number;
   decodedParams: Record<string, string> | null;
+  orderType: OrderType;
 }> {
   const { owner, params } = event.args;
   const { handler, salt, staticInput } = params;
@@ -166,8 +167,6 @@ async function insertGenerator(
           sellAmount: sellAmount.toString(),
         };
       }
-
-      log("info", "composableCow:decoded", { event: event.id, orderType, decodedParams: decodedParams ? "ok" : "null" });
     } catch (err) {
       log("warn", "composableCow:decodeFailed", { event: event.id, orderType, err: String(err) });
       decodedParams = null;
@@ -225,7 +224,7 @@ async function insertGenerator(
     })
     .onConflictDoNothing();
 
-  return { ownerAddress, chainId, decodedParams };
+  return { ownerAddress, chainId, decodedParams, orderType };
 }
 
 // ─── Backfill handler (ComposableCow — historical) ─────────────────────────
@@ -233,12 +232,11 @@ async function insertGenerator(
 ponder.on(
   "ComposableCow:ConditionalOrderCreated",
   async ({ event, context }) => {
-    const { ownerAddress, chainId, decodedParams } = await insertGenerator(event, context);
+    const { ownerAddress, chainId, decodedParams, orderType } = await insertGenerator(event, context);
 
     // Pre-compute UIDs for deterministic order types (TWAP, StopLoss, CirclesBackingOrder).
     // Fetches status from API by UID, upserts discrete orders, and
     // deactivates the generator if all orders are already terminal.
-    const orderType = getOrderTypeFromHandler(event.args.params.handler, chainId);
     await precomputeAndDiscover(
       context, chainId, event.id, ownerAddress, orderType, decodedParams, event.block.timestamp,
     );
@@ -252,9 +250,8 @@ ponder.on(
 ponder.on(
   "ComposableCowLive:ConditionalOrderCreated",
   async ({ event, context }) => {
-    const { ownerAddress, chainId, decodedParams } = await insertGenerator(event, context);
+    const { ownerAddress, chainId, decodedParams, orderType } = await insertGenerator(event, context);
 
-    const orderType = getOrderTypeFromHandler(event.args.params.handler, chainId);
     await precomputeAndDiscover(
       context, chainId, event.id, ownerAddress, orderType, decodedParams, event.block.timestamp,
     );
