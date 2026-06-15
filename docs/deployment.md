@@ -30,8 +30,6 @@ Example: `DATABASE_URL=postgresql://cow_programmatic:secretpass@localhost:5433/c
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `DISABLE_POLL_RESULT_CHECK` | No | Disables the `OrderDiscoveryPoller` block handler. Skips RPC multicalls for non-deterministic generators. Saves RPC calls during initial sync at the cost of not detecting poll results until re-enabled. |
-| `DISABLE_DETERMINISTIC_CANCEL_SWEEP` | No | Disables the `CancellationWatcher`. Skips periodic `singleOrders()` reads on deterministic generators. While disabled, on-chain `ComposableCoW.remove()` calls on TWAP/StopLoss/CirclesBackingOrder generators will not be detected and those generators stay `Active`. |
 | `MAX_GENERATORS_PER_BLOCK_<chainId>` | No | Per-block cap on how many generators `OrderDiscoveryPoller` and `CancellationWatcher` will touch on the given chain (e.g. `MAX_GENERATORS_PER_BLOCK_1=200`, `MAX_GENERATORS_PER_BLOCK_100=400`). Default is 200. Excess generators defer to the next block, prioritized by oldest `lastCheckBlock` first. |
 | `MAX_DISCRETE_ORDERS_PER_BLOCK_<chainId>` | No | Per-block cap on how many open discrete orders `OrderStatusTracker` will check on the given chain (e.g. `MAX_DISCRETE_ORDERS_PER_BLOCK_1=200`). Default is 200. Excess orders are deferred to the next block, prioritised by oldest `promotedAt` first. |
 | `DISABLE_SETTLEMENT_FACTORY_CHECK` | No | Skips `getCode` + `FACTORY()` RPC calls in the GPv2Settlement handler. Useful for benchmarking base sync throughput. |

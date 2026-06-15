@@ -74,7 +74,6 @@ const SINGLE_ORDERS_ABI = [
 // serves as fallback for deterministic types whose precompute failed.
 
 ponder.on("OrderDiscoveryPoller:block", async ({ event, context }) => {
-  if (process.env.DISABLE_POLL_RESULT_CHECK) return;
 
   const chainId = context.chain.id as SupportedChainId;
   const composableCowAddress = COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID[chainId];
@@ -874,7 +873,6 @@ ponder.on("OwnerBackfill:block", async ({ event, context }) => {
 // the child discrete / candidate rows on the next block.
 
 ponder.on("CancellationWatcher:block", async ({ event, context }) => {
-  if (process.env.DISABLE_DETERMINISTIC_CANCEL_SWEEP) return;
 
   const chainId = context.chain.id as SupportedChainId;
   const composableCowAddress = COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID[chainId];
