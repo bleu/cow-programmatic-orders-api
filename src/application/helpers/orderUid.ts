@@ -4,8 +4,7 @@
  * UID = abi.encodePacked(orderDigest, owner, uint32(validTo))
  * where orderDigest = EIP-712 typed hash of the GPv2Order struct.
  *
- * Reference: GPv2Order.sol (tmp/contracts/gpv2-contracts/src/contracts/libraries/GPv2Order.sol)
- * Added during orderbook cache refactor (Phase 2)
+ * Reference: GPv2Order.sol (cowprotocol/contracts)
  */
 
 import { encodePacked, hashTypedData, type Hex } from "viem";
