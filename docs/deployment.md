@@ -129,7 +129,7 @@ The Docker Compose health check uses `/ready` with a 24-hour start period as a p
 
 `pnpm dev` uses Ponder's default pretty format for readability during local development.
 
-**Convention:** all code under `src/application/` uses `log()` from `src/application/helpers/logger.ts` instead of `console.log/warn/error` directly. The `src/api/` layer (Hono routes) is exempt — Hono handles its own logging. Example:
+**Convention:** application and API code uses `log()` from `src/application/helpers/logger.ts` instead of `console.log/warn/error` directly, so every line is structured JSON. (Hono still handles its own request-level logging.) Example:
 
 ```ts
 import { log } from "../helpers/logger";
