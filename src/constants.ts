@@ -86,7 +86,7 @@ export const BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS = 30_000;
  * Maximum number of TWAP parts that precomputeOrderUids will attempt to enumerate.
  * Pathological orders with n > this value skip precompute and fall back to the
  * OrderDiscoveryPoller discovery path (allCandidatesKnown=false). Logged as
- * [COW:PRECOMPUTE] SKIP reason=too_many_parts when triggered.
+ * `precompute:skip` with reason=too_many_parts when triggered.
  */
 export const MAX_TWAP_PRECOMPUTE_PARTS = 100_000;
 

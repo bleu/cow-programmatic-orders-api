@@ -22,6 +22,7 @@ import { computeOrderUid, type GPv2OrderData } from "./orderUid";
 import { fetchOrderStatusByUids } from "./orderbookClient";
 import { type OrderType, DETERMINISTIC_ORDER_TYPE } from "../../utils/order-types";
 import { log } from "./logger";
+import { MAX_TWAP_PRECOMPUTE_PARTS } from "../../constants";
 
 // GPv2Order.sol constant hashes
 const KIND_SELL = "0xf3b277728b3fee749481eb3e0b3b48980dbbab78658fc419025cb16eee346775" as Hex;
@@ -234,7 +235,7 @@ function precomputeTwapUids(
     log("warn", "precompute:skip", { orderType: "TWAP", owner, chainId, reason: "invalid_math", nParts, tSeconds: String(tSeconds) });
     return null;
   }
-  if (nParts > 100000) {
+  if (nParts > MAX_TWAP_PRECOMPUTE_PARTS) {
     log("warn", "precompute:skip", { orderType: "TWAP", owner, chainId, reason: "too_many_parts", nParts });
     return null;
   }
