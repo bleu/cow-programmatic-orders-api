@@ -63,14 +63,7 @@ The repo includes a `docker-compose.yml` at the root that starts PostgreSQL 16:
 docker compose up -d
 ```
 
-This gives you Postgres on port 5432 (user `postgres`, password `postgres`, database `programmatic-orders`). Add to `.env.local`:
-
-```
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/programmatic-orders
-DATABASE_SCHEMA=programmatic_orders
-```
-
-Ponder manages schema migrations automatically. When it starts, it creates or updates the tables within the configured schema. You never run migrations manually.
+Copy the matching `DATABASE_URL` and `DATABASE_SCHEMA` into `.env.local` from `.env.example`. Ponder manages schema migrations automatically — it creates or updates the tables within the configured schema on startup; you never run migrations manually.
 
 ### Production
 
@@ -150,14 +143,7 @@ log("warn", "CandidateConfirmer:timeout",   { chainId, block: String(event.block
 
 ### PostgreSQL Memory Flags
 
-Memory settings are hardcoded in the `command:` block of `docker-compose.yml`, tuned for 1G RAM:
-
-- `shared_buffers`: 204MB (~20% RAM)
-- `work_mem`: 2MB per connection (~25% RAM / max_connections)
-- `effective_cache_size`: 512MB (~50% RAM)
-- `maintenance_work_mem`: 51MB
-
-Adjust these proportionally if you change the host's available memory.
+Memory settings are hardcoded in the `command:` block of `docker-compose.yml`, tuned for 1G RAM (see the inline comments there). Adjust them proportionally if you change the host's available memory.
 
 
 ## Deploying
