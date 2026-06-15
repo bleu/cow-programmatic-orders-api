@@ -1,6 +1,6 @@
-# M3 Orderbook Integration — System Architecture & Flow
+# Orderbook Integration — System Architecture & Flow
 
-This document explains how the M3 discrete order system works, what each component does, and how an order moves through the system from creation to completion. Written for team discussion.
+This document explains how the discrete order system works, what each component does, and how an order moves through the system from creation to completion.
 
 ---
 

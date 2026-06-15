@@ -43,13 +43,10 @@ Start PostgreSQL with `docker compose up -d` to use it instead of the default SQ
 
 | File | When to read |
 |------|--------------|
-| `agent_docs/architecture.md` | Full data-flow, file responsibilities, schema details |
 | `agent_docs/project-structure.md` | Current file map, schema tables, env vars, key commands |
 | `agent_docs/code-patterns.md` | Schema/naming conventions (snake_case, composite PK, eventId) — **check before schema or handler changes** |
 | `agent_docs/token-indexer-overview.md` | Full Ponder patterns (handlers, repos, services) — **read before writing any implementation plan** |
-| `docs/supported-order-types.md` | All 5 order type ABI structs, handler addresses, decoded fields, edge cases — **read before any decoder or M3 block-handler work** |
-| `agent_docs/slack_decisions_summary.md` | Technical decisions from CoW Protocol team (flash loans, CoWShed, orderbook, scope) |
-| `thoughts/` (local) | Local working notes, plans, task context (not in repo; see `.claude/commands/` for workflow) |
+| `docs/supported-order-types.md` | All 5 order type ABI structs, handler addresses, decoded fields, edge cases — **read before any decoder or block-handler work** |
 
 ## Working Conventions
 
