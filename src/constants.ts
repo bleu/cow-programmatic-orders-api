@@ -33,12 +33,12 @@ export const DEFAULT_MAX_GENERATORS_PER_BLOCK = 200;
  *
  * Every tryNextBlock response increments a counter on the generator; any other
  * response resets it to zero. The counter selects the next-check block offset:
- *   count <= WARMUP_THRESHOLD   → +1 block  (default, healthy behavior)
- *   count <= COOLDOWN_THRESHOLD → +10 blocks
- *   count >  COOLDOWN_THRESHOLD → +50 blocks
+ *   count <= WARMUP_THRESHOLD   -> +1 block  (default, healthy behavior)
+ *   count <= COOLDOWN_THRESHOLD -> +10 blocks
+ *   count >  COOLDOWN_THRESHOLD -> +50 blocks
  *
  * Block counts (not seconds) intentionally — simpler, and the ceiling is
- * acceptable on both gnosis (~5s/block → 250s) and mainnet (~12s/block → 600s).
+ * acceptable on both gnosis (~5s/block -> 250s) and mainnet (~12s/block -> 600s).
  */
 export const TRY_NEXT_BLOCK_WARMUP_THRESHOLD = 50;
 export const TRY_NEXT_BLOCK_COOLDOWN_THRESHOLD = 200;

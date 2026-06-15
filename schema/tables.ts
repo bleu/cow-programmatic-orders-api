@@ -73,7 +73,7 @@ export const conditionalOrderGenerator = onchainTable(
     status: orderStatusEnum("order_status").notNull().default("Active"),
     decodedParams: t.json(),               // null if unknown type or decode failed
     decodeError: t.text(),                 // "invalid_static_input" | null
-    txHash: t.hex().notNull(),             // FK → transaction.hash
+    txHash: t.hex().notNull(),             // FK -> transaction.hash
     allCandidatesKnown: t.boolean().notNull().default(false),
     nextCheckBlock: t.bigint(),            // block handler scheduling
     lastCheckBlock: t.bigint(),

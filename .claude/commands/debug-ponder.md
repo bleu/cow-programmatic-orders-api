@@ -72,9 +72,9 @@ Healthy output looks like:
 ```
 
 Red flags:
-- `composableCow:decoded` with `"decodedParams":"null"` on a known orderType → decoder returned nothing
-- `composableCow:decodeFailed` line → malformed staticInput; the `err` field has the message
-- `composableCow:unknownHandler` line → address not in `HANDLER_MAP` in `src/utils/order-types.ts`
+- `composableCow:decoded` with `"decodedParams":"null"` on a known orderType -> decoder returned nothing
+- `composableCow:decodeFailed` line -> malformed staticInput; the `err` field has the message
+- `composableCow:unknownHandler` line -> address not in `HANDLER_MAP` in `src/utils/order-types.ts`
 
 ### Step 4 — Startup / DB / RPC health
 

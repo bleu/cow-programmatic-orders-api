@@ -38,7 +38,7 @@ ConditionalOrderCreated         COWShedBuilt events            Settlement events
         v                               v                               v
 composableCow.ts handler        cowshed.ts handler             settlement.ts handler
   - hash params tuple             - write ownerMapping:          - fetch receipt, scan Trade logs
-  - resolve owner proxy             shed → user EOA              - check FACTORY() on each trader
+  - resolve owner proxy             shed -> user EOA              - check FACTORY() on each trader
   - decode staticInput            (used by composableCow.ts      - if Aave adapter: call owner(),
   - write transaction +             at next order creation)        write ownerMapping
     conditionalOrderGenerator
@@ -54,7 +54,7 @@ composableCow.ts handler        cowshed.ts handler             settlement.ts han
                  OrderDiscoveryPoller     — multicall getTradeableOrderWithSignature for
                                            non-deterministic generators; detects cancellation
                                            via SingleOrderNotAuthed error
-                 CandidateConfirmer      — confirms candidates via orderbook API → discreteOrder;
+                 CandidateConfirmer      — confirms candidates via orderbook API -> discreteOrder;
                                            cascades parent Cancelled to orphan candidates
                  OrderStatusTracker      — polls API for status updates on open discrete orders;
                                            cascades parent Cancelled to orphan open rows
@@ -164,7 +164,7 @@ Every block, this handler drains up to `MAX_SETTLEMENTS_PER_BLOCK` rows from `se
 5. Call `getCode` on the address (with timeout). Skip if EOA (no bytecode).
 6. Call `FACTORY()` via raw `eth_call` (not `readContract`, which logs a WARN on every revert). If the returned address doesn't match the known AaveV3AdapterFactory address, skip.
 7. Call `owner()` on the adapter to retrieve the underlying EOA.
-8. Write a row to `ownerMapping` (`address` → `owner`, `addressType = FlashLoanHelper`).
+8. Write a row to `ownerMapping` (`address` -> `owner`, `addressType = FlashLoanHelper`).
 9. Update any `conditionalOrderGenerator` rows owned by the adapter address to set `ownerAddressType = FlashLoanHelper`.
 10. Delete the queue row.
 

@@ -869,7 +869,7 @@ ponder.on("OwnerBackfill:block", async ({ event, context }) => {
 // StopLoss, CirclesBackingOrder), so SingleOrderNotAuthed is never observed
 // for them. This handler closes that gap by reading
 // ComposableCoW.singleOrders(owner, hash) on a DETERMINISTIC_CANCEL_SWEEP_INTERVAL
-// cadence. A `false` result means the owner called remove() on-chain → flip to
+// cadence. A `false` result means the owner called remove() on-chain -> flip to
 // Cancelled, which lets the CandidateConfirmer/OrderStatusTracker parent-cancelled cascade reconcile
 // the child discrete / candidate rows on the next block.
 

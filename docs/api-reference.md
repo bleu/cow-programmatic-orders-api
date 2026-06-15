@@ -29,7 +29,7 @@ High-level map of what's queryable:
 - **`discreteOrder`** — individual CoW Protocol orders produced by a generator (a TWAP with 10 parts produces 10 discrete orders). Tracks orderbook status and executed amounts.
 - **`candidateDiscreteOrder`** — unconfirmed discrete orders discovered by the block handler, awaiting confirmation against the orderbook API.
 - **`transaction`** — block and timestamp metadata for indexed transactions.
-- **`ownerMapping`** — proxy/adapter → EOA mappings. Populated from CoWShed factory events and Aave flash loan adapter detection.
+- **`ownerMapping`** — proxy/adapter -> EOA mappings. Populated from CoWShed factory events and Aave flash loan adapter detection.
 
 For schema details (columns, indexes, relations), see [architecture.md](./architecture.md).
 

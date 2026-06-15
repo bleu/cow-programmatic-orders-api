@@ -26,7 +26,7 @@ export type PollResult =
  *
  * Viem wraps revert errors as:
  *   ContractFunctionExecutionError
- *     .cause → ContractFunctionRevertedError
+ *     .cause -> ContractFunctionRevertedError
  *       .data.errorName  (set when error ABI is known)
  *       .data.args
  *
