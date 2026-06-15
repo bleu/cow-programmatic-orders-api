@@ -151,4 +151,4 @@ The active chain list is `ACTIVE_CHAINS` in `src/chains/index.ts`. Currently act
 
 Filter queries with `where: { chainId: 1 }` (GraphQL) or `?chainId=1` (REST).
 
-> Adding a chain: create `src/chains/<name>.ts` following the existing chain files as a template, add it to `ACTIVE_CHAINS` in `src/chains/index.ts`, and add its RPC URL env var. See COW-986 for the full checklist.
+> Adding a chain: create `src/chains/<name>.ts` following the existing chain files as a template, add it to `ACTIVE_CHAINS` in `src/chains/index.ts`, and add its RPC URL env var.

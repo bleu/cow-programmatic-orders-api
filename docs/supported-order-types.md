@@ -265,7 +265,7 @@ When `staticInput` cannot be decoded for a known order type, the indexer stores 
 
 For `Unknown` order types (handler address not in the registry), `decodedParams` is null and `decodeError` is null. The raw `staticInput` hex is always available on the `conditional_order_generator` record regardless of decode outcome.
 
-## PollResultErrors (M3 reference)
+## PollResultErrors
 
 The ComposableCoW system uses poll result codes to coordinate when orders should be re-checked. These are relevant if you're working on the block handler that polls `getTradableOrder`:
 
