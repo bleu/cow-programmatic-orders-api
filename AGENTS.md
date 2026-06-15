@@ -36,7 +36,7 @@ pnpm lint         # ESLint
 pnpm dev          # Start indexer locally (requires .env.local with MAINNET_RPC_URL)
 ```
 
-Copy `.env.local.example` → `.env.local` and set `MAINNET_RPC_URL` before `pnpm dev`.
+Copy `.env.local.example` -> `.env.local` and set `MAINNET_RPC_URL` before `pnpm dev`.
 Start PostgreSQL with `docker compose up -d` to use it instead of the default SQLite.
 
 ## Reference Documentation
@@ -46,7 +46,7 @@ Start PostgreSQL with `docker compose up -d` to use it instead of the default SQ
 | `agent_docs/project-structure.md` | Current file map, schema tables, env vars, key commands |
 | `agent_docs/code-patterns.md` | Schema/naming conventions (snake_case, composite PK, eventId) — **check before schema or handler changes** |
 | `agent_docs/token-indexer-overview.md` | Full Ponder patterns (handlers, repos, services) — **read before writing any implementation plan** |
-| `docs/supported-order-types.md` | All 5 order type ABI structs, handler addresses, decoded fields, edge cases — **read before any decoder or block-handler work** |
+| `docs/supported-order-types.md` | All 8 order type ABI structs, handler addresses, decoded fields, edge cases — **read before any decoder or block-handler work** |
 
 ## Working Conventions
 

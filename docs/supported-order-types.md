@@ -1,6 +1,6 @@
 # Supported Order Types
 
-The indexer decodes five programmatic order types from the ComposableCoW contract. Each order is created on-chain as a `ConditionalOrderCreated` event containing a handler address, a salt, and an opaque `staticInput` blob. The handler address determines the order type, and the `staticInput` is ABI-decoded into typed parameters stored in the `decodedParams` JSON field on `conditional_order_generator`.
+The indexer decodes eight programmatic order types from the ComposableCoW contract. Each order is created on-chain as a `ConditionalOrderCreated` event containing a handler address, a salt, and an opaque `staticInput` blob. The handler address determines the order type, and the `staticInput` is ABI-decoded into typed parameters stored in the `decodedParams` JSON field on `conditional_order_generator`.
 
 Most handler addresses are identical across all active chains (CREATE2 deployments — see `src/utils/order-types.ts` for chain-specific overrides). Arbitrum support is planned but handler mappings are not yet registered.
 
@@ -256,6 +256,94 @@ Because the sell amount depends on the owner's live balance, the discrete order 
 - Like Perpetual Swap, TAT has no expiry. It fires every time the balance exceeds the threshold, indefinitely, until cancelled.
 - If the balance is exactly equal to the threshold (not above it), the order does not trigger.
 - After a successful fill brings the balance below the threshold, the order goes dormant until the balance rises again. No manual re-activation is needed.
+
+---
+
+## Circles Backing Order
+
+Backs a Circles group token by buying a target token with a fixed amount. Used by the Circles backing flow on Gnosis Chain. Gnosis-only handler.
+
+**Handler address** (Gnosis): `0x43866c5602b0e3b3272424396e88b849796dc608`
+
+### Solidity struct
+
+```solidity
+struct CirclesBackingOrder {
+    address buyToken;   // token to buy
+    uint256 buyAmount;  // amount to buy
+    uint32  validTo;    // order validity duration in seconds
+    bytes32 appData;    // CoW Protocol app data hash
+}
+```
+
+### Decoded fields in the API
+
+| `decodedParams` field | Solidity field | Type in API | Notes |
+|---|---|---|---|
+| `buyToken` | buyToken | string | Lowercased address |
+| `buyAmount` | buyAmount | string | Raw token units (stringified bigint) |
+| `validTo` | validTo | number | Duration in seconds, not a Unix timestamp. uint32 -> JSON number. |
+| `appData` | appData | string | bytes32 hex |
+
+### Discrete parts
+
+UIDs are computable from `staticInput` alone (`DETERMINISTIC_ORDER_TYPE.CirclesBackingOrder = true`). The decoder recovers no `sellToken` from the static input; the sell side is determined by the handler at execution time.
+
+---
+
+## Swap Order Handler
+
+A balance-driven swap: the handler sells the owner's full balance of `sellToken` for `buyToken`. The sell amount is read on-chain at query time, so it is not part of the decoded params. Deployed as a stateless singleton on Mainnet and Gnosis.
+
+**Handler addresses**: `0xd506fe0b3ddf9e685c16e000514a835d3a511b26` (Mainnet), `0x7a77934d32d78bfe8dc1e23415b5679960a1c610` (Gnosis)
+
+### Solidity struct
+
+```solidity
+struct SwapOrderHandlerData {
+    address sellToken;
+    address buyToken;
+    address receiver;
+    uint32  validityPeriod;  // order validity duration in seconds
+    bytes32 appData;
+}
+```
+
+### Decoded fields in the API
+
+| `decodedParams` field | Solidity field | Type in API | Notes |
+|---|---|---|---|
+| `sellToken` | sellToken | string | Lowercased address |
+| `buyToken` | buyToken | string | Lowercased address |
+| `receiver` | receiver | string | Lowercased address |
+| `validityPeriod` | validityPeriod | number | Duration in seconds, not a Unix timestamp. The handler computes `validTo` via `Utils.validToBucket(validityPeriod)`. uint32 -> JSON number. |
+| `appData` | appData | string | bytes32 hex |
+
+### Discrete parts
+
+Non-deterministic (`DETERMINISTIC_ORDER_TYPE.SwapOrderHandler = false`). The discrete order's sell amount is `IERC20(sellToken).balanceOf(owner)` at query time and `validTo` is bucketed from `validityPeriod`, so neither can be derived from `decodedParams` alone.
+
+---
+
+## ERC4626 CoW Swap Fee Burner
+
+A fee-burner handler from the Balancer v3 monorepo (`ERC4626CowSwapFeeBurner`, inherits `CowSwapFeeBurner`) that sells accumulated protocol fees via a CoW swap. Deployed on Mainnet and Gnosis.
+
+**Handler addresses**: `0x816e90dc85bf016455017a76bc09cc0451eeb308` (Mainnet), `0x5915dea04ce390f0f44ca0806f7c6dd99ce2f941` (Gnosis)
+
+### staticInput layout
+
+The `staticInput` is non-standard: a bare `abi.encode(address tokenIn)` rather than a tuple. Only `tokenIn` is recoverable. The rest of the order (`tokenOut`, `receiver`, `minAmountOut`, `deadline`) lives in the contract's `_orders` mapping and is not present in `staticInput`. Recovering those fields would require indexing the fee-burner's `OrderCreated` event, which is a separate task.
+
+### Decoded fields in the API
+
+| `decodedParams` field | Type in API | Notes |
+|---|---|---|
+| `tokenIn` | string | Lowercased address. The token being burned (sold). The only field recoverable from `staticInput`. |
+
+### Discrete parts
+
+Non-deterministic (`DETERMINISTIC_ORDER_TYPE.ERC4626CowSwapFeeBurner = false`). The sell amount is `tokenIn.balanceOf(address(this))` at query time; with `partiallyFillable = true`, it decreases across fills. None of these can be derived from `decodedParams`.
 
 ---
 
