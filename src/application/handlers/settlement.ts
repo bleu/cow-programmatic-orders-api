@@ -1,7 +1,6 @@
 import { ponder } from "ponder:registry";
 import {
   AddressType,
-  conditionalOrderGenerator,
   ownerMapping,
   settlementQueue,
   transaction,
@@ -114,9 +113,7 @@ ponder.on("SettlementResolver:block", async ({ event: _event, context }) => {
       );
     } catch (err) {
       log("warn", "SettlementResolver:receipt_failed", { chainId, txHash: item.txHash, err: err instanceof Error ? err.message : String(err) });
-      await context.db.sql
-        .delete(settlementQueue)
-        .where(and(eq(settlementQueue.chainId, chainId), eq(settlementQueue.txHash, item.txHash)));
+      await context.db.delete(settlementQueue, { chainId, txHash: item.txHash });
       continue;
     }
 
@@ -227,25 +224,13 @@ ponder.on("SettlementResolver:block", async ({ event: _event, context }) => {
         })
         .onConflictDoNothing();
 
-      await context.db.sql
-        .update(conditionalOrderGenerator)
-        .set({ ownerAddressType: AddressType.FlashLoanHelper })
-        .where(
-          and(
-            eq(conditionalOrderGenerator.chainId, chainId),
-            eq(conditionalOrderGenerator.owner, ownerAddress),
-          ),
-        );
-
       stats.mapped++;
       logStatsIfIntervalPassed();
 
       log("info", "SettlementResolver:aave_adapter_mapped", { chainId, adapter: ownerAddress, eoa: eoaOwner.toLowerCase(), block: String(item.blockNumber) });
     }
 
-    await context.db.sql
-      .delete(settlementQueue)
-      .where(and(eq(settlementQueue.chainId, chainId), eq(settlementQueue.txHash, item.txHash)));
+    await context.db.delete(settlementQueue, { chainId, txHash: item.txHash });
 
     logStatsIfIntervalPassed();
   }
