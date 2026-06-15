@@ -43,10 +43,11 @@ export function withTimeout<T>(
       timeoutMs,
     );
   });
-  return Promise.race([
-    promise.finally(() => clearTimeout(timer)),
-    timeout,
-  ]);
+  // Attach a no-op rejection handler before the race so that if the timeout
+  // wins and the underlying call later rejects, it doesn't become an unhandled
+  // rejection that aborts the Ponder block-handler DB transaction.
+  promise.catch(() => {});
+  return Promise.race([promise.finally(() => clearTimeout(timer)), timeout]);
 }
 
 /**
@@ -61,7 +62,10 @@ export async function fetchWithTimeout(
   label: string,
 ): Promise<Response> {
   try {
-    return await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+    return await fetch(url, {
+      ...init,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
   } catch (err) {
     const name = (err as Error | undefined)?.name;
     if (name === "TimeoutError" || name === "AbortError") {

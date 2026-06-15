@@ -68,7 +68,7 @@ index e2f6a03650b5b80cae9ec4dc0a8837cb054cae18..fd3307719ef8b297b87f64e6a7736ae7
                  }
                  else {
                      // Note: pglite must run sequentially
-@@ -405,13 +408,13 @@ export const createIndexingCache = ({ common, schemaBuild: { schema }, crashReco
+@@ -405,13 +408,20 @@ export const createIndexingCache = ({ common, schemaBuild: { schema }, crashReco
              }
              catch (_error) {
                  let error = _error;
@@ -80,7 +80,14 @@ index e2f6a03650b5b80cae9ec4dc0a8837cb054cae18..fd3307719ef8b297b87f64e6a7736ae7
                  // function takes an optimized fast path, with support for small batch sizes. PGlite always takes
                  // the fast path because it doesn't support delayed insert errors.
 -                await qb.wrap((db) => db.execute("ROLLBACK to flush"), context);
-+                await currentQb.wrap((db) => db.execute(`ROLLBACK to ${sp}`), context);
++                try {
++                    await currentQb.wrap((db) => db.execute(`ROLLBACK to ${sp}`), context);
++                } catch {
++                    // SAVEPOINT was never created (qb was a pool connection, not in a transaction).
++                    // In multichain mode another chain may reset the shared qb before flush() is called.
++                    // Re-throw original error so the outer block transaction rolls back cleanly.
++                    throw error;
++                }
                  for (const table of cache.keys()) {
                      if (tableNames !== undefined &&
                          tableNames.has(getTableName(table)) === false) {

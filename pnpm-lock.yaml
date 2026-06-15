@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   ponder@0.16.6:
-    hash: b651e31c90c763131f59eab16aebe031f6a4521c0de021d24cd298e0865b1252
+    hash: 1e415db905d29fb9e544c4bceb1cd76500dd91794977d0fc87d6372be0eefedf
     path: patches/ponder@0.16.6.patch
 
 importers:
@@ -30,7 +30,7 @@ importers:
         version: 4.12.3
       ponder:
         specifier: ^0.16.6
-        version: 0.16.6(patch_hash=b651e31c90c763131f59eab16aebe031f6a4521c0de021d24cd298e0865b1252)(@opentelemetry/api@1.9.0)(@types/node@20.19.35)(hono@4.12.3)(typescript@5.9.3)(viem@2.46.3(typescript@5.9.3)(zod@3.25.76))(zod@3.25.76)
+        version: 0.16.6(patch_hash=1e415db905d29fb9e544c4bceb1cd76500dd91794977d0fc87d6372be0eefedf)(@opentelemetry/api@1.9.0)(@types/node@20.19.35)(hono@4.12.3)(typescript@5.9.3)(viem@2.46.3(typescript@5.9.3)(zod@3.25.76))(zod@3.25.76)
       ponder-enrich-gql-docs-middleware:
         specifier: ^0.1.3
         version: 0.1.3(graphql@16.8.2)(hono@4.12.3)
@@ -4849,7 +4849,7 @@ snapshots:
       graphql: 16.8.2
       hono: 4.12.3
 
-  ponder@0.16.6(patch_hash=b651e31c90c763131f59eab16aebe031f6a4521c0de021d24cd298e0865b1252)(@opentelemetry/api@1.9.0)(@types/node@20.19.35)(hono@4.12.3)(typescript@5.9.3)(viem@2.46.3(typescript@5.9.3)(zod@3.25.76))(zod@3.25.76):
+  ponder@0.16.6(patch_hash=1e415db905d29fb9e544c4bceb1cd76500dd91794977d0fc87d6372be0eefedf)(@opentelemetry/api@1.9.0)(@types/node@20.19.35)(hono@4.12.3)(typescript@5.9.3)(viem@2.46.3(typescript@5.9.3)(zod@3.25.76))(zod@3.25.76):
     dependencies:
       '@babel/code-frame': 7.29.0
       '@commander-js/extra-typings': 12.1.0(commander@12.1.0)
