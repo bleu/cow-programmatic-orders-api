@@ -175,7 +175,7 @@ export async function upsertDiscreteOrders(
 ): Promise<number> {
   let count = 0;
   for (const order of orders) {
-    await context.db.sql
+    await context.db
       .insert(discreteOrder)
       .values({
         orderUid: order.uid,
@@ -191,13 +191,10 @@ export async function upsertDiscreteOrders(
         executedBuyAmount: order.executedBuyAmount,
       })
       .onConflictDoUpdate({
-        target: [discreteOrder.chainId, discreteOrder.orderUid],
-        set: {
-          status: order.status,
-          validTo: order.validTo,
-          executedSellAmount: order.executedSellAmount,
-          executedBuyAmount: order.executedBuyAmount,
-        },
+        status: order.status,
+        validTo: order.validTo,
+        executedSellAmount: order.executedSellAmount,
+        executedBuyAmount: order.executedBuyAmount,
       });
     count++;
   }
@@ -440,23 +437,28 @@ async function filterAndProcess(
       ),
     );
 
-    // Find the generator — there should be exactly one per (chainId, hash)
-    const generators = (await context.db.sql
-      .select({
-        eventId: conditionalOrderGenerator.eventId,
-        orderType: conditionalOrderGenerator.orderType,
-      })
-      .from(conditionalOrderGenerator)
-      .where(
-        and(
-          eq(conditionalOrderGenerator.chainId, chainId),
-          eq(conditionalOrderGenerator.hash, paramHash),
-        ),
-      )
-      .limit(1)) as {
-      eventId: string;
-      orderType: OrderType;
-    }[];
+    // Find the generator — there should be exactly one per (chainId, hash).
+    // Uses context.db.sql (raw SQL) because Ponder ORM has no non-PK findMany.
+    // Wrapped in try-catch: in multichain realtime mode a shared-qb race can cause
+    // a SAVEPOINT error here; skipping the order is safe — it's retried next block.
+    let generators: { eventId: string; orderType: OrderType }[];
+    try {
+      generators = (await context.db.sql
+        .select({
+          eventId: conditionalOrderGenerator.eventId,
+          orderType: conditionalOrderGenerator.orderType,
+        })
+        .from(conditionalOrderGenerator)
+        .where(
+          and(
+            eq(conditionalOrderGenerator.chainId, chainId),
+            eq(conditionalOrderGenerator.hash, paramHash),
+          ),
+        )
+        .limit(1)) as { eventId: string; orderType: OrderType }[];
+    } catch {
+      continue;
+    }
 
     if (generators.length === 0) continue;
 
