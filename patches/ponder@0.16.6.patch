@@ -1,5 +1,5 @@
 diff --git a/dist/esm/indexing-store/cache.js b/dist/esm/indexing-store/cache.js
-index e2f6a03650b5b80cae9ec4dc0a8837cb054cae18..fd3307719ef8b297b87f64e6a7736ae7d812757e 100644
+index e2f6a03650b5b80cae9ec4dc0a8837cb054cae18..b57f4f4b32e03b221b3985f9b9218b239df9c7b2 100644
 --- a/dist/esm/indexing-store/cache.js
 +++ b/dist/esm/indexing-store/cache.js
 @@ -157,6 +157,7 @@ export const recoverBatchError = async (values, callback) => {

@@ -75,7 +75,6 @@ export const BLOCK_HANDLER_RPC_TIMEOUT_MS = 15_000;
 // Tighter cap for cheap inner-loop calls (getCode, eth_call) in the settlement handler.
 // The outer receipt fetch and readContract(owner()) keep the full 15 s.
 export const SETTLEMENT_INNER_RPC_TIMEOUT_MS = 5_000;
-
 /**
  * Hard wall-clock cap for the whole per-owner bootstrap fetch in OwnerBackfill
  * (account pagination + by_uids refresh). Owners that exceed this are skipped;

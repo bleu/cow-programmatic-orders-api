@@ -44,7 +44,7 @@ export const ALL_DEFINED_CHAINS = [
  * ponder.config.ts derives all RPC/contract config from this array.
  */
 export const ACTIVE_CHAINS = [
-  mainnet,
+  // mainnet,
   gnosis,
   // arbitrum, // fully verified — enable when ARBITRUM_RPC_URL is provisioned
   // base,     // fully verified — enable when BASE_RPC_URL is provisioned
