@@ -9,7 +9,8 @@ WORKDIR /usr/src/app
 # ---- build stage ----
 FROM base AS build
 
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches/ patches/
 RUN pnpm install --frozen-lockfile
 
 COPY . .
