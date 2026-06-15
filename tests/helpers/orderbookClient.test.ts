@@ -133,7 +133,7 @@ describe("fetchOrderStatusByUids", () => {
     expect(result.size).toBe(0);
   });
 
-  it("correctly unwraps the { order } wrapper and maps uid → status (regression: COW-979)", async () => {
+  it("correctly unwraps the { order } wrapper and maps uid → status", async () => {
     const { url, close } = await startServer((_req, res) => {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify([makeWrappedOrder(UID_A, "fulfilled")]));

@@ -349,7 +349,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
     }[];
 
     if (orphanCandidates.length > 0) {
-      // COW-990: preflight /by_uids before writing cancelled. A candidate could have
+      // Preflight /by_uids before writing cancelled. A candidate could have
       // been posted by the watch-tower and filled/expired between generator creation
       // and the cancellation cascade (~0.17% observed rate). Use the API status when
       // available; fall back to 'cancelled' for UIDs not yet on the orderbook.
@@ -870,7 +870,7 @@ ponder.on("OwnerBackfill:block", async ({ event, context }) => {
 // for them. This handler closes that gap by reading
 // ComposableCoW.singleOrders(owner, hash) on a DETERMINISTIC_CANCEL_SWEEP_INTERVAL
 // cadence. A `false` result means the owner called remove() on-chain → flip to
-// Cancelled, which lets the C2/C3 parent-cancelled cascade (COW-918) reconcile
+// Cancelled, which lets the C2/C3 parent-cancelled cascade reconcile
 // the child discrete / candidate rows on the next block.
 
 ponder.on("CancellationWatcher:block", async ({ event, context }) => {

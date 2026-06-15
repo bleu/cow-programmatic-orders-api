@@ -1,5 +1,5 @@
 /**
- * Tests for the C3 StatusUpdater row-building filter logic (COW-988).
+ * Tests for the C3 StatusUpdater row-building filter logic.
  *
  * blockHandler.ts defines a module-level constant:
  *   const VALID_DISCRETE_STATUSES = new Set(["fulfilled", "unfilled", "expired", "cancelled"]);
