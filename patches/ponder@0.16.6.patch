@@ -1,5 +1,5 @@
 diff --git a/dist/esm/indexing-store/cache.js b/dist/esm/indexing-store/cache.js
-index e2f6a03650b5b80cae9ec4dc0a8837cb054cae18..fd3307719ef8b297b87f64e6a7736ae7d812757e 100644
+index e2f6a03650b5b80cae9ec4dc0a8837cb054cae18..0d97ae9bf2820459f8744449e11796897456c65e 100644
 --- a/dist/esm/indexing-store/cache.js
 +++ b/dist/esm/indexing-store/cache.js
 @@ -157,6 +157,7 @@ export const recoverBatchError = async (values, callback) => {
@@ -91,7 +91,7 @@ index e2f6a03650b5b80cae9ec4dc0a8837cb054cae18..fd3307719ef8b297b87f64e6a7736ae7
                  for (const table of cache.keys()) {
                      if (tableNames !== undefined &&
                          tableNames.has(getTableName(table)) === false) {
-@@ -424,12 +427,12 @@ export const createIndexingCache = ({ common, schemaBuild: { schema }, crashReco
+@@ -424,12 +434,12 @@ export const createIndexingCache = ({ common, schemaBuild: { schema }, crashReco
                      const updateValues = Array.from(updateBuffer.get(table).values());
                      if (insertValues.length > 0) {
                          const endClock = startClock();
@@ -107,7 +107,7 @@ index e2f6a03650b5b80cae9ec4dc0a8837cb054cae18..fd3307719ef8b297b87f64e6a7736ae7
                          });
                          if (result.status === "error") {
                              error = new DelayedInsertError(result.error.message);
-@@ -471,15 +474,15 @@ export const createIndexingCache = ({ common, schemaBuild: { schema }, crashReco
+@@ -471,15 +481,15 @@ export const createIndexingCache = ({ common, schemaBuild: { schema }, crashReco
                WITH NO DATA;
              `;
                          const endClock = startClock();
@@ -128,3 +128,24 @@ index e2f6a03650b5b80cae9ec4dc0a8837cb054cae18..fd3307719ef8b297b87f64e6a7736ae7
                          if (result.status === "error") {
                              error = new DelayedInsertError(result.error.message);
                              error.stack = undefined;
+diff --git a/dist/esm/rpc/actions.js b/dist/esm/rpc/actions.js
+index ae284fa3d3ba39b259175a4e9869a5ea6d4da4a2..f2b9ec8daddabf09685e717c186517d04a5d7d8c 100644
+--- a/dist/esm/rpc/actions.js
++++ b/dist/esm/rpc/actions.js
+@@ -766,13 +766,9 @@ export const standardizeLogs = (logs, request) => {
+             throw error;
+         }
+         if (hexToBigInt(log.logIndex) > BigInt(PG_INTEGER_MAX)) {
+-            const error = new RpcProviderError(`Invalid RPC response: 'log.logIndex' (${hexToBigInt(log.logIndex)}) is larger than the maximum allowed value (${PG_INTEGER_MAX}).`);
+-            error.meta = [
+-                "Please report this error to the RPC operator.",
+-                requestText(request),
+-            ];
+-            error.stack = undefined;
+-            throw error;
++            // Gnosis uses sentinel logIndex values near 2^32 for synthetic consensus/bridge events.
++            // These are not real EVM logs; skip them instead of crashing.
++            continue;
+         }
+     }
+     return logs;
