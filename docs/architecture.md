@@ -100,7 +100,7 @@ PK: `(chainId, eventId)`. Indexed on `owner`, `handler`, `hash`, `chainId+owner`
 
 ### discrete_order
 
-Links individual order UIDs (from the CoW Protocol orderbook) back to their parent generator. One generator can produce many discrete orders over its lifetime — a TWAP with 10 parts creates 10 discrete orders. Populated by C2 (CandidateConfirmer) after confirmation against the orderbook API; status kept current by C3 (StatusUpdater).
+Links individual order UIDs (from the CoW Protocol orderbook) back to their parent generator. One generator can produce many discrete orders over its lifetime — a TWAP with 10 parts creates 10 discrete orders. Populated by CandidateConfirmer after confirmation against the orderbook API; status kept current by OrderStatusTracker.
 
 Key columns: `orderUid`, `chainId`, `conditionalOrderGeneratorId` (references `eventId`), `status` (open/fulfilled/unfilled/expired/cancelled), `sellAmount`, `buyAmount`, `executedSellAmount`, `executedBuyAmount`.
 PK: `(chainId, orderUid)`. See [api-reference.md](./api-reference.md) for full field docs.

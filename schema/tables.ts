@@ -89,9 +89,9 @@ export const conditionalOrderGenerator = onchainTable(
     chainOwnerIdx: index().on(table.chainId, table.owner),
     resolvedOwnerIdx: index().on(table.resolvedOwner),
     ownerAddressTypeIdx: index().on(table.ownerAddressType),
-    // C1 (OrderDiscoveryPoller) + C5 (CancellationWatcher): per-block SELECT with
+    // OrderDiscoveryPoller + CancellationWatcher: per-block SELECT with
     // chainId + status + allCandidatesKnown equality filters, ORDER BY lastCheckBlock.
-    // Covers both handlers — C1 queries allCandidatesKnown=false, C5 queries true.
+    // Covers both handlers — OrderDiscoveryPoller queries allCandidatesKnown=false, CancellationWatcher queries true.
     c1c5PollIdx: index("generator_c1c5_poll_idx")
       .on(table.chainId, table.status, table.allCandidatesKnown, table.lastCheckBlock),
   })
@@ -111,13 +111,13 @@ export const discreteOrder = onchainTable(
     creationDate: t.bigint().notNull(),               // block timestamp (seconds)
     executedSellAmount: t.text(),                     // actual executed amount (from API, post-settlement)
     executedBuyAmount: t.text(),                      // actual executed amount (from API, post-settlement)
-    promotedAt: t.bigint(),                           // block timestamp when C2 promoted from candidate; null = created directly (precompute or C4)
+    promotedAt: t.bigint(),                           // block timestamp when CandidateConfirmer promoted from candidate; null = created directly (precompute or OwnerBackfill)
   }),
   (table) => ({
     pk: primaryKey({ columns: [table.chainId, table.orderUid] }),
     generatorIdx: index("discrete_order_generator_idx")
       .on(table.chainId, table.conditionalOrderGeneratorId),
-    // C3 (OrderStatusTracker): per-block SELECT with chainId + status='open', ORDER BY promotedAt.
+    // OrderStatusTracker: per-block SELECT with chainId + status='open', ORDER BY promotedAt.
     c3StatusIdx: index("discrete_order_c3_status_idx")
       .on(table.chainId, table.status, table.promotedAt),
   })
@@ -140,7 +140,7 @@ export const candidateDiscreteOrder = onchainTable(
     pk: primaryKey({ columns: [table.chainId, table.orderUid] }),
     generatorIdx: index("candidate_discrete_order_generator_idx")
       .on(table.chainId, table.conditionalOrderGeneratorId),
-    // C2 stale sweep: SELECT WHERE chainId + validTo <= timestamp LIMIT 500.
+    // CandidateConfirmer stale sweep: SELECT WHERE chainId + validTo <= timestamp LIMIT 500.
     staleIdx: index("candidate_discrete_order_stale_idx")
       .on(table.chainId, table.validTo),
   })

@@ -20,15 +20,15 @@ Practical consequences for grep:
 - Severity is the JSON `"level"` key (`info` / `warn` / `error`), not a bare `INFO` / `WARN` / `ERROR` word — though Ponder's own framework lines still use the bare-word format, so both appear in the file.
 - Pretty-print a matched line with `jq`: `grep OrderDiscoveryPoller:DONE ponder.log | tail -1 | jq`.
 
-The block handlers split work across five Ponder block entries. The canonical handler names (and their C1–C5 shorthand) are:
+The block handlers split work across five Ponder block entries. The canonical handler names are:
 
-| Shorthand | Handler | Role |
-|-----------|---------|------|
-| C1 | `OrderDiscoveryPoller` | RPC multicall for non-deterministic generators, every block |
-| C2 | `CandidateConfirmer`   | API batch check for unconfirmed candidates, every block |
-| C3 | `OrderStatusTracker`   | API batch check for open discrete orders + expiry, every block |
-| C4 | `OwnerBackfill`         | One-shot owner fetch for non-deterministic backfill orders |
-| C5 | `CancellationWatcher`  | `singleOrders()` mapping read for deterministic generators C1 skips |
+| Handler | Role |
+|---------|------|
+| `OrderDiscoveryPoller` | RPC multicall for non-deterministic generators, every block |
+| `CandidateConfirmer`   | API batch check for unconfirmed candidates, every block |
+| `OrderStatusTracker`   | API batch check for open discrete orders + expiry, every block |
+| `OwnerBackfill`         | One-shot owner fetch for non-deterministic backfill orders |
+| `CancellationWatcher`  | `singleOrders()` mapping read for deterministic generators OrderDiscoveryPoller skips |
 
 ---
 
@@ -134,15 +134,15 @@ After running all steps, output:
 
 ## Precompute Diagnostics
 
-Deterministic types (TWAP, StopLoss) should have all UIDs precomputed at creation — they should NOT appear in C1 (`OrderDiscoveryPoller`) polling. If precompute fails, the generator falls into C1 and wastes RPC calls every block.
+Deterministic types (TWAP, StopLoss) should have all UIDs precomputed at creation — they should NOT appear in `OrderDiscoveryPoller` polling. If precompute fails, the generator falls into OrderDiscoveryPoller and wastes RPC calls every block.
 
-### Precompute failures — why generators fall into C1
+### Precompute failures — why generators fall into OrderDiscoveryPoller
 
 ```bash
 grep -n "precompute:skip" ponder.log | head -20
 ```
 
-Each line is a deterministic generator that FAILED precompute and will fall into C1 polling. The JSON `reason` field tells you why:
+Each line is a deterministic generator that FAILED precompute and will fall into OrderDiscoveryPoller polling. The JSON `reason` field tells you why:
 
 | reason | meaning | fix |
 |--------|---------|-----|
@@ -151,7 +151,7 @@ Each line is a deterministic generator that FAILED precompute and will fall into
 | `invalid_math` | nParts <= 0 or tSeconds <= 0 | Invalid TWAP params on-chain |
 | `too_many_parts` | nParts > 100,000 | Extremely large TWAP; raise limit if legitimate |
 
-**If you see skip lines**: count them and cross-reference with C1's `due` count. If they match, precompute failures are the sole cause of C1 polling for deterministic types.
+**If you see skip lines**: count them and cross-reference with OrderDiscoveryPoller's `due` count. If they match, precompute failures are the sole cause of OrderDiscoveryPoller polling for deterministic types.
 
 ```bash
 grep -c "precompute:skip" ponder.log
@@ -163,9 +163,9 @@ The counterpart success log is `precompute:allTerminal` (all UIDs for a generato
 grep -c "precompute:allTerminal" ponder.log
 ```
 
-### Verify deterministic types are NOT in C1
+### Verify deterministic types are NOT in OrderDiscoveryPoller
 
-After precompute fixes, C1 should only poll non-deterministic types. Inspect recent C1 DONE lines on gnosis:
+After precompute fixes, OrderDiscoveryPoller should only poll non-deterministic types. Inspect recent OrderDiscoveryPoller DONE lines on gnosis:
 
 ```bash
 grep '"OrderDiscoveryPoller:DONE"' ponder.log | grep '"chainId":100' | tail -5
@@ -218,7 +218,7 @@ Fetch-side failures and timeouts are warn lines worth scanning when fetches look
 grep -nE "ob:(noApiUrl|accountError|accountFetchFailed|accountTimeout|batchFetchError|batchFetchFailed|batchFetchTimeout|statusByUidsTimeout)" ponder.log | tail -20
 ```
 
-### C4 OwnerBackfill — one-shot (`endBlock: "latest"`)
+### OwnerBackfill — one-shot (`endBlock: "latest"`)
 
 `OwnerBackfill` in `ponder.config.ts` uses `startBlock: "latest"` and `endBlock: "latest"` so it should run **once per chain** when the indexer reaches live (not every block). Use logs to confirm.
 
@@ -237,7 +237,7 @@ When nothing needs bootstrapping you get `OwnerBackfill:no_bootstrap_needed` ins
 
 ---
 
-## C1 tryNextBlock backoff
+## OrderDiscoveryPoller tryNextBlock backoff
 
 Generators that keep returning `PollResult.tryNextBlock` are progressively rate-limited. After 50 consecutive tryNextBlock responses the recheck interval jumps from +1 to +10 blocks; after 200, to +50.
 
@@ -282,11 +282,11 @@ On a healthy gnosis run post-sync you should see a non-trivial bucket in `51-200
 
 ### Red flag — counter stuck high but `due` still huge
 
-If `consecutive_try_next_block` is large for many generators *and* the C1 `due` count is still massive every block, the backoff is not actually deferring those generators — check that the C1 SELECT filters by `nextCheckBlock <= currentBlock` and that the handler updated `nextCheckBlock = currentBlock + <backoff>` correctly on tryNextBlock.
+If `consecutive_try_next_block` is large for many generators *and* the OrderDiscoveryPoller `due` count is still massive every block, the backoff is not actually deferring those generators — check that the OrderDiscoveryPoller SELECT filters by `nextCheckBlock <= currentBlock` and that the handler updated `nextCheckBlock = currentBlock + <backoff>` correctly on tryNextBlock.
 
 ---
 
-## C5 CancellationWatcher — singleOrders() mapping sweep
+## CancellationWatcher — singleOrders() mapping sweep
 
 `CancellationWatcher` in `ponder.config.ts` runs every block but only does work when at least one deterministic generator (`allCandidatesKnown = true AND status = "Active"`) has `nextCheckBlock <= currentBlock`. Per-generator cadence is `DETERMINISTIC_CANCEL_SWEEP_INTERVAL` blocks (see `src/constants.ts`, default 100). The handler reads `ComposableCoW.singleOrders(owner, hash)` — `false` means the owner called `remove()` on-chain.
 
@@ -315,12 +315,12 @@ Each line is a deterministic generator whose on-chain `singleOrders(owner, hash)
 {"level":"info","msg":"CancellationWatcher:CANCELLED","block":"...","chainId":1,"generatorId":"...","orderType":"StopLoss"}
 ```
 
-After any `CANCELLED` line the candidate-cancellation cascade fires on the next C2 (`CandidateConfirmer`) block tick — candidates are drained to `discrete_order`:
+After any `CANCELLED` line the candidate-cancellation cascade fires on the next CandidateConfirmer block tick — candidates are drained to `discrete_order`:
 ```json
 {"level":"info","msg":"CandidateConfirmer:parent_cancelled","block":"...","chainId":1,"parentCancelled":3,"preflightKnown":0}
 ```
 
-The C3 (`OrderStatusTracker`) parent-cancelled sweep has no dedicated log line — verify via SQL:
+The OrderStatusTracker parent-cancelled sweep has no dedicated log line — verify via SQL:
 ```sql
 SELECT count(*) FROM discrete_order
 WHERE status='cancelled' AND conditional_order_generator_id = '<eventId>';
@@ -328,7 +328,7 @@ WHERE status='cancelled' AND conditional_order_generator_id = '<eventId>';
 
 ### Multicall errors
 
-`errors > 0` on a DONE line is not fatal: C5 leaves `nextCheckBlock` untouched for errored entries so they retry on the next sweep. Sustained nonzero `errors` across many blocks means the RPC provider is flaky — consider swapping provider.
+`errors > 0` on a DONE line is not fatal: CancellationWatcher leaves `nextCheckBlock` untouched for errored entries so they retry on the next sweep. Sustained nonzero `errors` across many blocks means the RPC provider is flaky — consider swapping provider.
 
 ### Sweep disabled (kill-switch)
 
@@ -337,11 +337,11 @@ If operators see no `CancellationWatcher:` lines at all and expect them:
 grep -n "DISABLE_DETERMINISTIC_CANCEL_SWEEP" .env.local env.prod 2>/dev/null
 ```
 
-Non-empty means the sweeper is intentionally disabled via env var — same pattern as `DISABLE_POLL_RESULT_CHECK` for C1.
+Non-empty means the sweeper is intentionally disabled via env var — same pattern as `DISABLE_POLL_RESULT_CHECK` for OrderDiscoveryPoller.
 
 ### lastPollResult audit
 
-SQL spot-check for what C5 has touched:
+SQL spot-check for what CancellationWatcher has touched:
 ```sql
 SELECT chain_id, order_type, status, last_poll_result, count(*)
 FROM conditional_order_generator

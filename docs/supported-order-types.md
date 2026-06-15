@@ -60,7 +60,7 @@ TWAP generates `n` discrete orders, one per time slice. Each part covers `[t0 + 
 - When `t0` is 0, the contract uses the block timestamp of the creation transaction as the start time. The `decodedParams` will still show `"0"` -- the actual resolved start time is not stored.
 - If a part's validity window passes without execution, that part is simply skipped. There is no retry or rollover.
 - Setting `span` shorter than `t` creates gaps where no part is active. Setting `span` longer than `t` creates overlapping validity windows.
-- TWAP orders with `n` exceeding `MAX_TWAP_PRECOMPUTE_PARTS` (100 000) skip UID pre-computation and fall back to the C1 ContractPoller discovery path (`allCandidatesKnown=false`). This is logged as `[COW:PRECOMPUTE] SKIP reason=too_many_parts`. Such pathological orders are valid on-chain but are impractical in practice.
+- TWAP orders with `n` exceeding `MAX_TWAP_PRECOMPUTE_PARTS` (100 000) skip UID pre-computation and fall back to the OrderDiscoveryPoller discovery path (`allCandidatesKnown=false`). This is logged as `precompute:skip`. Such pathological orders are valid on-chain but are impractical in practice.
 
 ---
 

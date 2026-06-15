@@ -169,7 +169,7 @@ export async function precomputeAndDiscover(
   }
 
   // UIDs are fully known even though some orders are still open —
-  // C1 (Contract Poller) can skip this generator, C3 (Status Updater) tracks the open orders.
+  // OrderDiscoveryPoller can skip this generator, OrderStatusTracker tracks the open orders.
   await context.db.sql
     .update(conditionalOrderGenerator)
     .set({ allCandidatesKnown: true })

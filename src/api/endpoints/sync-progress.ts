@@ -75,7 +75,7 @@ export const syncProgressHandler: RouteHandler<typeof syncProgressRoute> =
         historicalBlocksFetchedPct: pct,
         isRealtime: (isRealtime.get(chain) ?? 0) === 1,
         // ponder_sync_is_complete never reaches 1 for chains with live block handlers
-        // (C1–C5 run indefinitely). Derive locally: synced means realtime + all blocks processed.
+        // (OrderDiscoveryPoller, CandidateConfirmer, OrderStatusTracker, OwnerBackfill, CancellationWatcher run indefinitely). Derive locally: synced means realtime + all blocks processed.
         isComplete: (isRealtime.get(chain) ?? 0) === 1 && pct >= 100,
       };
     }
