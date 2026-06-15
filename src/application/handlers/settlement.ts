@@ -2,10 +2,8 @@ import { ponder } from "ponder:registry";
 import {
   AddressType,
   ownerMapping,
-  settlementQueue,
   transaction,
 } from "ponder:schema";
-import { and, eq } from "ponder";
 import { keccak256, toBytes } from "viem";
 import { log } from "../helpers/logger";
 import { AaveV3AdapterHelperAbi } from "../../../abis/AaveV3AdapterHelperAbi";
@@ -55,28 +53,12 @@ function logStatsIfIntervalPassed() {
 // which floods the log since non-adapter contracts do not implement FACTORY().
 const FACTORY_SELECTOR = "0x2dd31000" as const;
 
-// Max settlements resolved per SettlementResolver block tick.
-const MAX_SETTLEMENTS_PER_BLOCK = 20;
-
-// ── Event handler — enqueue only ─────────────────────────────────────────────
-// All RPC work is deferred to SettlementResolver:block so errors in RPC calls
-// never propagate to the event handler and crash the indexer.
+// ── Event handler — inline Aave adapter discovery ────────────────────────────
+// RPC work runs directly in the event handler with try/catch on every call so
+// a failed fetch skips the settlement without crashing the indexer.
+// Previously deferred to a SettlementResolver:block queue; the queue caused
+// 30k+ context.db.sql calls per realtime block, widening the multichain qb race.
 ponder.on("GPv2Settlement:Settlement", async ({ event, context }) => {
-  if (process.env.DISABLE_SETTLEMENT_FACTORY_CHECK === "true") return;
-
-  await context.db
-    .insert(settlementQueue)
-    .values({
-      txHash: event.transaction.hash,
-      chainId: context.chain.id,
-      blockNumber: event.block.number,
-      blockTimestamp: event.block.timestamp,
-    })
-    .onConflictDoNothing();
-});
-
-// ── Block handler — drain queue and resolve adapters ─────────────────────────
-ponder.on("SettlementResolver:block", async ({ event: _event, context }) => {
   if (process.env.DISABLE_SETTLEMENT_FACTORY_CHECK === "true") return;
 
   const chainId = context.chain.id;
@@ -93,145 +75,127 @@ ponder.on("SettlementResolver:block", async ({ event: _event, context }) => {
     ]?.toLowerCase();
   if (!adapterFactoryAddress) return;
 
-  const pending = await context.db.sql
-    .select()
-    .from(settlementQueue)
-    .where(eq(settlementQueue.chainId, chainId))
-    .limit(MAX_SETTLEMENTS_PER_BLOCK);
+  stats.total++;
 
-  if (pending.length === 0) return;
+  let receipt: Awaited<ReturnType<typeof context.client.getTransactionReceipt>>;
+  try {
+    receipt = await withTimeout(
+      context.client.getTransactionReceipt({ hash: event.transaction.hash }),
+      BLOCK_HANDLER_RPC_TIMEOUT_MS,
+      "settlement:getTransactionReceipt",
+    );
+  } catch (err) {
+    log("warn", "SettlementResolver:receipt_failed", { chainId, txHash: event.transaction.hash, err: err instanceof Error ? err.message : String(err) });
+    return;
+  }
 
-  for (const item of pending) {
-    stats.total++;
+  for (const txLog of receipt.logs) {
+    if (txLog.address.toLowerCase() !== settlementAddress) continue;
+    if (txLog.topics[0] !== TRADE_TOPIC) continue;
 
-    let receipt: Awaited<ReturnType<typeof context.client.getTransactionReceipt>>;
-    try {
-      receipt = await withTimeout(
-        context.client.getTransactionReceipt({ hash: item.txHash }),
-        BLOCK_HANDLER_RPC_TIMEOUT_MS,
-        "settlement:getTransactionReceipt",
-      );
-    } catch (err) {
-      log("warn", "SettlementResolver:receipt_failed", { chainId, txHash: item.txHash, err: err instanceof Error ? err.message : String(err) });
-      await context.db.delete(settlementQueue, { chainId, txHash: item.txHash });
+    stats.tradeLogsFound++;
+
+    const owner = `0x${txLog.topics[1]!.slice(26)}` as `0x${string}`;
+    const ownerAddress = owner.toLowerCase() as `0x${string}`;
+
+    const existingMapping = await context.db.find(ownerMapping, { chainId, address: ownerAddress });
+    if (existingMapping) {
+      stats.skippedAlreadyMapped++;
+      logStatsIfIntervalPassed();
       continue;
     }
 
-    for (const txLog of receipt.logs) {
-      if (txLog.address.toLowerCase() !== settlementAddress) continue;
-      if (txLog.topics[0] !== TRADE_TOPIC) continue;
-
-      stats.tradeLogsFound++;
-
-      const owner = `0x${txLog.topics[1]!.slice(26)}` as `0x${string}`;
-      const ownerAddress = owner.toLowerCase() as `0x${string}`;
-
-      const existing = await context.db.sql
-        .select()
-        .from(ownerMapping)
-        .where(and(eq(ownerMapping.chainId, chainId), eq(ownerMapping.address, ownerAddress)))
-        .limit(1);
-
-      if (existing.length > 0) {
-        stats.skippedAlreadyMapped++;
-        logStatsIfIntervalPassed();
-        continue;
-      }
-
-      let code: `0x${string}` | undefined;
-      try {
-        code = await withTimeout(
-          context.client.getCode({ address: owner }),
-          SETTLEMENT_INNER_RPC_TIMEOUT_MS,
-          "settlement:getCode",
-        );
-      } catch (err) {
-        log("warn", "SettlementResolver:getCode_failed", { chainId, owner, err: err instanceof Error ? err.message : String(err) });
-        continue;
-      }
-      if (!code || code === "0x") {
-        stats.skippedEOA++;
-        logStatsIfIntervalPassed();
-        continue;
-      }
-
-      const t1 = Date.now();
-      let factoryData: `0x${string}` | undefined;
-      try {
-        const result = await withTimeout(
-          context.client.call({ to: owner, data: FACTORY_SELECTOR }),
-          SETTLEMENT_INNER_RPC_TIMEOUT_MS,
-          "settlement:call:FACTORY",
-        );
-        factoryData = result.data;
-      } catch {
-        stats.msFactory += Date.now() - t1;
-        stats.skippedNotAdapter++;
-        logStatsIfIntervalPassed();
-        continue;
-      }
-      stats.msFactory += Date.now() - t1;
-
-      if (!factoryData || factoryData.length < 66) {
-        stats.skippedNotAdapter++;
-        logStatsIfIntervalPassed();
-        continue;
-      }
-
-      const factoryAddress = `0x${factoryData.slice(26)}` as `0x${string}`;
-      if (factoryAddress.toLowerCase() !== adapterFactoryAddress) {
-        stats.skippedNotAdapter++;
-        logStatsIfIntervalPassed();
-        continue;
-      }
-
-      let eoaOwner: `0x${string}`;
-      try {
-        eoaOwner = await withTimeout(
-          context.client.readContract({
-            address: owner,
-            abi: AaveV3AdapterHelperAbi,
-            functionName: "owner",
-          }),
-          BLOCK_HANDLER_RPC_TIMEOUT_MS,
-          "settlement:readContract:owner",
-        );
-      } catch (err) {
-        log("warn", "SettlementResolver:readOwner_failed", { chainId, owner, err: err instanceof Error ? err.message : String(err) });
-        continue;
-      }
-
-      await context.db
-        .insert(transaction)
-        .values({
-          hash: item.txHash,
-          chainId,
-          blockNumber: item.blockNumber,
-          blockTimestamp: item.blockTimestamp,
-        })
-        .onConflictDoNothing();
-
-      await context.db
-        .insert(ownerMapping)
-        .values({
-          chainId,
-          address: ownerAddress,
-          owner: eoaOwner.toLowerCase() as `0x${string}`,
-          addressType: AddressType.FlashLoanHelper,
-          txHash: item.txHash,
-          blockNumber: item.blockNumber,
-          resolutionDepth: 1,
-        })
-        .onConflictDoNothing();
-
-      stats.mapped++;
+    let code: `0x${string}` | undefined;
+    try {
+      code = await withTimeout(
+        context.client.getCode({ address: owner }),
+        SETTLEMENT_INNER_RPC_TIMEOUT_MS,
+        "settlement:getCode",
+      );
+    } catch (err) {
+      log("warn", "SettlementResolver:getCode_failed", { chainId, owner, err: err instanceof Error ? err.message : String(err) });
+      continue;
+    }
+    if (!code || code === "0x") {
+      stats.skippedEOA++;
       logStatsIfIntervalPassed();
-
-      log("info", "SettlementResolver:aave_adapter_mapped", { chainId, adapter: ownerAddress, eoa: eoaOwner.toLowerCase(), block: String(item.blockNumber) });
+      continue;
     }
 
-    await context.db.delete(settlementQueue, { chainId, txHash: item.txHash });
+    const t1 = Date.now();
+    let factoryData: `0x${string}` | undefined;
+    try {
+      const result = await withTimeout(
+        context.client.call({ to: owner, data: FACTORY_SELECTOR }),
+        SETTLEMENT_INNER_RPC_TIMEOUT_MS,
+        "settlement:call:FACTORY",
+      );
+      factoryData = result.data;
+    } catch {
+      stats.msFactory += Date.now() - t1;
+      stats.skippedNotAdapter++;
+      logStatsIfIntervalPassed();
+      continue;
+    }
+    stats.msFactory += Date.now() - t1;
 
+    if (!factoryData || factoryData.length < 66) {
+      stats.skippedNotAdapter++;
+      logStatsIfIntervalPassed();
+      continue;
+    }
+
+    const factoryAddress = `0x${factoryData.slice(26)}` as `0x${string}`;
+    if (factoryAddress.toLowerCase() !== adapterFactoryAddress) {
+      stats.skippedNotAdapter++;
+      logStatsIfIntervalPassed();
+      continue;
+    }
+
+    let eoaOwner: `0x${string}`;
+    try {
+      eoaOwner = await withTimeout(
+        context.client.readContract({
+          address: owner,
+          abi: AaveV3AdapterHelperAbi,
+          functionName: "owner",
+        }),
+        BLOCK_HANDLER_RPC_TIMEOUT_MS,
+        "settlement:readContract:owner",
+      );
+    } catch (err) {
+      log("warn", "SettlementResolver:readOwner_failed", { chainId, owner, err: err instanceof Error ? err.message : String(err) });
+      continue;
+    }
+
+    await context.db
+      .insert(transaction)
+      .values({
+        hash: event.transaction.hash,
+        chainId,
+        blockNumber: event.block.number,
+        blockTimestamp: event.block.timestamp,
+      })
+      .onConflictDoNothing();
+
+    await context.db
+      .insert(ownerMapping)
+      .values({
+        chainId,
+        address: ownerAddress,
+        owner: eoaOwner.toLowerCase() as `0x${string}`,
+        addressType: AddressType.FlashLoanHelper,
+        txHash: event.transaction.hash,
+        blockNumber: event.block.number,
+        resolutionDepth: 1,
+      })
+      .onConflictDoNothing();
+
+    stats.mapped++;
     logStatsIfIntervalPassed();
+
+    log("info", "SettlementResolver:aave_adapter_mapped", { chainId, adapter: ownerAddress, eoa: eoaOwner.toLowerCase(), block: String(event.block.number) });
   }
+
+  logStatsIfIntervalPassed();
 });
