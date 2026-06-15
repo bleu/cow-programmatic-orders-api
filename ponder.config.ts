@@ -122,13 +122,5 @@ export default createConfig({
       ),
       interval: 1,
     },
-    // SettlementResolver — async Aave adapter discovery from queued Settlement events.
-    // Only runs on chains that have a flash loan router (currently mainnet only).
-    SettlementResolver: {
-      chain: Object.fromEntries(
-        settlementChains.map((c) => [c.name, { startBlock: "latest" as const }]),
-      ),
-      interval: 1,
-    },
   },
 });
