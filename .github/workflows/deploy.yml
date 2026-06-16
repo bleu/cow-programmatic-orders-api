@@ -6,6 +6,12 @@ concurrency:
 
 on:
   workflow_dispatch:
+    inputs:
+      monitor_only:
+        description: 'Only check server status — do NOT deploy'
+        required: false
+        default: 'false'
+        type: boolean
   push:
     branches:
       - main
@@ -41,10 +47,12 @@ jobs:
           chmod 600 ~/.ssh/config
 
       - name: Create .env file
+        if: inputs.monitor_only != 'true'
         run: |
           echo "${{ secrets.DEPLOY_ENV_FILE_CONTENT }}" > ../.env
 
       - name: Rsync source files
+        if: inputs.monitor_only != 'true'
         run: |
           rsync -avz --delete --mkpath \
             --exclude=.git \
@@ -57,10 +65,12 @@ jobs:
             ./ cow-deploy:${{ secrets.DEPLOY_PATH }}/
 
       - name: Copy env file to server
+        if: inputs.monitor_only != 'true'
         run: |
           scp ../.env cow-deploy:${{ secrets.DEPLOY_PATH }}/deployment/.env
 
       - name: Deploy via docker on server
+        if: inputs.monitor_only != 'true'
         env:
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
         run: |
@@ -95,3 +105,22 @@ jobs:
           ssh cow-deploy "docker image prune -f && docker container prune -f" || true
 
           echo ">>> Deploy complete (revision=${REVISION})."
+
+      - name: Check server status
+        if: inputs.monitor_only == 'true'
+        run: |
+          echo "=== Running containers ==="
+          ssh cow-deploy "docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'"
+
+          echo ""
+          echo "=== Last 100 ponder log lines ==="
+          ssh cow-deploy "
+            CONTAINER=\$(docker ps --format '{{.Names}}' | grep ponder | head -1)
+            if [ -z \"\$CONTAINER\" ]; then
+              echo 'WARNING: No running ponder container found'
+              docker ps -a --format 'table {{.Names}}\t{{.Status}}' | grep -i ponder || echo 'No ponder containers at all'
+            else
+              echo \"Container: \$CONTAINER\"
+              docker logs --tail 100 \"\$CONTAINER\" 2>&1
+            fi
+          "
