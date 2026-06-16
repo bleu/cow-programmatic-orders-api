@@ -1,0 +1,37 @@
+name: Monitor Server (temporary)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  monitor:
+    name: Check indexer status
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Set up SSH config
+        run: |
+          cat <<EOF > ~/.ssh/config
+          Host cow-deploy
+              HostName ${{ secrets.DEPLOY_SERVER_HOST }}
+              User ${{ secrets.DEPLOY_SERVER_USER }}
+              Port 22
+              IdentityFile ~/.ssh/id_ed25519
+              StrictHostKeyChecking no
+              ServerAliveInterval 30
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Check running containers
+        run: ssh cow-deploy "docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'"
+
+      - name: Check recent ponder logs
+        run: |
+          ssh cow-deploy "docker logs --since 3m --tail 80 cow-programmatic-ponder-1 2>&1" || \
+          ssh cow-deploy "docker ps -a --format '{{.Names}}' | grep ponder | head -1 | xargs -r docker logs --since 3m --tail 80 2>&1"
