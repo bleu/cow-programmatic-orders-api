@@ -367,45 +367,52 @@ async function fetchAccountOrders(
   return allOrders;
 }
 
-/** Batch-fetch orders by UID to refresh status of open orders. Chunks into BATCH_SIZE to avoid HTTP 413. */
+/** Batch-fetch orders by UID to refresh status of open orders.
+ *  Chunks into BATCH_SIZE to avoid HTTP 413, then fires all chunks in parallel
+ *  so N chunks take the time of one instead of N × one. */
 async function fetchOrdersByUids(
   apiBaseUrl: string,
   uids: string[],
 ): Promise<OrderbookOrder[]> {
   if (uids.length === 0) return [];
 
-  const results: OrderbookOrder[] = [];
   const url = `${apiBaseUrl}/api/v1/orders/by_uids`;
-
+  const chunks: string[][] = [];
   for (let i = 0; i < uids.length; i += BATCH_SIZE) {
-    const chunk = uids.slice(i, i + BATCH_SIZE);
-    try {
-      const response = await fetchWithTimeout(
-        url,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(chunk),
-        },
-        ORDERBOOK_HTTP_TIMEOUT_MS,
-        "ob:byUids",
-      );
-      if (!response.ok) {
-        log("warn", "ob:batchFetchError", { status: response.status, uids: chunk.length, offset: i });
-        continue;
-      }
-      const raw = (await response.json()) as { order: OrderbookOrder }[];
-      results.push(...raw.flatMap((item) => (item?.order != null ? [item.order] : [])));
-    } catch (err) {
-      if (err instanceof TimeoutError) {
-        log("warn", "ob:batchFetchTimeout", { uids: chunk.length, offset: i, after: ORDERBOOK_HTTP_TIMEOUT_MS });
-        continue;
-      }
-      log("warn", "ob:batchFetchFailed", { err: String(err), offset: i });
-    }
+    chunks.push(uids.slice(i, i + BATCH_SIZE));
   }
 
-  return results;
+  const chunkResults = await Promise.all(
+    chunks.map(async (chunk, idx) => {
+      try {
+        const response = await fetchWithTimeout(
+          url,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(chunk),
+          },
+          ORDERBOOK_HTTP_TIMEOUT_MS,
+          "ob:byUids",
+        );
+        if (!response.ok) {
+          log("warn", "ob:batchFetchError", { status: response.status, uids: chunk.length, offset: idx * BATCH_SIZE });
+          return [] as OrderbookOrder[];
+        }
+        const raw = (await response.json()) as { order: OrderbookOrder }[];
+        return raw.flatMap((item) => (item?.order != null ? [item.order] : []));
+      } catch (err) {
+        if (err instanceof TimeoutError) {
+          log("warn", "ob:batchFetchTimeout", { uids: chunk.length, offset: idx * BATCH_SIZE, after: ORDERBOOK_HTTP_TIMEOUT_MS });
+          return [] as OrderbookOrder[];
+        }
+        log("warn", "ob:batchFetchFailed", { err: String(err), offset: idx * BATCH_SIZE });
+        return [] as OrderbookOrder[];
+      }
+    }),
+  );
+
+  return chunkResults.flat();
 }
 
 // ─── Processing ──────────────────────────────────────────────────────────────
