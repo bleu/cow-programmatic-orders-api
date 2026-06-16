@@ -75,8 +75,8 @@ jobs:
           # docker compose reads PROJECT_PREFIX from --env-file; supply APP_REVISION + DATABASE_SCHEMA inline
           DC="docker compose -p ${PROJECT_PREFIX} -f ${REMOTE_DIR}/docker-compose.yml --env-file ${REMOTE_ENV} --profile deploy"
 
-          echo ">>> Stopping ponder container..."
-          ssh cow-deploy "${DC} stop ponder" || true
+          echo ">>> Stopping and removing ponder container..."
+          ssh cow-deploy "${DC} rm -sf ponder" || true
 
           echo ">>> Dropping app schema..."
           ssh cow-deploy "docker exec ${DB_CONTAINER} \
