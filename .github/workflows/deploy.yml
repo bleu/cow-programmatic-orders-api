@@ -12,6 +12,11 @@ on:
         required: false
         default: 'false'
         type: string
+      skip_schema_drop:
+        description: "Set to 'true' to deploy without dropping the schema (preserves re-index progress)"
+        required: false
+        default: 'false'
+        type: string
   push:
     branches:
       - main
@@ -90,10 +95,14 @@ jobs:
           # regardless of how it was originally started (docker run vs docker compose).
           ssh cow-deploy "docker ps -a --format '{{.Names}}' | grep -E '^${PROJECT_PREFIX}-ponder' | xargs -r docker rm -f" || true
 
-          echo ">>> Dropping app schema..."
-          ssh cow-deploy "docker exec ${DB_CONTAINER} \
-            psql -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-programmatic-orders} \
-            -c 'DROP SCHEMA IF EXISTS \"programmatic_orders\" CASCADE'" || true
+          if [ "${{ inputs.skip_schema_drop }}" != "true" ]; then
+            echo ">>> Dropping app schema..."
+            ssh cow-deploy "docker exec ${DB_CONTAINER} \
+              psql -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-programmatic-orders} \
+              -c 'DROP SCHEMA IF EXISTS \"programmatic_orders\" CASCADE'" || true
+          else
+            echo ">>> Skipping schema drop — will resume from existing checkpoint (PONDER_EXPERIMENTAL_DB=platform)."
+          fi
 
           echo ">>> Building new image (revision=${REVISION})..."
           ssh cow-deploy "APP_REVISION=${REVISION} DATABASE_SCHEMA=programmatic_orders ${DC} build --no-cache"

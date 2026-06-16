@@ -145,10 +145,15 @@ export async function precomputeAndDiscover(
     }
   }
 
-  if (discreteRows.length > 0) {
+  // node-postgres silently drops parameter bindings above ~29k params, causing a
+  // "bind message has N parameter formats but 0 parameters" error.  Chunk at 500
+  // rows to keep each insert well under that threshold (500×12=6k params max).
+  const CHUNK = 500;
+
+  for (let i = 0; i < discreteRows.length; i += CHUNK) {
     await context.db.sql
       .insert(discreteOrder)
-      .values(discreteRows)
+      .values(discreteRows.slice(i, i + CHUNK))
       .onConflictDoUpdate({
         target: [discreteOrder.chainId, discreteOrder.orderUid],
         set: {
@@ -158,10 +163,10 @@ export async function precomputeAndDiscover(
       });
   }
 
-  if (candidateRows.length > 0) {
+  for (let i = 0; i < candidateRows.length; i += CHUNK) {
     await context.db.sql
       .insert(candidateDiscreteOrder)
-      .values(candidateRows)
+      .values(candidateRows.slice(i, i + CHUNK))
       .onConflictDoNothing();
   }
 
