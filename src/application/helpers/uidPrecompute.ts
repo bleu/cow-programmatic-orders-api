@@ -16,7 +16,7 @@
  */
 
 import type { Hex } from "viem";
-import { and, eq } from "ponder";
+import { and, eq, sql } from "ponder";
 import { candidateDiscreteOrder, conditionalOrderGenerator, discreteOrder } from "ponder:schema";
 import { computeOrderUid, type GPv2OrderData } from "./orderUid";
 import { fetchOrderStatusByUids } from "./orderbookClient";
@@ -104,49 +104,65 @@ export async function precomputeAndDiscover(
   const uids = precomputed.map((o) => o.orderUid);
   const statuses = await fetchOrderStatusByUids(context, chainId, uids);
 
+  // Split into two groups and bulk-insert each — one DB roundtrip per table
+  // instead of N individual inserts (N can be 500+ for large TWAPs).
+  const discreteRows: (typeof discreteOrder.$inferInsert)[] = [];
+  const candidateRows: (typeof candidateDiscreteOrder.$inferInsert)[] = [];
+
   for (const order of precomputed) {
     const statusInfo = statuses.get(order.orderUid);
     const apiStatus = statusInfo?.status as
       "open" | "fulfilled" | "unfilled" | "expired" | "cancelled" | undefined;
 
     if (apiStatus) {
-      await context.db.sql
-        .insert(discreteOrder)
-        .values({
-          orderUid: order.orderUid,
-          chainId,
-          conditionalOrderGeneratorId: generatorEventId,
-          status: apiStatus,
-          sellAmount: order.sellAmount,
-          buyAmount: order.buyAmount,
-          feeAmount: order.feeAmount,
-          validTo: order.validTo,
-          creationDate: blockTimestamp,
-          executedSellAmount: statusInfo?.executedSellAmount ?? null,
-          executedBuyAmount: statusInfo?.executedBuyAmount ?? null,
-        })
-        .onConflictDoUpdate({
-          target: [discreteOrder.chainId, discreteOrder.orderUid],
-          set: { status: apiStatus, validTo: order.validTo },
-        });
+      discreteRows.push({
+        orderUid: order.orderUid,
+        chainId,
+        conditionalOrderGeneratorId: generatorEventId,
+        status: apiStatus,
+        sellAmount: order.sellAmount,
+        buyAmount: order.buyAmount,
+        feeAmount: order.feeAmount,
+        validTo: order.validTo,
+        creationDate: blockTimestamp,
+        executedSellAmount: statusInfo?.executedSellAmount ?? null,
+        executedBuyAmount: statusInfo?.executedBuyAmount ?? null,
+      });
     } else {
-      await context.db.sql
-        .insert(candidateDiscreteOrder)
-        .values({
-          orderUid: order.orderUid,
-          chainId,
-          conditionalOrderGeneratorId: generatorEventId,
-          possibleValidAfterTimestamp: order.possibleValidAfterTimestamp != null
-            ? BigInt(order.possibleValidAfterTimestamp)
-            : null,
-          sellAmount: order.sellAmount,
-          buyAmount: order.buyAmount,
-          feeAmount: order.feeAmount,
-          validTo: order.validTo,
-          creationDate: blockTimestamp,
-        })
-        .onConflictDoNothing();
+      candidateRows.push({
+        orderUid: order.orderUid,
+        chainId,
+        conditionalOrderGeneratorId: generatorEventId,
+        possibleValidAfterTimestamp: order.possibleValidAfterTimestamp != null
+          ? BigInt(order.possibleValidAfterTimestamp)
+          : null,
+        sellAmount: order.sellAmount,
+        buyAmount: order.buyAmount,
+        feeAmount: order.feeAmount,
+        validTo: order.validTo,
+        creationDate: blockTimestamp,
+      });
     }
+  }
+
+  if (discreteRows.length > 0) {
+    await context.db.sql
+      .insert(discreteOrder)
+      .values(discreteRows)
+      .onConflictDoUpdate({
+        target: [discreteOrder.chainId, discreteOrder.orderUid],
+        set: {
+          status: sql`excluded.status`,
+          validTo: sql`excluded.valid_to`,
+        },
+      });
+  }
+
+  if (candidateRows.length > 0) {
+    await context.db.sql
+      .insert(candidateDiscreteOrder)
+      .values(candidateRows)
+      .onConflictDoNothing();
   }
 
   const allTerminal = precomputed.every((o) => {

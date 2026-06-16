@@ -18,7 +18,7 @@ import {
   conditionalOrderGenerator,
   discreteOrder,
 } from "ponder:schema";
-import { and, eq, inArray } from "ponder";
+import { and, eq, inArray, sql } from "ponder";
 import { pgSchema, integer, text } from "drizzle-orm/pg-core";
 import { encodeAbiParameters, keccak256, type Hex } from "viem";
 import { type OrderType } from "../../utils/order-types";
@@ -173,32 +173,33 @@ export async function upsertDiscreteOrders(
   chainId: number,
   orders: ComposableOrder[],
 ): Promise<number> {
-  let count = 0;
-  for (const order of orders) {
-    await context.db
-      .insert(discreteOrder)
-      .values({
-        orderUid: order.uid,
-        chainId,
-        conditionalOrderGeneratorId: order.generatorId,
-        status: order.status,
-        sellAmount: order.sellAmount,
-        buyAmount: order.buyAmount,
-        feeAmount: order.feeAmount,
-        validTo: order.validTo,
-        creationDate: order.creationDate,
-        executedSellAmount: order.executedSellAmount,
-        executedBuyAmount: order.executedBuyAmount,
-      })
-      .onConflictDoUpdate({
-        status: order.status,
-        validTo: order.validTo,
-        executedSellAmount: order.executedSellAmount,
-        executedBuyAmount: order.executedBuyAmount,
-      });
-    count++;
-  }
-  return count;
+  if (orders.length === 0) return 0;
+  // One multi-row upsert instead of N individual roundtrips.
+  await context.db.sql
+    .insert(discreteOrder)
+    .values(orders.map((order) => ({
+      orderUid: order.uid,
+      chainId,
+      conditionalOrderGeneratorId: order.generatorId,
+      status: order.status,
+      sellAmount: order.sellAmount,
+      buyAmount: order.buyAmount,
+      feeAmount: order.feeAmount,
+      validTo: order.validTo,
+      creationDate: order.creationDate,
+      executedSellAmount: order.executedSellAmount,
+      executedBuyAmount: order.executedBuyAmount,
+    })))
+    .onConflictDoUpdate({
+      target: [discreteOrder.chainId, discreteOrder.orderUid],
+      set: {
+        status: sql`excluded.status`,
+        validTo: sql`excluded.valid_to`,
+        executedSellAmount: sql`excluded.executed_sell_amount`,
+        executedBuyAmount: sql`excluded.executed_buy_amount`,
+      },
+    });
+  return orders.length;
 }
 
 /**
@@ -560,30 +561,30 @@ async function cacheUidStatuses(
   chainId: number,
   orders: ComposableOrder[],
 ): Promise<void> {
+  if (orders.length === 0) return;
   const now = Math.floor(Date.now() / 1000);
-  for (const order of orders) {
-    try {
-      await context.db.sql
-        .insert(orderUidCache)
-        .values({
-          chainId,
-          orderUid: order.uid,
-          status: order.status,
+  try {
+    // One multi-row upsert instead of N individual roundtrips.
+    await context.db.sql
+      .insert(orderUidCache)
+      .values(orders.map((order) => ({
+        chainId,
+        orderUid: order.uid,
+        status: order.status,
+        fetchedAt: now,
+        executedSellAmount: order.executedSellAmount,
+        executedBuyAmount: order.executedBuyAmount,
+      })))
+      .onConflictDoUpdate({
+        target: [orderUidCache.chainId, orderUidCache.orderUid],
+        set: {
+          status: sql`excluded.status`,
           fetchedAt: now,
-          executedSellAmount: order.executedSellAmount,
-          executedBuyAmount: order.executedBuyAmount,
-        })
-        .onConflictDoUpdate({
-          target: [orderUidCache.chainId, orderUidCache.orderUid],
-          set: {
-            status: order.status,
-            fetchedAt: now,
-            executedSellAmount: order.executedSellAmount,
-            executedBuyAmount: order.executedBuyAmount,
-          },
-        });
-    } catch {
-      // Best-effort cache write
-    }
+          executedSellAmount: sql`excluded.executed_sell_amount`,
+          executedBuyAmount: sql`excluded.executed_buy_amount`,
+        },
+      });
+  } catch {
+    // Best-effort cache write
   }
 }
