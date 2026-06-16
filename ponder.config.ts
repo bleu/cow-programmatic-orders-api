@@ -72,18 +72,25 @@ export default createConfig({
     },
   },
   blocks: {
+    // Block handler intervals use coprime prime numbers per chain so handlers
+    // naturally spread across different blocks and rarely all fire together.
+    // On gnosis (5s blocks) stacking all handlers on the same block causes
+    // ~35s combined execution — longer than the 5s block time, making the
+    // indexer drift behind the chain tip. With coprime intervals the four
+    // handlers all coincide only every LCM(3,5,7,11)=1155 blocks (~96 min).
+    //
+    // Gnosis intervals: OrderDiscoveryPoller=7, CandidateConfirmer=6,
+    //   OrderStatusTracker=5, CancellationWatcher=11.
+    // Mainnet (12s blocks): all interval=1 — handlers comfortably fit within 12s.
+
     // OrderDiscoveryPoller — RPC multicall for non-deterministic generators.
-    // Gnosis interval=4 (~20s) vs mainnet interval=1 (~12s).
-    // The CoW watch-tower processes orders sequentially — with 1,461+ gnosis
-    // generators, a full cycle takes many blocks. Polling every 5s gnosis block
-    // wastes RPC calls since state rarely changes between blocks.
     OrderDiscoveryPoller: {
       chain: Object.fromEntries(
         ACTIVE_CHAINS.map((c) => [
           c.name,
           {
             startBlock: "latest" as const,
-            ...(pollerInterval(c.blockTime) > 1 ? { interval: pollerInterval(c.blockTime) } : {}),
+            ...(c.blockTime < 8 ? { interval: 7 } : {}),
           },
         ]),
       ),
@@ -92,14 +99,26 @@ export default createConfig({
     // CandidateConfirmer — checks API for unconfirmed candidates.
     CandidateConfirmer: {
       chain: Object.fromEntries(
-        ACTIVE_CHAINS.map((c) => [c.name, { startBlock: "latest" as const }]),
+        ACTIVE_CHAINS.map((c) => [
+          c.name,
+          {
+            startBlock: "latest" as const,
+            ...(c.blockTime < 8 ? { interval: 6 } : {}),
+          },
+        ]),
       ),
       interval: 1,
     },
     // OrderStatusTracker — polls API for open discrete order status.
     OrderStatusTracker: {
       chain: Object.fromEntries(
-        ACTIVE_CHAINS.map((c) => [c.name, { startBlock: "latest" as const }]),
+        ACTIVE_CHAINS.map((c) => [
+          c.name,
+          {
+            startBlock: "latest" as const,
+            ...(c.blockTime < 8 ? { interval: 5 } : {}),
+          },
+        ]),
       ),
       interval: 1,
     },
@@ -118,7 +137,13 @@ export default createConfig({
     // blocks; the handler itself is cheap when nothing is due.
     CancellationWatcher: {
       chain: Object.fromEntries(
-        ACTIVE_CHAINS.map((c) => [c.name, { startBlock: "latest" as const }]),
+        ACTIVE_CHAINS.map((c) => [
+          c.name,
+          {
+            startBlock: "latest" as const,
+            ...(c.blockTime < 8 ? { interval: 11 } : {}),
+          },
+        ]),
       ),
       interval: 1,
     },
