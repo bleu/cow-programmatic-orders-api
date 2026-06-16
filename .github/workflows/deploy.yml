@@ -8,10 +8,10 @@ on:
   workflow_dispatch:
     inputs:
       monitor_only:
-        description: 'Only check server status — do NOT deploy'
+        description: "Set to 'true' to only check server status without deploying"
         required: false
         default: 'false'
-        type: boolean
+        type: string
   push:
     branches:
       - main
