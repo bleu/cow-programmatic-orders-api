@@ -75,8 +75,10 @@ jobs:
           # docker compose reads PROJECT_PREFIX from --env-file; supply APP_REVISION + DATABASE_SCHEMA inline
           DC="docker compose -p ${PROJECT_PREFIX} -f ${REMOTE_DIR}/docker-compose.yml --env-file ${REMOTE_ENV} --profile deploy"
 
-          echo ">>> Stopping and removing ponder container..."
-          ssh cow-deploy "${DC} rm -sf ponder" || true
+          echo ">>> Stopping and removing any existing ponder containers..."
+          # Remove any container whose name matches the ponder service pattern,
+          # regardless of how it was originally started (docker run vs docker compose).
+          ssh cow-deploy "docker ps -a --format '{{.Names}}' | grep -E '^${PROJECT_PREFIX}-ponder' | xargs -r docker rm -f" || true
 
           echo ">>> Dropping app schema..."
           ssh cow-deploy "docker exec ${DB_CONTAINER} \
