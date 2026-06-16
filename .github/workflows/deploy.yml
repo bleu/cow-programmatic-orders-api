@@ -54,7 +54,7 @@ jobs:
 
       - name: Create .env file
         run: |
-          echo "${{ secrets.DEPLOY_ENV_FILE_CONTENT }}" > .env
+          echo "${{ secrets.DEPLOY_ENV_FILE_CONTENT }}" > ../.env
 
       - name: Run deploy script
         run: npx tsx deployment/deploy-remotely.ts cow-deploy:${{ secrets.DEPLOY_PATH }} ../.env
