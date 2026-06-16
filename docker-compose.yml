@@ -52,6 +52,11 @@ services:
       # Add a new chain's RPC URL env var here when enabling it in src/chains/index.ts
       DISABLE_POLL_RESULT_CHECK: ${DISABLE_POLL_RESULT_CHECK:-false}
       DISABLE_SETTLEMENT_FACTORY_CHECK: ${DISABLE_SETTLEMENT_FACTORY_CHECK:-false}
+      # Skip Ponder build_id ownership check so config/handler changes can deploy
+      # without forcing a full re-index. Safe to set permanently — on a fresh schema
+      # (after drop) it's a no-op; on an existing schema it allows resuming from the
+      # last checkpoint rather than wiping and starting over.
+      PONDER_EXPERIMENTAL_DB: "platform"
     ports:
       - "${PONDER_EXPOSED_PORT:-40000}:3000"
     depends_on:
