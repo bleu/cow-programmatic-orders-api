@@ -19,18 +19,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
       - name: Set up SSH key
         run: |
           mkdir -p ~/.ssh
@@ -56,5 +44,52 @@ jobs:
         run: |
           echo "${{ secrets.DEPLOY_ENV_FILE_CONTENT }}" > ../.env
 
-      - name: Run deploy script
-        run: npx tsx deployment/deploy-remotely.ts cow-deploy:${{ secrets.DEPLOY_PATH }} ../.env
+      - name: Rsync source files
+        run: |
+          rsync -avz --delete --mkpath \
+            --exclude=.git \
+            --exclude=node_modules \
+            --exclude=.env \
+            --exclude=.env.local \
+            --exclude=.vite \
+            --exclude='*.log' \
+            --exclude=tmp/ \
+            ./ cow-deploy:${{ secrets.DEPLOY_PATH }}/
+
+      - name: Copy env file to server
+        run: |
+          scp ../.env cow-deploy:${{ secrets.DEPLOY_PATH }}/deployment/.env
+
+      - name: Deploy via docker on server
+        env:
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          REVISION=$(git rev-parse --short HEAD)
+
+          # Source env locally just to read PROJECT_PREFIX and DB connection info
+          set -a; source ../.env; set +a
+
+          REMOTE_DIR="${DEPLOY_PATH}"
+          DB_CONTAINER="${PROJECT_PREFIX}-db"
+          REMOTE_ENV="${REMOTE_DIR}/deployment/.env"
+          # docker compose reads PROJECT_PREFIX from --env-file; supply APP_REVISION + DATABASE_SCHEMA inline
+          DC="docker compose -p ${PROJECT_PREFIX} -f ${REMOTE_DIR}/docker-compose.yml --env-file ${REMOTE_ENV} --profile deploy"
+
+          echo ">>> Stopping ponder container..."
+          ssh cow-deploy "${DC} stop ponder" || true
+
+          echo ">>> Dropping app schema..."
+          ssh cow-deploy "docker exec ${DB_CONTAINER} \
+            psql -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-programmatic-orders} \
+            -c 'DROP SCHEMA IF EXISTS \"programmatic_orders\" CASCADE'" || true
+
+          echo ">>> Building new image (revision=${REVISION})..."
+          ssh cow-deploy "APP_REVISION=${REVISION} DATABASE_SCHEMA=programmatic_orders ${DC} build --no-cache"
+
+          echo ">>> Starting containers..."
+          ssh cow-deploy "APP_REVISION=${REVISION} DATABASE_SCHEMA=programmatic_orders ${DC} up -d --remove-orphans"
+
+          echo ">>> Pruning old images..."
+          ssh cow-deploy "docker image prune -f && docker container prune -f" || true
+
+          echo ">>> Deploy complete (revision=${REVISION})."
