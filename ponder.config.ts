@@ -72,28 +72,21 @@ export default createConfig({
     },
   },
   blocks: {
-    // Block handler intervals use coprime numbers per chain so handlers
-    // naturally spread across different blocks and rarely all fire together.
+    // Block handler intervals are tuned per chain to keep total handler time
+    // well within the available window while reducing unnecessary invocations.
     //
-    // Gnosis (5s blocks): handlers take ~35s combined when stacked — longer than
-    // the block time. Coprime intervals spread them: LCM(5,6,7,11)=2310 blocks
-    // (~3.2h) before all four coincide.
-    //   OrderDiscoveryPoller=7, CandidateConfirmer=6, OrderStatusTracker=5, CancellationWatcher=11
+    // Gnosis  (5s blocks, interval=10): 10×5s=50s window, ~33s combined → 66% utilization
+    // Mainnet (12s blocks, interval=4):  4×12s=48s window, ~22s combined → 46% utilization
     //
-    // Mainnet (12s blocks): C1 alone takes ~11s, consuming 92% of the 12s window
-    // and starving gnosis of processing time. Coprime intervals give each handler
-    // a larger window and free cycles for gnosis: LCM(2,3,5,7)=210 blocks (~42min).
-    //   OrderDiscoveryPoller=5, CandidateConfirmer=3, OrderStatusTracker=2, CancellationWatcher=7
+    // All handlers fire together on the same block every interval blocks.
+    // Simpler and more efficient than coprime staggering.
 
     // OrderDiscoveryPoller — RPC multicall for non-deterministic generators.
     OrderDiscoveryPoller: {
       chain: Object.fromEntries(
         ACTIVE_CHAINS.map((c) => [
           c.name,
-          {
-            startBlock: "latest" as const,
-            ...(c.blockTime < 8 ? { interval: 7 } : { interval: 5 }),
-          },
+          { startBlock: "latest" as const, interval: c.blockTime < 8 ? 10 : 4 },
         ]),
       ),
       interval: 1,
@@ -103,10 +96,7 @@ export default createConfig({
       chain: Object.fromEntries(
         ACTIVE_CHAINS.map((c) => [
           c.name,
-          {
-            startBlock: "latest" as const,
-            ...(c.blockTime < 8 ? { interval: 6 } : { interval: 3 }),
-          },
+          { startBlock: "latest" as const, interval: c.blockTime < 8 ? 10 : 4 },
         ]),
       ),
       interval: 1,
@@ -116,10 +106,7 @@ export default createConfig({
       chain: Object.fromEntries(
         ACTIVE_CHAINS.map((c) => [
           c.name,
-          {
-            startBlock: "latest" as const,
-            ...(c.blockTime < 8 ? { interval: 5 } : { interval: 2 }),
-          },
+          { startBlock: "latest" as const, interval: c.blockTime < 8 ? 10 : 4 },
         ]),
       ),
       interval: 1,
@@ -143,7 +130,7 @@ export default createConfig({
           c.name,
           {
             startBlock: "latest" as const,
-            ...(c.blockTime < 8 ? { interval: 11 } : { interval: 7 }),
+            interval: c.blockTime < 8 ? 10 : 4,
           },
         ]),
       ),
