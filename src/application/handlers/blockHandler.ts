@@ -24,6 +24,7 @@ import {
 } from "../../data";
 import {
   BLOCK_HANDLER_RPC_TIMEOUT_MS,
+  BOOTSTRAP_MAX_RETRY_COUNT,
   BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
   DEFAULT_MAX_DISCRETE_ORDERS_PER_BLOCK,
   DEFAULT_MAX_GENERATORS_PER_BLOCK,
@@ -775,6 +776,15 @@ ponder.on("OwnerBackfill:block", async ({ event, context }) => {
 
   for (const { owner, retryCount } of queued) {
     retriedOwners.add(owner as Hex);
+
+    if (retryCount >= BOOTSTRAP_MAX_RETRY_COUNT) {
+      log("warn", "OwnerBackfill:owner_retry_abandoned", { block: String(currentBlock), chainId, owner, retryCount, maxRetries: BOOTSTRAP_MAX_RETRY_COUNT });
+      await context.db.sql
+        .delete(bootstrapRetryQueue)
+        .where(and(eq(bootstrapRetryQueue.chainId, chainId), eq(bootstrapRetryQueue.owner, owner as Hex)));
+      continue;
+    }
+
     try {
       const orders = await withTimeout(
         fetchComposableOrders(context, chainId, owner as Hex),

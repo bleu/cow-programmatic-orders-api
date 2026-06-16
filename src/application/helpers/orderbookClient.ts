@@ -23,7 +23,7 @@ import { pgSchema, integer, text } from "drizzle-orm/pg-core";
 import { encodeAbiParameters, keccak256, type Hex } from "viem";
 import { type OrderType } from "../../utils/order-types";
 import { COMPOSABLE_COW_HANDLER_ADDRESSES, ORDERBOOK_API_URLS } from "../../data";
-import { ORDERBOOK_HTTP_TIMEOUT_MS, SIGNING_SCHEME_EIP1271 } from "../../constants";
+import { BOOTSTRAP_MAX_PAGES, BOOTSTRAP_PAGE_SIZE, ORDERBOOK_HTTP_TIMEOUT_MS, SIGNING_SCHEME_EIP1271 } from "../../constants";
 import { decodeEip1271Signature } from "../decoders/erc1271Signature";
 import { fetchWithTimeout, TimeoutError, withTimeout } from "./withTimeout";
 import { log } from "./logger";
@@ -92,7 +92,7 @@ export async function fetchComposableOrders(
   }
 
   log("info", "ob:fetch", { owner, chainId });
-  const allApiOrders = await fetchAccountOrders(apiBaseUrl, owner);
+  const allApiOrders = await fetchAccountOrders(apiBaseUrl, owner, BOOTSTRAP_MAX_PAGES, SIGNING_SCHEME_EIP1271, BOOTSTRAP_PAGE_SIZE);
   const composable = await filterAndProcess(context, chainId, allApiOrders);
 
   if (composable.length === 0) {
@@ -316,11 +316,16 @@ export async function fetchOwnerOrderStatuses(
 
 // ─── API calls ───────────────────────────────────────────────────────────────
 
-/** Fetch orders for an owner with pagination. maxPages limits how many pages are fetched (0 = unlimited). */
+/** Fetch orders for an owner with pagination. maxPages limits how many pages are fetched (0 = unlimited).
+ *  signingScheme, if provided, is appended as a query param — the API filters server-side when supported,
+ *  reducing payload for owners with many ECDSA orders mixed with composable ones.
+ *  pageSize overrides the default PAGE_LIMIT per request. */
 async function fetchAccountOrders(
   apiBaseUrl: string,
   owner: Hex,
   maxPages = 0,
+  signingScheme?: string,
+  pageSize = PAGE_LIMIT,
 ): Promise<OrderbookOrder[]> {
   const allOrders: OrderbookOrder[] = [];
   let offset = 0;
@@ -328,7 +333,9 @@ async function fetchAccountOrders(
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const url = `${apiBaseUrl}/api/v1/account/${owner}/orders?limit=${PAGE_LIMIT}&offset=${offset}`;
+    const params = new URLSearchParams({ limit: String(pageSize), offset: String(offset) });
+    if (signingScheme) params.set("signingScheme", signingScheme);
+    const url = `${apiBaseUrl}/api/v1/account/${owner}/orders?${params.toString()}`;
     try {
       const response = await fetchWithTimeout(
         url,
@@ -343,7 +350,7 @@ async function fetchAccountOrders(
       const page = (await response.json()) as OrderbookOrder[];
       allOrders.push(...page);
       pagesFetched++;
-      if (page.length < PAGE_LIMIT) break; // last page
+      if (page.length < pageSize) break; // last page
       if (maxPages > 0 && pagesFetched >= maxPages) break; // page cap reached
       offset += page.length;
     } catch (err) {
