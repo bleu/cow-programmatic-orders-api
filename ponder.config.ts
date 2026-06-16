@@ -72,16 +72,18 @@ export default createConfig({
     },
   },
   blocks: {
-    // Block handler intervals use coprime prime numbers per chain so handlers
+    // Block handler intervals use coprime numbers per chain so handlers
     // naturally spread across different blocks and rarely all fire together.
-    // On gnosis (5s blocks) stacking all handlers on the same block causes
-    // ~35s combined execution — longer than the 5s block time, making the
-    // indexer drift behind the chain tip. With coprime intervals the four
-    // handlers all coincide only every LCM(3,5,7,11)=1155 blocks (~96 min).
     //
-    // Gnosis intervals: OrderDiscoveryPoller=7, CandidateConfirmer=6,
-    //   OrderStatusTracker=5, CancellationWatcher=11.
-    // Mainnet (12s blocks): all interval=1 — handlers comfortably fit within 12s.
+    // Gnosis (5s blocks): handlers take ~35s combined when stacked — longer than
+    // the block time. Coprime intervals spread them: LCM(5,6,7,11)=2310 blocks
+    // (~3.2h) before all four coincide.
+    //   OrderDiscoveryPoller=7, CandidateConfirmer=6, OrderStatusTracker=5, CancellationWatcher=11
+    //
+    // Mainnet (12s blocks): C1 alone takes ~11s, consuming 92% of the 12s window
+    // and starving gnosis of processing time. Coprime intervals give each handler
+    // a larger window and free cycles for gnosis: LCM(2,3,5,7)=210 blocks (~42min).
+    //   OrderDiscoveryPoller=5, CandidateConfirmer=3, OrderStatusTracker=2, CancellationWatcher=7
 
     // OrderDiscoveryPoller — RPC multicall for non-deterministic generators.
     OrderDiscoveryPoller: {
@@ -90,7 +92,7 @@ export default createConfig({
           c.name,
           {
             startBlock: "latest" as const,
-            ...(c.blockTime < 8 ? { interval: 7 } : {}),
+            ...(c.blockTime < 8 ? { interval: 7 } : { interval: 5 }),
           },
         ]),
       ),
@@ -103,7 +105,7 @@ export default createConfig({
           c.name,
           {
             startBlock: "latest" as const,
-            ...(c.blockTime < 8 ? { interval: 6 } : {}),
+            ...(c.blockTime < 8 ? { interval: 6 } : { interval: 3 }),
           },
         ]),
       ),
@@ -116,7 +118,7 @@ export default createConfig({
           c.name,
           {
             startBlock: "latest" as const,
-            ...(c.blockTime < 8 ? { interval: 5 } : {}),
+            ...(c.blockTime < 8 ? { interval: 5 } : { interval: 2 }),
           },
         ]),
       ),
@@ -141,7 +143,7 @@ export default createConfig({
           c.name,
           {
             startBlock: "latest" as const,
-            ...(c.blockTime < 8 ? { interval: 11 } : {}),
+            ...(c.blockTime < 8 ? { interval: 11 } : { interval: 7 }),
           },
         ]),
       ),
