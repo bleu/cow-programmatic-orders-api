@@ -23,7 +23,13 @@ RUN apk add --no-cache curl
 ENV NODE_ENV=production
 
 COPY --from=build /usr/src/app ./
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile \
+    # Run as the non-root `node` user (uid 1000, shipped by node:22-alpine).
+    # Ponder writes its cache under the workdir and pnpm reads /pnpm at runtime,
+    # so both must be owned by `node`.
+    && chown -R node:node /usr/src/app /pnpm
+
+USER node
 
 HEALTHCHECK \
     --start-period=24h \
