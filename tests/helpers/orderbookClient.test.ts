@@ -17,6 +17,7 @@ vi.mock("ponder", () => ({
 }));
 
 import * as data from "../../src/data";
+import { ORDERBOOK_MAX_RETRIES } from "../../src/constants";
 import { fetchOrderStatusByUids, fetchOwnerOrderStatuses } from "../../src/application/helpers/orderbookClient";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -205,6 +206,142 @@ describe("fetchOrderStatusByUids", () => {
     try {
       const result = await fetchOrderStatusByUids(makeContext(), TEST_CHAIN_ID, [UID_A]);
       expect(result.size).toBe(0);
+    } finally {
+      await close();
+    }
+  });
+});
+
+// ─── Resilience: 429 / 5xx handling ───────────────────────────────────────────
+
+/** Capture structured `log()` output — the logger writes warn/error as JSON via console.error. */
+function captureErrorLogs() {
+  const lines: Record<string, unknown>[] = [];
+  const spy = vi.spyOn(console, "error").mockImplementation((line: unknown) => {
+    try {
+      lines.push(JSON.parse(String(line)));
+    } catch {
+      /* non-JSON line — ignore */
+    }
+  });
+  return {
+    has: (msg: string) => lines.some((l) => l.msg === msg),
+    find: (msg: string) => lines.find((l) => l.msg === msg),
+    restore: () => spy.mockRestore(),
+  };
+}
+
+describe("orderbook resilience (429 / 5xx)", () => {
+  beforeAll(() => {
+    data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = "http://placeholder";
+  });
+
+  afterAll(() => {
+    delete (data.ORDERBOOK_API_URLS as Record<number, string | undefined>)[TEST_CHAIN_ID];
+  });
+
+  it("retries a 429 (honoring Retry-After) and succeeds on a later attempt", async () => {
+    let calls = 0;
+    const { url, close } = await startServer((_req, res) => {
+      calls++;
+      if (calls === 1) {
+        res.writeHead(429, { "retry-after": "0", "content-type": "application/json" });
+        res.end(JSON.stringify({ message: "rate limited" }));
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify([makeWrappedOrder(UID_A, "fulfilled")]));
+    });
+    data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
+    const logs = captureErrorLogs();
+    try {
+      const result = await fetchOrderStatusByUids(makeContext(), TEST_CHAIN_ID, [UID_A]);
+      expect(calls).toBe(2);
+      expect(result.get(UID_A)?.status).toBe("fulfilled");
+      expect(logs.has("ob:unavailable")).toBe(false);
+    } finally {
+      logs.restore();
+      await close();
+    }
+  });
+
+  it("classifies a persistent 429 as ob:unavailable and stops after bounded retries", async () => {
+    let calls = 0;
+    const { url, close } = await startServer((_req, res) => {
+      calls++;
+      res.writeHead(429, { "retry-after": "0", "content-type": "application/json" });
+      res.end(JSON.stringify({ message: "rate limited" }));
+    });
+    data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
+    const logs = captureErrorLogs();
+    try {
+      const result = await fetchOrderStatusByUids(makeContext(), TEST_CHAIN_ID, [UID_A]);
+      expect(calls).toBe(ORDERBOOK_MAX_RETRIES + 1); // bounded: 1 initial + retries
+      expect(result.has(UID_A)).toBe(false); // absent from map…
+      expect(logs.find("ob:unavailable")?.status).toBe(429); // …but the cause is logged distinctly
+    } finally {
+      logs.restore();
+      await close();
+    }
+  });
+
+  it("retries a 5xx then classifies it as ob:unavailable", async () => {
+    let calls = 0;
+    const { url, close } = await startServer((_req, res) => {
+      calls++;
+      res.writeHead(503);
+      res.end("unavailable");
+    });
+    data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
+    const logs = captureErrorLogs();
+    try {
+      const result = await fetchOrderStatusByUids(makeContext(), TEST_CHAIN_ID, [UID_A]);
+      expect(calls).toBe(ORDERBOOK_MAX_RETRIES + 1);
+      expect(result.size).toBe(0);
+      expect(logs.find("ob:unavailable")?.status).toBe(503);
+    } finally {
+      logs.restore();
+      await close();
+    }
+  });
+
+  it("does NOT classify a genuine empty 200 as unavailable (order simply absent)", async () => {
+    const { url, close } = await startServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end("[]");
+    });
+    data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
+    const logs = captureErrorLogs();
+    try {
+      const result = await fetchOrderStatusByUids(makeContext(), TEST_CHAIN_ID, [UID_A]);
+      expect(result.size).toBe(0);
+      expect(logs.has("ob:unavailable")).toBe(false);
+    } finally {
+      logs.restore();
+      await close();
+    }
+  });
+
+  it("parses an HTTP-date Retry-After without error", async () => {
+    let calls = 0;
+    const { url, close } = await startServer((_req, res) => {
+      calls++;
+      if (calls === 1) {
+        res.writeHead(429, {
+          "retry-after": new Date(Date.now() + 10).toUTCString(),
+          "content-type": "application/json",
+        });
+        res.end("{}");
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify([makeWrappedOrder(UID_A, "open")]));
+    });
+    data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
+    try {
+      const result = await fetchOrderStatusByUids(makeContext(), TEST_CHAIN_ID, [UID_A]);
+      expect(calls).toBe(2);
+      expect(result.get(UID_A)?.status).toBe("open");
     } finally {
       await close();
     }

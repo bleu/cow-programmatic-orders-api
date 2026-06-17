@@ -66,6 +66,22 @@ export const DETERMINISTIC_CANCEL_SWEEP_INTERVAL = 100n;
 export const ORDERBOOK_HTTP_TIMEOUT_MS = 10_000;
 
 /**
+ * Bounded retry for transient orderbook failures (HTTP 429 / 5xx).
+ *
+ * These calls run inside Ponder block handlers that hold a DB transaction open,
+ * so the retry loop must stay short — we cannot honor a large `Retry-After` by
+ * sleeping (Postgres would terminate the connection). The loop adds at most
+ * ORDERBOOK_RETRY_BUDGET_MS of wall-clock; if a `Retry-After` (or backoff) would
+ * exceed the budget, we fail fast and let the next poll (~ORDERBOOK_POLL_INTERVAL
+ * blocks later) retry naturally — but the failure is logged as a rate-limit/
+ * server error, not as "order not on API yet".
+ */
+export const ORDERBOOK_MAX_RETRIES = 2; // ≤ 3 attempts total
+export const ORDERBOOK_RETRY_BASE_MS = 250; // exponential backoff base
+export const ORDERBOOK_RETRY_MAX_DELAY_MS = 2_000; // cap on a single sleep (incl. Retry-After)
+export const ORDERBOOK_RETRY_BUDGET_MS = 4_000; // total wall-clock the retry loop may add
+
+/**
  * Hard wall-clock cap for a block handler's aggregate `context.client.multicall`
  * call (OrderDiscoveryPoller, CancellationWatcher). viem has no per-call signal; the timer races the promise and
  * the handler returns cleanly on breach.
