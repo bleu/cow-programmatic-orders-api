@@ -146,7 +146,7 @@ ponder.on("OrderDiscoveryPoller:block", async ({ event, context }) => {
     results = await withTimeout(
       c1MulticallPromise,
       BLOCK_HANDLER_RPC_TIMEOUT_MS,
-      "c1:multicall",
+      "OrderDiscoveryPoller:multicall",
     );
   } catch (err) {
     if (err instanceof TimeoutError) {
@@ -360,7 +360,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
         preflightStatuses = await withTimeout(
           fetchOrderStatusByUids(context, chainId, orphanCandidates.map((c) => c.orderUid)),
           ORDERBOOK_HTTP_TIMEOUT_MS * 2,
-          "c2:cascade:preflight",
+          "CandidateConfirmer:cascade:preflight",
         );
       } catch {
         preflightStatuses = new Map();
@@ -573,7 +573,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
           const ownerStatuses = await withTimeout(
             fetchOwnerOrderStatuses(chainId, owner),
             BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
-            "c2:stale:accountFallback",
+            "CandidateConfirmer:stale:accountFallback",
           );
           for (const [uid, info] of ownerStatuses) {
             if (ownerMissedUids.has(uid)) staleStatuses.set(uid, info);
@@ -830,7 +830,7 @@ ponder.on("OwnerBackfill:block", async ({ event, context }) => {
       const orders = await withTimeout(
         fetchComposableOrders(context, chainId, owner as Hex),
         BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
-        `c4:retry:${owner}`,
+        `OwnerBackfill:retry:${owner}`,
       );
       const count = await upsertDiscreteOrders(context, chainId, orders);
       totalDiscovered += count;
@@ -870,7 +870,7 @@ ponder.on("OwnerBackfill:block", async ({ event, context }) => {
       const orders = await withTimeout(
         fetchComposableOrders(context, chainId, owner),
         BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
-        `c4:owner:${owner}`,
+        `OwnerBackfill:owner:${owner}`,
       );
       const count = await upsertDiscreteOrders(context, chainId, orders);
       totalDiscovered += count;
@@ -960,7 +960,7 @@ ponder.on("CancellationWatcher:block", async ({ event, context }) => {
     results = await withTimeout(
       c5MulticallPromise,
       BLOCK_HANDLER_RPC_TIMEOUT_MS,
-      "c5:multicall",
+      "CancellationWatcher:multicall",
     );
   } catch (err) {
     if (err instanceof TimeoutError) {

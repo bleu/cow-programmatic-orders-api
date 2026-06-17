@@ -330,15 +330,6 @@ WHERE status='cancelled' AND conditional_order_generator_id = '<eventId>';
 
 `errors > 0` on a DONE line is not fatal: CancellationWatcher leaves `nextCheckBlock` untouched for errored entries so they retry on the next sweep. Sustained nonzero `errors` across many blocks means the RPC provider is flaky — consider swapping provider.
 
-### Sweep disabled (kill-switch)
-
-If operators see no `CancellationWatcher:` lines at all and expect them:
-```bash
-grep -n "DISABLE_DETERMINISTIC_CANCEL_SWEEP" .env.local env.prod 2>/dev/null
-```
-
-Non-empty means the sweeper is intentionally disabled via env var — same pattern as `DISABLE_POLL_RESULT_CHECK` for OrderDiscoveryPoller.
-
 ### lastPollResult audit
 
 SQL spot-check for what CancellationWatcher has touched:
@@ -363,4 +354,4 @@ ORDER BY 1,2,3,4;
 | `Unknown handler ... saving as Unknown` | Handler address not in `HANDLER_MAP` in `src/utils/order-types.ts` | Add address to map; expected for new/unsupported contracts |
 | `Decode failed ... orderType=...` | `staticInput` does not match expected ABI for that order type | Check ABI tuple in `src/decoders/<type>.ts`; compare with `agent_docs/decoder-reference.md` |
 | `Fetching backfill JSON-RPC data is taking longer than expected` | RPC rate limit or slow provider | Transient — monitor; switch RPC if persistent |
-| `[COW:timeout] <label> exceeded <ms>ms` | A wrapped async op blew its `withTimeout` budget (`src/application/helpers/withTimeout.ts`) — the `<label>` names the call site (e.g. `c2:stale:accountFallback`) | Usually surfaces as a handler `*:multicall_timeout` / `ob:*Timeout` warn line too; check RPC/API latency for that call site |
+| `[COW:timeout] <label> exceeded <ms>ms` | A wrapped async op blew its `withTimeout` budget (`src/application/helpers/withTimeout.ts`) — the `<label>` names the call site (e.g. `CandidateConfirmer:stale:accountFallback`) | Usually surfaces as a handler `*:multicall_timeout` / `ob:*Timeout` warn line too; check RPC/API latency for that call site |

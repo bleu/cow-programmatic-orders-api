@@ -118,7 +118,7 @@ export const BOOTSTRAP_MAX_PAGES = 4;
 /**
  * Maximum number of times OwnerBackfill will retry a timed-out owner across
  * indexer restarts. After this many consecutive failures the owner is removed
- * from bootstrap_retry_queue and left to the normal C1/C2 discovery path.
+ * from bootstrap_retry_queue and left to the normal OrderDiscoveryPoller/CandidateConfirmer discovery path.
  */
 export const BOOTSTRAP_MAX_RETRY_COUNT = 5;
 

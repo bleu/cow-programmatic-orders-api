@@ -2,27 +2,27 @@
 
 ## What This Project Is
 
-Ponder-based indexer and GraphQL API for Composable CoW programmatic orders. Indexes on-chain events from the ComposableCoW contract, decodes all order types (TWAP, Stop Loss, Perpetual Swap, Good After Time, Trade Above Threshold), and exposes queryable data via GraphQL.
+Ponder-based indexer and GraphQL API for Composable CoW programmatic orders. Indexes on-chain events from the ComposableCoW contract, decodes all supported order types (see `docs/supported-order-types.md`), and exposes queryable data via GraphQL.
 
 **Tech**: Ponder 0.16.x · TypeScript · viem · Hono · PostgreSQL · pnpm
 
 ## Architecture
 
 ```
-ComposableCoW contract (mainnet; gnosis/arbitrum in future sprints)
+ComposableCoW contract (mainnet + gnosis; more chains planned)
        ↓  events
-  ponder.config.ts  ←  src/data.ts  (contract addresses + start blocks per chain)
+  ponder.config.ts  ←  src/chains/  (contract addresses + start blocks per chain)
        ↓
   src/application/handlers/  (one file per contract)
        ↓
-  schema/tables.ts  (transaction, conditionalOrderGenerator, discreteOrder)
+  schema/tables.ts  (transaction, conditionalOrderGenerator, discreteOrder, …)
        ↓
   src/api/index.ts  (Hono: /graphql  /  /sql/*)
 ```
 
 **Key paths**:
 - `abis/` — Contract ABIs
-- `src/data.ts` — Chain configs and contract addresses (extend here to add a chain)
+- `src/chains/` — Chain configs and contract addresses (add a chain file, then register it in `src/chains/index.ts`)
 - `schema/tables.ts` — Table definitions; `schema/relations.ts` — Drizzle relations
 - `src/application/handlers/` — Event handlers (add new handlers here)
 - `src/api/index.ts` — Hono API exposing GraphQL and Ponder SQL client
@@ -36,7 +36,7 @@ pnpm lint         # ESLint
 pnpm dev          # Start indexer locally (requires .env.local with MAINNET_RPC_URL)
 ```
 
-Copy `.env.local.example` -> `.env.local` and set `MAINNET_RPC_URL` before `pnpm dev`.
+Copy `.env.example` -> `.env.local` and set `MAINNET_RPC_URL` before `pnpm dev`.
 Start PostgreSQL with `docker compose up -d` to use it instead of the default SQLite.
 
 ## Reference Documentation
@@ -52,6 +52,6 @@ Start PostgreSQL with `docker compose up -d` to use it instead of the default SQ
 
 - Run `pnpm codegen` after any change to `ponder.config.ts` or `ponder.schema.ts`
 - New event handlers go in `src/application/handlers/` (one file per contract)
-- Adding a chain: update `src/data.ts` first, then `ponder.config.ts`
+- Adding a chain: create a chain file in `src/chains/` and register it in `src/chains/index.ts`
 - External HTTP / RPC calls in block handlers must use `withTimeout(...)` and be partial-failure tolerant — see `agent_docs/code-patterns.md` § External I/O in block handlers
 - Current scope: mainnet + gnosis; Arbitrum planned
