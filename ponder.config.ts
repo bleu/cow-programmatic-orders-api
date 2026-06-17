@@ -1,88 +1,138 @@
 import { createConfig } from "ponder";
-import {
-  ComposableCowContract,
-  COMPOSABLE_COW_DEPLOYMENTS,
-  CoWShedFactoryContract,
-  FLASH_LOAN_ROUTER_ADDRESSES,
-  GPv2SettlementContract,
-} from "./src/data";
+import { ACTIVE_CHAINS } from "./src/chains";
 import { ComposableCowAbi } from "./abis/ComposableCowAbi";
+import { CoWShedFactoryAbi } from "./abis/CoWShedFactoryAbi";
+import { GPv2SettlementAbi } from "./abis/GPv2SettlementAbi";
+
+// Build chain entries: { mainnet: { id: 1, rpc: "..." }, gnosis: { id: 100, rpc: "..." }, ... }
+const chains = Object.fromEntries(
+  ACTIVE_CHAINS.map((c) => [
+    c.name,
+    {
+      id: c.chainId,
+      rpc: process.env[c.rpcEnvVar]!,
+      // Many RPC providers cap eth_getLogs at 1000–2000 blocks; set conservatively to avoid
+      // InvalidInputRpcError retry storms during backfill. Override via ETH_GET_LOGS_BLOCK_RANGE_<chainId>.
+      ethGetLogsBlockRange: Number(process.env[`ETH_GET_LOGS_BLOCK_RANGE_${c.chainId}`] ?? 1000),
+    },
+  ]),
+);
+
+const cowShedChains = ACTIVE_CHAINS.filter((c) => c.cowShedFactory !== null);
+const settlementChains = ACTIVE_CHAINS.filter(
+  (c) => c.gpv2Settlement !== null && c.flashLoanRouter !== null,
+);
 
 export default createConfig({
-  chains: {
-    mainnet: {
-      id: 1,
-      rpc: process.env.MAINNET_RPC_URL!,
-    },
-    gnosis: {
-      id: 100,
-      rpc: process.env.GNOSIS_RPC_URL!,
-    },
-  },
+  chains,
   contracts: {
-    ComposableCow: ComposableCowContract,
+    ComposableCow: {
+      abi: ComposableCowAbi,
+      chain: Object.fromEntries(
+        ACTIVE_CHAINS.map((c) => [
+          c.name,
+          { address: c.composableCow.address, startBlock: c.composableCow.startBlock },
+        ]),
+      ),
+    },
     ComposableCowLive: {
       abi: ComposableCowAbi,
-      chain: {
-        mainnet: { ...COMPOSABLE_COW_DEPLOYMENTS.mainnet, startBlock: "latest" },
-        gnosis: { ...COMPOSABLE_COW_DEPLOYMENTS.gnosis, startBlock: "latest" },
-      },
+      chain: Object.fromEntries(
+        ACTIVE_CHAINS.map((c) => [
+          c.name,
+          { address: c.composableCowLive.address, startBlock: "latest" as const },
+        ]),
+      ),
     },
-    CoWShedFactory: CoWShedFactoryContract,
+    CoWShedFactory: {
+      abi: CoWShedFactoryAbi,
+      chain: Object.fromEntries(
+        cowShedChains.map((c) => [
+          c.name,
+          { address: c.cowShedFactory!.address, startBlock: c.cowShedFactory!.startBlock },
+        ]),
+      ),
+    },
     GPv2Settlement: {
-      ...GPv2SettlementContract,
-      filter: {
-        event: "Settlement",
-        args: { solver: FLASH_LOAN_ROUTER_ADDRESSES.mainnet },
-      },
+      abi: GPv2SettlementAbi,
+      chain: Object.fromEntries(
+        settlementChains.map((c) => [
+          c.name,
+          {
+            address: c.gpv2Settlement!.address,
+            startBlock: c.gpv2Settlement!.startBlock,
+            filter: {
+              event: "Settlement" as const,
+              args: { solver: c.flashLoanRouter! },
+            },
+          },
+        ]),
+      ),
     },
   },
   blocks: {
-    // C1: Contract Poller — RPC multicall for non-deterministic generators
-    // Gnosis interval=4 (~20s) vs mainnet interval=1 (~12s).
-    // The CoW watch-tower processes orders sequentially — with 1,461+ gnosis
-    // generators, a full cycle takes many blocks. Polling every 5s gnosis block
-    // wastes RPC calls since state rarely changes between blocks.
-    ContractPoller: {
-      chain: {
-        mainnet: { startBlock: "latest" },
-        gnosis: { startBlock: "latest", interval: 4 },
-      },
+    // Block handler intervals are tuned per chain to keep total handler time
+    // well within the available window while reducing unnecessary invocations.
+    //
+    // Gnosis  (5s blocks, interval=10): 10×5s=50s window, ~33s combined → 66% utilization
+    // Mainnet (12s blocks, interval=4):  4×12s=48s window, ~22s combined → 46% utilization
+    //
+    // All handlers fire together on the same block every interval blocks.
+    // Simpler and more efficient than coprime staggering.
+
+    // OrderDiscoveryPoller — RPC multicall for non-deterministic generators.
+    OrderDiscoveryPoller: {
+      chain: Object.fromEntries(
+        ACTIVE_CHAINS.map((c) => [
+          c.name,
+          { startBlock: "latest" as const, interval: c.blockTime < 8 ? 10 : 4 },
+        ]),
+      ),
       interval: 1,
     },
-    // C2: Candidate Confirmer — checks API for unconfirmed candidates
+    // CandidateConfirmer — checks API for unconfirmed candidates.
     CandidateConfirmer: {
-      chain: {
-        mainnet: { startBlock: "latest" },
-        gnosis: { startBlock: "latest" },
-      },
+      chain: Object.fromEntries(
+        ACTIVE_CHAINS.map((c) => [
+          c.name,
+          { startBlock: "latest" as const, interval: c.blockTime < 8 ? 10 : 4 },
+        ]),
+      ),
       interval: 1,
     },
-    // C3: Status Updater — polls API for open discrete order status
-    StatusUpdater: {
-      chain: {
-        mainnet: { startBlock: "latest" },
-        gnosis: { startBlock: "latest" },
-      },
+    // OrderStatusTracker — polls API for open discrete order status.
+    OrderStatusTracker: {
+      chain: Object.fromEntries(
+        ACTIVE_CHAINS.map((c) => [
+          c.name,
+          { startBlock: "latest" as const, interval: c.blockTime < 8 ? 10 : 4 },
+        ]),
+      ),
       interval: 1,
     },
-    // C4: Historical Bootstrap — one-time owner fetch for non-deterministic backfill orders
-    HistoricalBootstrap: {
-      chain: {
-        mainnet: { startBlock: "latest", endBlock: "latest" },
-        gnosis: { startBlock: "latest", endBlock: "latest" },
-      },
+    // OwnerBackfill — one-time owner fetch for non-deterministic backfill orders.
+    OwnerBackfill: {
+      chain: Object.fromEntries(
+        ACTIVE_CHAINS.map((c) => [
+          c.name,
+          { startBlock: "latest" as const, endBlock: "latest" as const },
+        ]),
+      ),
       interval: 1,
     },
-    // C5: Deterministic Cancellation Sweeper — singleOrders() mapping read for
-    // generators C1 skips (allCandidatesKnown=true). Cadence per generator is
-    // DETERMINISTIC_CANCEL_SWEEP_INTERVAL blocks; the handler itself is cheap
-    // when nothing is due.
-    DeterministicCancellationSweeper: {
-      chain: {
-        mainnet: { startBlock: "latest" },
-        gnosis: { startBlock: "latest" },
-      },
+    // CancellationWatcher — singleOrders() mapping read for deterministic generators
+    // (allCandidatesKnown=true). Cadence per generator is DETERMINISTIC_CANCEL_SWEEP_INTERVAL
+    // blocks; the handler itself is cheap when nothing is due.
+    CancellationWatcher: {
+      chain: Object.fromEntries(
+        ACTIVE_CHAINS.map((c) => [
+          c.name,
+          {
+            startBlock: "latest" as const,
+            interval: c.blockTime < 8 ? 10 : 4,
+          },
+        ]),
+      ),
       interval: 1,
     },
   },

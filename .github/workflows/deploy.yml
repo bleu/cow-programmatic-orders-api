@@ -5,10 +5,23 @@ concurrency:
   cancel-in-progress: true
 
 on:
+  # Deploy is MANUAL ONLY. The automatic "push: main" trigger was intentionally
+  # removed so that merging to main never triggers a destructive redeploy
+  # (schema drop + full re-index, which takes the synced instance offline for hours).
+  # Deploy explicitly from the Actions tab -> "Run workflow" (workflow_dispatch),
+  # passing skip_schema_drop=true to preserve indexing progress when appropriate.
   workflow_dispatch:
-  push:
-    branches:
-      - main
+    inputs:
+      monitor_only:
+        description: "Set to 'true' to only check server status without deploying"
+        required: false
+        default: 'false'
+        type: string
+      skip_schema_drop:
+        description: "Set to 'true' to deploy without dropping the schema (preserves re-index progress)"
+        required: false
+        default: 'false'
+        type: string
 
 jobs:
   deploy:
@@ -41,12 +54,84 @@ jobs:
           chmod 600 ~/.ssh/config
 
       - name: Create .env file
+        if: inputs.monitor_only != 'true'
         run: |
-          echo "${{ secrets.DEPLOY_ENV_FILE_CONTENT }}" > .env
+          echo "${{ secrets.DEPLOY_ENV_FILE_CONTENT }}" > ../.env
 
-      - name: Run deploy script
+      - name: Rsync source files
+        if: inputs.monitor_only != 'true'
         run: |
-          cd deployment
-          bash deploy-remotely.sh \
-            cow-deploy:${{ secrets.DEPLOY_PATH }} \
-            ../.env
+          rsync -avz --delete --mkpath \
+            --exclude=.git \
+            --exclude=node_modules \
+            --exclude=.env \
+            --exclude=.env.local \
+            --exclude=.vite \
+            --exclude='*.log' \
+            --exclude=tmp/ \
+            ./ cow-deploy:${{ secrets.DEPLOY_PATH }}/
+
+      - name: Copy env file to server
+        if: inputs.monitor_only != 'true'
+        run: |
+          scp ../.env cow-deploy:${{ secrets.DEPLOY_PATH }}/deployment/.env
+
+      - name: Deploy via docker on server
+        if: inputs.monitor_only != 'true'
+        env:
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          REVISION=$(git rev-parse --short HEAD)
+
+          # Source env locally just to read PROJECT_PREFIX and DB connection info
+          set -a; source ../.env; set +a
+
+          REMOTE_DIR="${DEPLOY_PATH}"
+          DB_CONTAINER="${PROJECT_PREFIX}-db"
+          REMOTE_ENV="${REMOTE_DIR}/deployment/.env"
+          # docker compose reads PROJECT_PREFIX from --env-file; supply APP_REVISION + DATABASE_SCHEMA inline
+          DC="docker compose -p ${PROJECT_PREFIX} -f ${REMOTE_DIR}/docker-compose.yml --env-file ${REMOTE_ENV} --profile deploy"
+
+          echo ">>> Stopping and removing any existing ponder containers..."
+          # Remove any container whose name matches the ponder service pattern,
+          # regardless of how it was originally started (docker run vs docker compose).
+          ssh cow-deploy "docker ps -a --format '{{.Names}}' | grep -E '^${PROJECT_PREFIX}-ponder' | xargs -r docker rm -f" || true
+
+          if [ "${{ inputs.skip_schema_drop }}" != "true" ]; then
+            echo ">>> Dropping app schema..."
+            ssh cow-deploy "docker exec ${DB_CONTAINER} \
+              psql -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-programmatic-orders} \
+              -c 'DROP SCHEMA IF EXISTS \"programmatic_orders\" CASCADE'" || true
+          else
+            echo ">>> Skipping schema drop — will resume from existing checkpoint (PONDER_EXPERIMENTAL_DB=platform)."
+          fi
+
+          echo ">>> Building new image (revision=${REVISION})..."
+          ssh cow-deploy "APP_REVISION=${REVISION} DATABASE_SCHEMA=programmatic_orders ${DC} build --no-cache"
+
+          echo ">>> Starting containers..."
+          ssh cow-deploy "APP_REVISION=${REVISION} DATABASE_SCHEMA=programmatic_orders ${DC} up -d --remove-orphans"
+
+          echo ">>> Pruning old images..."
+          ssh cow-deploy "docker image prune -f && docker container prune -f" || true
+
+          echo ">>> Deploy complete (revision=${REVISION})."
+
+      - name: Check server status
+        if: inputs.monitor_only == 'true'
+        run: |
+          echo "=== Running containers ==="
+          ssh cow-deploy "docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'"
+
+          echo ""
+          echo "=== Last 100 ponder log lines ==="
+          ssh cow-deploy "
+            CONTAINER=\$(docker ps --format '{{.Names}}' | grep ponder | head -1)
+            if [ -z \"\$CONTAINER\" ]; then
+              echo 'WARNING: No running ponder container found'
+              docker ps -a --format 'table {{.Names}}\t{{.Status}}' | grep -i ponder || echo 'No ponder containers at all'
+            else
+              echo \"Container: \$CONTAINER\"
+              docker logs --tail 100 \"\$CONTAINER\" 2>&1
+            fi
+          "

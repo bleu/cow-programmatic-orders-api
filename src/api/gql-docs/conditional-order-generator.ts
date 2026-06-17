@@ -38,11 +38,11 @@ export const conditionalOrderGeneratorDocs: DocMap = {
   "conditionalOrderGenerator.allCandidatesKnown":
     "Whether all possible discrete orders for this generator have been discovered. True for deterministic types (TWAP, StopLoss) after UID precomputation.",
   "conditionalOrderGenerator.nextCheckBlock":
-    "Next block the C1 poller should check this generator. Internal scheduling field.",
+    "Next block the OrderDiscoveryPoller should check this generator. Internal scheduling field.",
   "conditionalOrderGenerator.lastCheckBlock":
-    "Last block where C1 polled this generator.",
+    "Last block where OrderDiscoveryPoller polled this generator.",
   "conditionalOrderGenerator.lastPollResult":
-    "Result of the last C1 poll (e.g. success, cancelled:SingleOrderNotAuthed, error:...). Useful for debugging.",
+    "Result of the last OrderDiscoveryPoller poll (e.g. success, cancelled:SingleOrderNotAuthed, error:...). Useful for debugging.",
   "conditionalOrderGenerator.nextCheckTimestamp":
     "For orders returning PollTryAtEpoch, the epoch to wait for before the next poll. Unix seconds (UTC), decimal string (BigInt scalar). See docs/api-reference.md#timestamp-fields.",
   "conditionalOrderGenerator.transaction":
@@ -50,7 +50,7 @@ export const conditionalOrderGeneratorDocs: DocMap = {
   "conditionalOrderGenerator.discreteOrders":
     "All confirmed CoW Protocol orders produced by this generator. Empty until the first discrete order is confirmed.",
   "conditionalOrderGenerator.candidateDiscreteOrders":
-    "Unconfirmed candidates discovered by the C1 block handler that have not been promoted to discreteOrder yet.",
+    "Unconfirmed candidates discovered by the OrderDiscoveryPoller block handler that have not been promoted to discreteOrder yet.",
 
   ...generatePageDocs("conditionalOrderGenerator", "conditional order generator"),
   ...generateQueryDocs("conditionalOrderGenerator", "conditional order generator"),

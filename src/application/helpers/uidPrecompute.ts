@@ -16,16 +16,13 @@
  */
 
 import type { Hex } from "viem";
-import { and, eq } from "ponder";
+import { and, eq, sql } from "ponder";
 import { candidateDiscreteOrder, conditionalOrderGenerator, discreteOrder } from "ponder:schema";
-import { computeOrderUid, type GPv2OrderData } from "./orderUid";
+import { computeOrderUid, type GPv2OrderData, KIND_SELL, KIND_BUY, BALANCE_ERC20 } from "./orderUid";
 import { fetchOrderStatusByUids } from "./orderbookClient";
-import { isDeterministicOrderType } from "../../utils/order-types";
-
-// GPv2Order.sol constant hashes
-const KIND_SELL = "0xf3b277728b3fee749481eb3e0b3b48980dbbab78658fc419025cb16eee346775" as Hex;
-const KIND_BUY = "0x6ed88e868af0a1983e3886d5f3e95a2fafbd6c3450bc229e27342283dc429ccc" as Hex;
-const BALANCE_ERC20 = "0x5a28e9363bb942b639270062aa6bb295f434bcdfc42c97267bf003f272060dc9" as Hex;
+import { type OrderType, DETERMINISTIC_ORDER_TYPE } from "../../utils/order-types";
+import { log } from "./logger";
+import { MAX_TWAP_PRECOMPUTE_PARTS } from "../../constants";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -55,13 +52,13 @@ export interface PrecomputedOrder {
 export function precomputeOrderUids(
   chainId: number,
   owner: Hex,
-  orderType: string,
+  orderType: OrderType,
   decodedParams: Record<string, string> | null,
   blockTimestamp: bigint,
 ): PrecomputedOrder[] | null {
   if (!decodedParams) {
-    if (isDeterministicOrderType(orderType)) {
-      console.warn(`[COW:PRECOMPUTE] SKIP type=${orderType} owner=${owner} chain=${chainId} reason=decodedParams_null`);
+    if (DETERMINISTIC_ORDER_TYPE[orderType]) {
+      log("warn", "precompute:skip", { orderType, owner, chainId, reason: "decodedParams_null" });
     }
     return null;
   }
@@ -93,7 +90,7 @@ export async function precomputeAndDiscover(
   chainId: number,
   generatorEventId: string,
   owner: Hex,
-  orderType: string,
+  orderType: OrderType,
   decodedParams: Record<string, string> | null,
   blockTimestamp: bigint,
 ): Promise<boolean> {
@@ -103,49 +100,70 @@ export async function precomputeAndDiscover(
   const uids = precomputed.map((o) => o.orderUid);
   const statuses = await fetchOrderStatusByUids(context, chainId, uids);
 
+  // Split into two groups and bulk-insert each — one DB roundtrip per table
+  // instead of N individual inserts (N can be 500+ for large TWAPs).
+  const discreteRows: (typeof discreteOrder.$inferInsert)[] = [];
+  const candidateRows: (typeof candidateDiscreteOrder.$inferInsert)[] = [];
+
   for (const order of precomputed) {
     const statusInfo = statuses.get(order.orderUid);
     const apiStatus = statusInfo?.status as
       "open" | "fulfilled" | "unfilled" | "expired" | "cancelled" | undefined;
 
     if (apiStatus) {
-      await context.db.sql
-        .insert(discreteOrder)
-        .values({
-          orderUid: order.orderUid,
-          chainId,
-          conditionalOrderGeneratorId: generatorEventId,
-          status: apiStatus,
-          sellAmount: order.sellAmount,
-          buyAmount: order.buyAmount,
-          feeAmount: order.feeAmount,
-          validTo: order.validTo,
-          creationDate: blockTimestamp,
-          executedSellAmount: statusInfo?.executedSellAmount ?? null,
-          executedBuyAmount: statusInfo?.executedBuyAmount ?? null,
-        })
-        .onConflictDoUpdate({
-          target: [discreteOrder.chainId, discreteOrder.orderUid],
-          set: { status: apiStatus, validTo: order.validTo },
-        });
+      discreteRows.push({
+        orderUid: order.orderUid,
+        chainId,
+        conditionalOrderGeneratorId: generatorEventId,
+        status: apiStatus,
+        sellAmount: order.sellAmount,
+        buyAmount: order.buyAmount,
+        feeAmount: order.feeAmount,
+        validTo: order.validTo,
+        creationDate: blockTimestamp,
+        executedSellAmount: statusInfo?.executedSellAmount ?? null,
+        executedBuyAmount: statusInfo?.executedBuyAmount ?? null,
+      });
     } else {
-      await context.db.sql
-        .insert(candidateDiscreteOrder)
-        .values({
-          orderUid: order.orderUid,
-          chainId,
-          conditionalOrderGeneratorId: generatorEventId,
-          possibleValidAfterTimestamp: order.possibleValidAfterTimestamp != null
-            ? BigInt(order.possibleValidAfterTimestamp)
-            : null,
-          sellAmount: order.sellAmount,
-          buyAmount: order.buyAmount,
-          feeAmount: order.feeAmount,
-          validTo: order.validTo,
-          creationDate: blockTimestamp,
-        })
-        .onConflictDoNothing();
+      candidateRows.push({
+        orderUid: order.orderUid,
+        chainId,
+        conditionalOrderGeneratorId: generatorEventId,
+        possibleValidAfterTimestamp: order.possibleValidAfterTimestamp != null
+          ? BigInt(order.possibleValidAfterTimestamp)
+          : null,
+        sellAmount: order.sellAmount,
+        buyAmount: order.buyAmount,
+        feeAmount: order.feeAmount,
+        validTo: order.validTo,
+        creationDate: blockTimestamp,
+      });
     }
+  }
+
+  // node-postgres silently drops parameter bindings above ~29k params, causing a
+  // "bind message has N parameter formats but 0 parameters" error.  Chunk at 500
+  // rows to keep each insert well under that threshold (500×12=6k params max).
+  const CHUNK = 500;
+
+  for (let i = 0; i < discreteRows.length; i += CHUNK) {
+    await context.db.sql
+      .insert(discreteOrder)
+      .values(discreteRows.slice(i, i + CHUNK))
+      .onConflictDoUpdate({
+        target: [discreteOrder.chainId, discreteOrder.orderUid],
+        set: {
+          status: sql`excluded.status`,
+          validTo: sql`excluded.valid_to`,
+        },
+      });
+  }
+
+  for (let i = 0; i < candidateRows.length; i += CHUNK) {
+    await context.db.sql
+      .insert(candidateDiscreteOrder)
+      .values(candidateRows.slice(i, i + CHUNK))
+      .onConflictDoNothing();
   }
 
   const allTerminal = precomputed.every((o) => {
@@ -167,14 +185,12 @@ export async function precomputeAndDiscover(
           eq(conditionalOrderGenerator.eventId, generatorEventId),
         ),
       );
-    console.log(
-      `[ComposableCow] All ${precomputed.length} pre-computed orders terminal on API — generator=${generatorEventId} marked Completed`,
-    );
+    log("info", "precompute:allTerminal", { count: precomputed.length, generatorEventId });
     return true;
   }
 
   // UIDs are fully known even though some orders are still open —
-  // C1 (Contract Poller) can skip this generator, C3 (Status Updater) tracks the open orders.
+  // OrderDiscoveryPoller can skip this generator, OrderStatusTracker tracks the open orders.
   await context.db.sql
     .update(conditionalOrderGenerator)
     .set({ allCandidatesKnown: true })
@@ -221,7 +237,7 @@ function precomputeTwapUids(
   const appData = params["appData"] as Hex | undefined;
 
   if (!sellToken || !buyToken || !partSellAmount || !minPartLimit || !n || !t || !appData) {
-    console.warn(`[COW:PRECOMPUTE] SKIP type=TWAP owner=${owner} chain=${chainId} reason=missing_params missing=${[!sellToken && "sellToken", !buyToken && "buyToken", !partSellAmount && "partSellAmount", !minPartLimit && "minPartLimit", !n && "n", !t && "t", !appData && "appData"].filter(Boolean).join(",")}`);
+    log("warn", "precompute:skip", { orderType: "TWAP", owner, chainId, reason: "missing_params", missing: [!sellToken && "sellToken", !buyToken && "buyToken", !partSellAmount && "partSellAmount", !minPartLimit && "minPartLimit", !n && "n", !t && "t", !appData && "appData"].filter(Boolean).join(",") });
     return null;
   }
 
@@ -232,11 +248,11 @@ function precomputeTwapUids(
   const t0 = BigInt(t0Raw ?? "0") === 0n ? blockTimestamp : BigInt(t0Raw!);
 
   if (nParts <= 0 || tSeconds <= 0n) {
-    console.warn(`[COW:PRECOMPUTE] SKIP type=TWAP owner=${owner} chain=${chainId} reason=invalid_math nParts=${nParts} tSeconds=${tSeconds}`);
+    log("warn", "precompute:skip", { orderType: "TWAP", owner, chainId, reason: "invalid_math", nParts, tSeconds: String(tSeconds) });
     return null;
   }
-  if (nParts > 100000) {
-    console.warn(`[COW:PRECOMPUTE] SKIP type=TWAP owner=${owner} chain=${chainId} reason=too_many_parts nParts=${nParts}`);
+  if (nParts > MAX_TWAP_PRECOMPUTE_PARTS) {
+    log("warn", "precompute:skip", { orderType: "TWAP", owner, chainId, reason: "too_many_parts", nParts });
     return null;
   }
 
@@ -318,7 +334,7 @@ function precomputeStopLossUid(
   const validTo = params["validTo"];
 
   if (!sellToken || !buyToken || !sellAmount || !buyAmount || !appData || !validTo) {
-    console.warn(`[COW:PRECOMPUTE] SKIP type=StopLoss owner=${owner} chain=${chainId} reason=missing_params missing=${[!sellToken && "sellToken", !buyToken && "buyToken", !sellAmount && "sellAmount", !buyAmount && "buyAmount", !appData && "appData", !validTo && "validTo"].filter(Boolean).join(",")}`);
+    log("warn", "precompute:skip", { orderType: "StopLoss", owner, chainId, reason: "missing_params", missing: [!sellToken && "sellToken", !buyToken && "buyToken", !sellAmount && "sellAmount", !buyAmount && "buyAmount", !appData && "appData", !validTo && "validTo"].filter(Boolean).join(",") });
     return null;
   }
 

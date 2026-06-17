@@ -19,7 +19,7 @@ export const RECHECK_INTERVAL = BigInt(ORDERBOOK_POLL_INTERVAL);
 export const SIGNING_SCHEME_EIP1271 = "eip1271";
 
 /**
- * COW-908: Hard per-block ceiling on how many generators the C1 ContractPoller
+ * Hard per-block ceiling on how many generators the OrderDiscoveryPoller
  * will multicall in a single block. Generators exceeding the cap defer to the
  * next block (prioritized by oldest lastCheckBlock first).
  *
@@ -33,12 +33,12 @@ export const DEFAULT_MAX_GENERATORS_PER_BLOCK = 200;
  *
  * Every tryNextBlock response increments a counter on the generator; any other
  * response resets it to zero. The counter selects the next-check block offset:
- *   count <= WARMUP_THRESHOLD   → +1 block  (default, healthy behavior)
- *   count <= COOLDOWN_THRESHOLD → +10 blocks
- *   count >  COOLDOWN_THRESHOLD → +50 blocks
+ *   count <= WARMUP_THRESHOLD   -> +1 block  (default, healthy behavior)
+ *   count <= COOLDOWN_THRESHOLD -> +10 blocks
+ *   count >  COOLDOWN_THRESHOLD -> +50 blocks
  *
  * Block counts (not seconds) intentionally — simpler, and the ceiling is
- * acceptable on both gnosis (~5s/block → 250s) and mainnet (~12s/block → 600s).
+ * acceptable on both gnosis (~5s/block -> 250s) and mainnet (~12s/block -> 600s).
  */
 export const TRY_NEXT_BLOCK_WARMUP_THRESHOLD = 50;
 export const TRY_NEXT_BLOCK_COOLDOWN_THRESHOLD = 200;
@@ -47,13 +47,13 @@ export const TRY_NEXT_BLOCK_BACKOFF_MID = 10n;
 export const TRY_NEXT_BLOCK_BACKOFF_COLD = 50n;
 
 /**
- * C5 (DeterministicCancellationSweeper) re-check cadence, in blocks.
+ * CancellationWatcher re-check cadence, in blocks.
  *
  * For deterministic generators (`allCandidatesKnown = true`), `remove()` detection
  * is via a `ComposableCoW.singleOrders(owner, hash)` storage read. `remove()` is
  * rare; a ~100 block cadence gives a worst-case detection lag of ~20 min on
- * mainnet and ~8 min on Gnosis while keeping the RPC cost well below C1's
- * every-block poll.
+ * mainnet and ~8 min on Gnosis while keeping the RPC cost well below
+ * OrderDiscoveryPoller's every-block poll.
  */
 export const DETERMINISTIC_CANCEL_SWEEP_INTERVAL = 100n;
 
@@ -66,15 +66,76 @@ export const DETERMINISTIC_CANCEL_SWEEP_INTERVAL = 100n;
 export const ORDERBOOK_HTTP_TIMEOUT_MS = 10_000;
 
 /**
+ * Bounded retry for transient orderbook failures (HTTP 429 / 5xx).
+ *
+ * These calls run inside Ponder block handlers that hold a DB transaction open,
+ * so the retry loop must stay short — we cannot honor a large `Retry-After` by
+ * sleeping (Postgres would terminate the connection). The loop adds at most
+ * ORDERBOOK_RETRY_BUDGET_MS of wall-clock; if a `Retry-After` (or backoff) would
+ * exceed the budget, we fail fast and let the next poll (~ORDERBOOK_POLL_INTERVAL
+ * blocks later) retry naturally — but the failure is logged as a rate-limit/
+ * server error, not as "order not on API yet".
+ */
+export const ORDERBOOK_MAX_RETRIES = 2; // ≤ 3 attempts total
+export const ORDERBOOK_RETRY_BASE_MS = 250; // exponential backoff base
+export const ORDERBOOK_RETRY_MAX_DELAY_MS = 2_000; // cap on a single sleep (incl. Retry-After)
+export const ORDERBOOK_RETRY_BUDGET_MS = 4_000; // total wall-clock the retry loop may add
+
+/**
  * Hard wall-clock cap for a block handler's aggregate `context.client.multicall`
- * call (C1, C5). viem has no per-call signal; the timer races the promise and
+ * call (OrderDiscoveryPoller, CancellationWatcher). viem has no per-call signal; the timer races the promise and
  * the handler returns cleanly on breach.
  */
 export const BLOCK_HANDLER_RPC_TIMEOUT_MS = 15_000;
 
+// Tighter cap for cheap inner-loop calls (getCode, eth_call) in the settlement handler.
+// The outer receipt fetch and readContract(owner()) keep the full 15 s.
+export const SETTLEMENT_INNER_RPC_TIMEOUT_MS = 5_000;
+
 /**
- * Hard wall-clock cap for the whole per-owner bootstrap fetch in C4
+ * Hard wall-clock cap for the whole per-owner bootstrap fetch in OwnerBackfill
  * (account pagination + by_uids refresh). Owners that exceed this are skipped;
- * the normal C1 / C2 path picks them up on subsequent blocks.
+ * the normal OrderDiscoveryPoller / CandidateConfirmer path picks them up on subsequent blocks.
  */
 export const BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS = 30_000;
+
+/**
+ * Page size used by fetchComposableOrders when calling /account/{owner}/orders.
+ * Small pages (25 orders) keep each HTTP response tiny and fast, avoiding the
+ * per-page ORDERBOOK_HTTP_TIMEOUT_MS budget even for the largest owners.
+ * The regular fetchAccountOrders callers use PAGE_LIMIT=1000.
+ */
+export const BOOTSTRAP_PAGE_SIZE = 25;
+
+/**
+ * Maximum pages fetched from /account/{owner}/orders in fetchComposableOrders.
+ * At BOOTSTRAP_PAGE_SIZE=25 this caps the fetch at 100 orders per owner —
+ * sufficient for any realistic composable-order history since orders are returned
+ * newest-first and composable orders are typically recent.
+ */
+export const BOOTSTRAP_MAX_PAGES = 4;
+
+/**
+ * Maximum number of times OwnerBackfill will retry a timed-out owner across
+ * indexer restarts. After this many consecutive failures the owner is removed
+ * from bootstrap_retry_queue and left to the normal OrderDiscoveryPoller/CandidateConfirmer discovery path.
+ */
+export const BOOTSTRAP_MAX_RETRY_COUNT = 5;
+
+/**
+ * Maximum number of TWAP parts that precomputeOrderUids will attempt to enumerate.
+ * Pathological orders with n > this value skip precompute and fall back to the
+ * OrderDiscoveryPoller discovery path (allCandidatesKnown=false). Logged as
+ * `precompute:skip` with reason=too_many_parts when triggered.
+ */
+export const MAX_TWAP_PRECOMPUTE_PARTS = 100_000;
+
+/**
+ * Hard per-block ceiling on how many open discrete orders OrderStatusTracker
+ * will check in a single block. Caps the /by_uids batch size and keeps block
+ * handler transactions short.
+ *
+ * Override per chain with env var MAX_DISCRETE_ORDERS_PER_BLOCK_<chainId>, e.g.
+ * MAX_DISCRETE_ORDERS_PER_BLOCK_1=200, MAX_DISCRETE_ORDERS_PER_BLOCK_100=500.
+ */
+export const DEFAULT_MAX_DISCRETE_ORDERS_PER_BLOCK = 200;

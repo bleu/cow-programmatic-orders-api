@@ -2,7 +2,7 @@
 
 The indexer exposes three ways to query indexed data: a Ponder-generated GraphQL endpoint, a read-only SQL passthrough, and two custom REST endpoints for queries that require cross-table logic.
 
-The default local URL is `http://localhost:42069`.
+The default local URL is `http://localhost:42069` when using `pnpm dev`. The production server (`pnpm start`, Docker) listens on port **3000** (mapped to the host via `PONDER_EXPOSED_PORT`, default 40000).
 
 ## Endpoints
 
@@ -13,7 +13,11 @@ The default local URL is `http://localhost:42069`.
 | `/api/*` | GET | Custom REST endpoints. Full reference in Swagger UI at `/docs`. |
 | `/docs` | GET | Swagger UI for the REST endpoints. |
 | `/openapi.json` | GET | OpenAPI 3.0 spec for the REST endpoints. |
-| `/healthz` | GET | Returns `{ "status": "ok" }` when the server is up. Does not reflect indexer sync progress. |
+| `/health` | GET | Ponder built-in. Returns `200` (empty body) when the process is running. |
+| `/ready` | GET | Ponder built-in. Returns `200` when initial sync is complete; `503` while still syncing. Suitable for K8s readiness probes. |
+| `/healthz` | GET | Application-level. Returns `{ "status": "ok" }` when the server is up. Does not reflect indexer sync progress. |
+| `/status` | GET | Sync progress per chain. Returns current indexed block, latest chain block, and a completion percentage. Useful for monitoring backfill progress. |
+| `/metrics` | GET | Prometheus metrics. Exposes Ponder internals (block lag, handler latency, RPC call counts). |
 
 ## GraphQL
 
@@ -25,18 +29,49 @@ High-level map of what's queryable:
 - **`discreteOrder`** — individual CoW Protocol orders produced by a generator (a TWAP with 10 parts produces 10 discrete orders). Tracks orderbook status and executed amounts.
 - **`candidateDiscreteOrder`** — unconfirmed discrete orders discovered by the block handler, awaiting confirmation against the orderbook API.
 - **`transaction`** — block and timestamp metadata for indexed transactions.
-- **`ownerMapping`** — proxy/adapter → EOA mappings. Populated from CoWShed factory events and Aave flash loan adapter detection.
+- **`ownerMapping`** — proxy/adapter -> EOA mappings. Populated from CoWShed factory events and Aave flash loan adapter detection.
 
 For schema details (columns, indexes, relations), see [architecture.md](./architecture.md).
 
 ## REST endpoints
 
-Two custom endpoints mounted at `/api`, documented in Swagger UI at `/docs`:
+Custom endpoints mounted at `/api`, documented in Swagger UI at `/docs`:
 
 - `GET /api/orders/by-owner/{owner}` — discrete orders for a wallet, with automatic proxy resolution.
 - `GET /api/generator/{eventId}/execution-summary` — part-count breakdown by status for a generator.
+- `GET /api/sync-progress` — per-chain historical sync progress (total blocks, processed blocks, percentage, realtime mode flag).
 
 Open `/docs` for request/response shapes and to try them out.
+
+### `GET /api/sync-progress`
+
+Returns the indexer's historical backfill progress per chain, parsed from Ponder's built-in Prometheus metrics. Useful for monitoring first-run sync without reading raw metrics.
+
+Example response:
+
+```json
+{
+  "mainnet": {
+    "totalBlocks": 7000000,
+    "processedBlocks": 3000000,
+    "historicalBlocksFetchedPct": 42.9,
+    "isRealtime": false,
+    "isComplete": false
+  },
+  "gnosis": {
+    "totalBlocks": 17000000,
+    "processedBlocks": 17000000,
+    "historicalBlocksFetchedPct": 100.0,
+    "isRealtime": true,
+    "isComplete": true
+  }
+}
+```
+
+- `historicalBlocksFetchedPct` is rounded to one decimal place (0–100).
+- `isRealtime` flips to `true` once the chain enters live-sync mode.
+- `isComplete` flips to `true` once all historical blocks are processed.
+- Returns `{}` if the `/metrics` endpoint is unreachable.
 
 ## Order type decoding
 
@@ -92,7 +127,7 @@ There is one principled exception to "everything as string": `discreteOrder.vali
 | `discreteOrder.validTo` | number | yes | Unix seconds when this discrete order expires. `uint32` per CoW protocol. |
 | `discreteOrder.creationDate` | string | no | Unix seconds when the discrete order was first observed. Source varies — see the GraphQL field doc. |
 | `candidateDiscreteOrder.validTo` | number | yes | Same as `discreteOrder.validTo`. |
-| `candidateDiscreteOrder.creationDate` | string | no | Block timestamp at C1 discovery. |
+| `candidateDiscreteOrder.creationDate` | string | no | Block timestamp at **OrderDiscoveryPoller** discovery. |
 | `candidateDiscreteOrder.possibleValidAfterTimestamp` | string | yes | TWAP only: `t0 + partIndex*t`. Earliest Unix-seconds time the part can be valid. |
 
 ### Timestamp-like values inside `decodedParams`
@@ -107,9 +142,13 @@ The `conditionalOrderGenerator.decodedParams` JSON encodes Solidity struct field
 
 ## Indexed chains
 
+The active chain list is `ACTIVE_CHAINS` in `src/chains/index.ts`. Currently active:
+
 | Chain | Chain ID |
 |-------|----------|
-| Ethereum mainnet | 1 |
-| Gnosis Chain | 100 |
+| Ethereum Mainnet | 1 |
+| Gnosis | 100 |
 
 Filter queries with `where: { chainId: 1 }` (GraphQL) or `?chainId=1` (REST).
+
+> Adding a chain: create `src/chains/<name>.ts` following the existing chain files as a template, add it to `ACTIVE_CHAINS` in `src/chains/index.ts`, and add its RPC URL env var.
