@@ -1,5 +1,3 @@
-export type { ChainConfig, SupportedChainId } from "./types";
-
 import { mainnet } from "./mainnet";
 import { gnosis } from "./gnosis";
 import { arbitrum } from "./arbitrum";

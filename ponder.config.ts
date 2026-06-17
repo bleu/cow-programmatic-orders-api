@@ -1,6 +1,5 @@
 import { createConfig } from "ponder";
 import { ACTIVE_CHAINS } from "./src/chains";
-import { pollerInterval } from "./src/chains/types";
 import { ComposableCowAbi } from "./abis/ComposableCowAbi";
 import { CoWShedFactoryAbi } from "./abis/CoWShedFactoryAbi";
 import { GPv2SettlementAbi } from "./abis/GPv2SettlementAbi";

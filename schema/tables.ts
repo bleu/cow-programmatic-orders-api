@@ -92,7 +92,7 @@ export const conditionalOrderGenerator = onchainTable(
     // OrderDiscoveryPoller + CancellationWatcher: per-block SELECT with
     // chainId + status + allCandidatesKnown equality filters, ORDER BY lastCheckBlock.
     // Covers both handlers — OrderDiscoveryPoller queries allCandidatesKnown=false, CancellationWatcher queries true.
-    c1c5PollIdx: index("generator_c1c5_poll_idx")
+    generatorPollIdx: index("generator_poll_idx")
       .on(table.chainId, table.status, table.allCandidatesKnown, table.lastCheckBlock),
   })
 );
@@ -118,7 +118,7 @@ export const discreteOrder = onchainTable(
     generatorIdx: index("discrete_order_generator_idx")
       .on(table.chainId, table.conditionalOrderGeneratorId),
     // OrderStatusTracker: per-block SELECT with chainId + status='open', ORDER BY promotedAt.
-    c3StatusIdx: index("discrete_order_c3_status_idx")
+    discreteOrderStatusIdx: index("discrete_order_status_idx")
       .on(table.chainId, table.status, table.promotedAt),
   })
 );

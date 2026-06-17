@@ -1,16 +1,5 @@
 import { SupportedChainId } from "@cowprotocol/cow-sdk";
 
-export type { SupportedChainId };
-
-/**
- * Derive the OrderDiscoveryPoller block interval from block time so that polls
- * happen approximately every 20 seconds regardless of chain speed.
- * e.g. mainnet (12s) -> 1 block, gnosis (5s) -> 4 blocks, base (2s) -> 10 blocks.
- */
-export function pollerInterval(blockTimeSeconds: number): number {
-  return Math.max(1, Math.floor(20 / blockTimeSeconds));
-}
-
 /**
  * ChainConfig — everything needed to configure one chain in ponder.config.ts
  * and derive runtime constants (block time, RPC URL, API URL, etc.).
