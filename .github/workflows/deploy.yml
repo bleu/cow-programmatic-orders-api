@@ -5,6 +5,11 @@ concurrency:
   cancel-in-progress: true
 
 on:
+  # Deploy is MANUAL ONLY. The automatic "push: main" trigger was intentionally
+  # removed so that merging to main never triggers a destructive redeploy
+  # (schema drop + full re-index, which takes the synced instance offline for hours).
+  # Deploy explicitly from the Actions tab -> "Run workflow" (workflow_dispatch),
+  # passing skip_schema_drop=true to preserve indexing progress when appropriate.
   workflow_dispatch:
     inputs:
       monitor_only:
@@ -17,9 +22,6 @@ on:
         required: false
         default: 'false'
         type: string
-  push:
-    branches:
-      - main
 
 jobs:
   deploy:
