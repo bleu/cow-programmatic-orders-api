@@ -30,8 +30,6 @@ Example: `DATABASE_URL=postgresql://cow_programmatic:secretpass@localhost:5433/c
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `DISABLE_POLL_RESULT_CHECK` | No | Disables the `OrderDiscoveryPoller` block handler. Skips RPC multicalls for non-deterministic generators. Saves RPC calls during initial sync at the cost of not detecting poll results until re-enabled. |
-| `DISABLE_DETERMINISTIC_CANCEL_SWEEP` | No | Disables the `CancellationWatcher`. Skips periodic `singleOrders()` reads on deterministic generators. While disabled, on-chain `ComposableCoW.remove()` calls on TWAP/StopLoss/CirclesBackingOrder generators will not be detected and those generators stay `Active`. |
 | `MAX_GENERATORS_PER_BLOCK_<chainId>` | No | Per-block cap on how many generators `OrderDiscoveryPoller` and `CancellationWatcher` will touch on the given chain (e.g. `MAX_GENERATORS_PER_BLOCK_1=200`, `MAX_GENERATORS_PER_BLOCK_100=400`). Default is 200. Excess generators defer to the next block, prioritized by oldest `lastCheckBlock` first. |
 | `MAX_DISCRETE_ORDERS_PER_BLOCK_<chainId>` | No | Per-block cap on how many open discrete orders `OrderStatusTracker` will check on the given chain (e.g. `MAX_DISCRETE_ORDERS_PER_BLOCK_1=200`). Default is 200. Excess orders are deferred to the next block, prioritised by oldest `promotedAt` first. |
 | `DISABLE_SETTLEMENT_FACTORY_CHECK` | No | Skips `getCode` + `FACTORY()` RPC calls in the GPv2Settlement handler. Useful for benchmarking base sync throughput. |
@@ -63,14 +61,7 @@ The repo includes a `docker-compose.yml` at the root that starts PostgreSQL 16:
 docker compose up -d
 ```
 
-This gives you Postgres on port 5432 (user `postgres`, password `postgres`, database `programmatic-orders`). Add to `.env.local`:
-
-```
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/programmatic-orders
-DATABASE_SCHEMA=programmatic_orders
-```
-
-Ponder manages schema migrations automatically. When it starts, it creates or updates the tables within the configured schema. You never run migrations manually.
+Copy the matching `DATABASE_URL` and `DATABASE_SCHEMA` into `.env.local` from `.env.example`. Ponder manages schema migrations automatically — it creates or updates the tables within the configured schema on startup; you never run migrations manually.
 
 ### Production
 
@@ -136,7 +127,7 @@ The Docker Compose health check uses `/ready` with a 24-hour start period as a p
 
 `pnpm dev` uses Ponder's default pretty format for readability during local development.
 
-**Convention:** all code under `src/application/` uses `log()` from `src/application/helpers/logger.ts` instead of `console.log/warn/error` directly. The `src/api/` layer (Hono routes) is exempt — Hono handles its own logging. Example:
+**Convention:** application and API code uses `log()` from `src/application/helpers/logger.ts` instead of `console.log/warn/error` directly, so every line is structured JSON. (Hono still handles its own request-level logging.) Example:
 
 ```ts
 import { log } from "../helpers/logger";
@@ -150,14 +141,7 @@ log("warn", "CandidateConfirmer:timeout",   { chainId, block: String(event.block
 
 ### PostgreSQL Memory Flags
 
-Memory settings are hardcoded in the `command:` block of `docker-compose.yml`, tuned for 1G RAM:
-
-- `shared_buffers`: 204MB (~20% RAM)
-- `work_mem`: 2MB per connection (~25% RAM / max_connections)
-- `effective_cache_size`: 512MB (~50% RAM)
-- `maintenance_work_mem`: 51MB
-
-Adjust these proportionally if you change the host's available memory.
+Memory settings are hardcoded in the `command:` block of `docker-compose.yml`, tuned for 1G RAM (see the inline comments there). Adjust them proportionally if you change the host's available memory.
 
 
 ## Deploying
@@ -192,7 +176,7 @@ A fresh deployment (no prior `ponder_sync` cache) reindexes from the configured 
 | Phase | Typical duration | Notes |
 |-------|-----------------|-------|
 | Event backfill | 4–10 hours | Fetches `eth_getLogs` from start block to tip. Bottleneck is RPC throughput; a generous RPC endpoint shortens this. |
-| Live-sync catch-up | 5–15 minutes | Block handlers (C1–C5) run at "latest" only. Stale TWAP candidates drain at 500/block. |
+| Live-sync catch-up | 5–15 minutes | Block handlers (OrderDiscoveryPoller, CandidateConfirmer, OrderStatusTracker, OwnerBackfill, CancellationWatcher) run at "latest" only. Stale TWAP candidates drain at 500/block. |
 | Full data completeness | After live-sync catch-up | All generators have candidates or discrete orders; historical TWAP parts resolved via account fallback. |
 
 A reindex that reuses an existing `ponder_sync` cache (same chain, same start blocks) skips the event backfill and completes in minutes.
@@ -205,7 +189,7 @@ During backfill, `GET /ready` returns `503`. GraphQL queries are still available
 
 ### Historical Discrete Order Gap
 
-Block handlers only run during live sync. TWAP parts computed during backfill land in `candidate_discrete_order` with past `validTo` dates. When live sync starts, C2 (CandidateConfirmer) promotes these via the stale sweep path:
+Block handlers only run during live sync. TWAP parts computed during backfill land in `candidate_discrete_order` with past `validTo` dates. When live sync starts, CandidateConfirmer promotes these via the stale sweep path:
 
 1. Tries `/orders/by_uids` — aged-out UIDs return empty
 2. Falls back to `/account/{owner}/orders` for each owner with missed UIDs
@@ -213,6 +197,6 @@ Block handlers only run during live sync. TWAP parts computed during backfill la
 
 **Residual gap**: Orders that no longer appear in `/account/{owner}/orders` (beyond the CoW API's retention window) will be recorded as `expired` regardless of their actual fill status. This affects only very old orders for users with a large order history.
 
-Non-deterministic generators (PerpetualSwap, GoodAfterTime, TradeAboveThreshold, Unknown) are handled by C4 (OwnerBackfill), which calls `/account/{owner}/orders` once at live-sync start and upserts discovered orders directly into `discrete_order`.
+Non-deterministic generators (PerpetualSwap, GoodAfterTime, TradeAboveThreshold, Unknown) are handled by OwnerBackfill, which calls `/account/{owner}/orders` once at live-sync start and upserts discovered orders directly into `discrete_order`.
 
 

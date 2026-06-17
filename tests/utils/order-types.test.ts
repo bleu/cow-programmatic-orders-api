@@ -15,7 +15,7 @@ describe("DETERMINISTIC_ORDER_TYPE", () => {
   it("marks TWAP, StopLoss, CirclesBackingOrder as deterministic", () => {
     expect(DETERMINISTIC_ORDER_TYPE["TWAP"]).toBe(true);
     expect(DETERMINISTIC_ORDER_TYPE["StopLoss"]).toBe(true);
-    // Regression guard for COW-1003: CirclesBackingOrder must be deterministic
+    // Regression guard: CirclesBackingOrder must be deterministic
     expect(DETERMINISTIC_ORDER_TYPE["CirclesBackingOrder"]).toBe(true);
   });
 

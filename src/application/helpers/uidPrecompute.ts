@@ -18,15 +18,11 @@
 import type { Hex } from "viem";
 import { and, eq, sql } from "ponder";
 import { candidateDiscreteOrder, conditionalOrderGenerator, discreteOrder } from "ponder:schema";
-import { computeOrderUid, type GPv2OrderData } from "./orderUid";
+import { computeOrderUid, type GPv2OrderData, KIND_SELL, KIND_BUY, BALANCE_ERC20 } from "./orderUid";
 import { fetchOrderStatusByUids } from "./orderbookClient";
 import { type OrderType, DETERMINISTIC_ORDER_TYPE } from "../../utils/order-types";
 import { log } from "./logger";
-
-// GPv2Order.sol constant hashes
-const KIND_SELL = "0xf3b277728b3fee749481eb3e0b3b48980dbbab78658fc419025cb16eee346775" as Hex;
-const KIND_BUY = "0x6ed88e868af0a1983e3886d5f3e95a2fafbd6c3450bc229e27342283dc429ccc" as Hex;
-const BALANCE_ERC20 = "0x5a28e9363bb942b639270062aa6bb295f434bcdfc42c97267bf003f272060dc9" as Hex;
+import { MAX_TWAP_PRECOMPUTE_PARTS } from "../../constants";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -194,7 +190,7 @@ export async function precomputeAndDiscover(
   }
 
   // UIDs are fully known even though some orders are still open —
-  // C1 (Contract Poller) can skip this generator, C3 (Status Updater) tracks the open orders.
+  // OrderDiscoveryPoller can skip this generator, OrderStatusTracker tracks the open orders.
   await context.db.sql
     .update(conditionalOrderGenerator)
     .set({ allCandidatesKnown: true })
@@ -255,7 +251,7 @@ function precomputeTwapUids(
     log("warn", "precompute:skip", { orderType: "TWAP", owner, chainId, reason: "invalid_math", nParts, tSeconds: String(tSeconds) });
     return null;
   }
-  if (nParts > 100000) {
+  if (nParts > MAX_TWAP_PRECOMPUTE_PARTS) {
     log("warn", "precompute:skip", { orderType: "TWAP", owner, chainId, reason: "too_many_parts", nParts });
     return null;
   }

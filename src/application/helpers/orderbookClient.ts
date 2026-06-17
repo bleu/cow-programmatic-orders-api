@@ -146,23 +146,6 @@ export async function fetchComposableOrders(
 }
 
 /**
- * Invalidate the UID cache for orders belonging to an owner's generators.
- * Called when ConditionalOrderCreated fires so that the next fetch discovers new orders.
- *
- * Note: This is a no-op for per-UID cache since new orders won't have cache entries.
- * Kept for API compatibility; callers may add owner-level invalidation logic later.
- */
-export async function invalidateOwnerCache(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  _context: any,
-  _chainId: number,
-  _owner: Hex,
-): Promise<void> {
-  // Per-UID cache doesn't need owner-level invalidation — new orders
-  // won't have cache entries, so they'll be fetched fresh from the API.
-}
-
-/**
  * Upsert composable orders into the discrete_order table.
  * Uses onConflictDoUpdate so the API's authoritative status overwrites
  * the block handler's initial "open".

@@ -173,7 +173,7 @@ describe("ordersByOwnerHandler", () => {
   });
 });
 
-// ─── Schema tests (COW-993) ──────────────────────────────────────────────────
+// ─── Schema tests ──────────────────────────────────────────────────
 
 // A minimal valid GeneratorSummary payload that satisfies all required fields.
 const validGenerator = {
@@ -188,7 +188,7 @@ const validGenerator = {
 } as const;
 
 describe("GeneratorSummary schema", () => {
-  // Regression guard for COW-993: hash was previously missing from the schema,
+  // Regression guard: hash was previously missing from the schema,
   // causing it to be silently dropped from API responses. safeParse accepts
   // unknown so TS gives no protection here at runtime.
   it("fails parse when hash is missing", () => {

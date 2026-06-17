@@ -4,8 +4,7 @@
  * UID = abi.encodePacked(orderDigest, owner, uint32(validTo))
  * where orderDigest = EIP-712 typed hash of the GPv2Order struct.
  *
- * Reference: GPv2Order.sol (tmp/contracts/gpv2-contracts/src/contracts/libraries/GPv2Order.sol)
- * Added during orderbook cache refactor (Phase 2)
+ * Reference: GPv2Order.sol (cowprotocol/contracts)
  */
 
 import { encodePacked, hashTypedData, type Hex } from "viem";
@@ -46,9 +45,9 @@ export interface GPv2OrderData {
 }
 
 // GPv2Order.sol constant hashes — keccak256 of the string representation
-const KIND_SELL = "0xf3b277728b3fee749481eb3e0b3b48980dbbab78658fc419025cb16eee346775";
-const KIND_BUY  = "0x6ed88e868af0a1983e3886d5f3e95a2fafbd6c3450bc229e27342283dc429ccc";
-const BALANCE_ERC20    = "0x5a28e9363bb942b639270062aa6bb295f434bcdfc42c97267bf003f272060dc9";
+export const KIND_SELL = "0xf3b277728b3fee749481eb3e0b3b48980dbbab78658fc419025cb16eee346775" as Hex;
+export const KIND_BUY  = "0x6ed88e868af0a1983e3886d5f3e95a2fafbd6c3450bc229e27342283dc429ccc" as Hex;
+export const BALANCE_ERC20    = "0x5a28e9363bb942b639270062aa6bb295f434bcdfc42c97267bf003f272060dc9" as Hex;
 const BALANCE_EXTERNAL = "0xabee3b73373acd583a130924aad6dc38cfdc44ba0555ba94ce2ff63980ea0632";
 const BALANCE_INTERNAL = "0x4ac99ace14ee0a5ef932dc609df0943ab7ac16b7583634612f8dc35a4289a6ce";
 

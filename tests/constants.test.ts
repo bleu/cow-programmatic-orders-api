@@ -15,7 +15,7 @@ import {
   DEFAULT_MAX_DISCRETE_ORDERS_PER_BLOCK,
 } from "../src/constants";
 
-describe("DEFAULT_MAX_DISCRETE_ORDERS_PER_BLOCK (COW-988)", () => {
+describe("DEFAULT_MAX_DISCRETE_ORDERS_PER_BLOCK", () => {
   it("is 200", () => {
     expect(DEFAULT_MAX_DISCRETE_ORDERS_PER_BLOCK).toBe(200);
   });

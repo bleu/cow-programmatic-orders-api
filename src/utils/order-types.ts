@@ -1,4 +1,4 @@
-// Handler contract address → order type, keyed by chain ID then address (lowercase).
+// Handler contract address -> order type, keyed by chain ID then address (lowercase).
 // Most handler addresses are chain-agnostic: the five core CREATE2-deployed handlers are
 // confirmed identical across chains in cowprotocol/composable-cow/networks.json.
 // Chain-specific handlers (not CREATE2-shared) live in per-chain overlays merged into
@@ -27,11 +27,11 @@ export type OrderType =
   | "Unknown";
 
 /**
- * Canonical address → order type map for chain-agnostic handlers (CREATE2-deployed at the
+ * Canonical address -> order type map for chain-agnostic handlers (CREATE2-deployed at the
  * same address on every supported chain). Single source of truth for these five — do not
  * duplicate addresses.
  */
-export const HANDLER_ADDRESS_TO_TYPE: Record<string, OrderType> = {
+const HANDLER_ADDRESS_TO_TYPE: Record<string, OrderType> = {
   "0x6cf1e9ca41f7611def408122793c358a3d11e5a5": "TWAP",
   "0x412c36e5011cd2517016d243a2dfb37f73a242e7": "StopLoss",
   "0x519ba24e959e33b3b6220ca98bd353d8c2d89920": "PerpetualSwap",
@@ -46,7 +46,7 @@ export const HANDLER_ADDRESS_TO_TYPE: Record<string, OrderType> = {
 const MAINNET_ONLY_HANDLERS: Record<string, OrderType> = {
   "0xd506fe0b3ddf9e685c16e000514a835d3a511b26": "SwapOrderHandler",
   "0x816e90dc85bf016455017a76bc09cc0451eeb308": "ERC4626CowSwapFeeBurner",
-  // Curve Finance fee-burn handler: converts protocol fees → target token via CoW swap.
+  // Curve Finance fee-burn handler: converts protocol fees -> target token via CoW swap.
   // Source: https://docs.curve.finance/fees/CowSwapBurner/ — Vyper 0.3.10, verified.
   "0xc0fc3ddfec95ca45a0d2393f518d3ea1ccf44f8b": "CurveCowSwapBurner",
   // Balancer v3 CowSwapFeeBurner: burns protocol fees via CoW swap.

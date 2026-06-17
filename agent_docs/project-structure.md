@@ -30,7 +30,7 @@
 | Mainnet address | `0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74` |
 | Start block | `17883049` (deployment block) |
 | End block | none — index continuously |
-| Active chains (M1) | mainnet only |
+| Active chains | mainnet only |
 
 ---
 
@@ -77,7 +77,7 @@ src/data.ts
 | `decodedParams` | json | null until decoder tasks populate it |
 | `txHash` | hex NOT NULL | FK → transaction.hash |
 
-**`discreteOrder`** (stub for M3)
+**`discreteOrder`** (stub)
 | Column | Type | Notes |
 |--------|------|-------|
 | `orderUid` | text NOT NULL | Part of composite PK |
@@ -125,7 +125,7 @@ Example query once blocks around `17883049` are indexed:
 
 ---
 
-## Intentionally Out of Scope (M1)
+## Intentionally Out of Scope
 
 - Gnosis Chain / Arbitrum chain configuration (future sprint)
 - `MerkleRootSet` / `SwapGuardSet` event handlers
@@ -138,5 +138,4 @@ Example query once blocks around `17883049` are indexed:
 
 ## References
 
-- PoC: `/Users/jefferson/Projects/Bleu/cow/reference_repos/cow-programmatic-orders-indexer/`
 - Ponder docs: https://ponder.sh

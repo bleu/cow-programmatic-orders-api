@@ -1,6 +1,6 @@
-# M3 Orderbook Integration — System Architecture & Flow
+# Orderbook Integration — System Architecture & Flow
 
-This document explains how the M3 discrete order system works, what each component does, and how an order moves through the system from creation to completion. Written for team discussion.
+This document explains how the discrete order system works, what each component does, and how an order moves through the system from creation to completion.
 
 ---
 
@@ -30,7 +30,7 @@ The system has seven components. Each has a single responsibility.
 
 **Writes to**: `discreteOrder` (for UIDs found on API), `candidateDiscreteOrder` (for UIDs not yet on API). Updates `conditionalOrderGenerator.status` to `Completed` if all orders are terminal on API.
 
-### Component C1: Contract Poller (`blockHandler.ts` — handler 1)
+### Component OrderDiscoveryPoller (`blockHandler.ts` — handler 1)
 
 **Responsibility**: Polls `getTradeableOrderWithSignature` on the ComposableCoW contract for **non-deterministic** active generators only. Creates candidate discrete orders when the contract returns success. Manages generator scheduling state (nextCheckBlock, nextCheckTimestamp, status).
 
@@ -46,7 +46,7 @@ The system has seven components. Each has a single responsibility.
 
 **Writes to**: `candidateDiscreteOrder`, updates `conditionalOrderGenerator` scheduling fields.
 
-### Component C2: Candidate Confirmer (`blockHandler.ts` — handler 2)
+### Component CandidateConfirmer (`blockHandler.ts` — handler 2)
 
 **Responsibility**: Checks if candidate discrete orders exist on the Orderbook API. When confirmed, promotes them to `discreteOrder` and deletes the candidate row.
 
@@ -56,11 +56,11 @@ The system has seven components. Each has a single responsibility.
 
 **Cleanup**: After promotion, confirmed candidates are deleted from `candidateDiscreteOrder`. Stale candidates past their `validTo` are also cleaned up — if the watch-tower never submitted them, they're expired and won't appear on the API.
 
-**Why a separate handler?** The Contract Poller (C1) discovers orders on-chain, but the API may not have them yet (watch-tower submission delay). This handler polls the API repeatedly until the candidate is confirmed. Separation means C1 focuses on RPC, C2 focuses on API — different cost profiles, can be tuned independently.
+**Why a separate handler?** OrderDiscoveryPoller discovers orders on-chain, but the API may not have them yet (watch-tower submission delay). This handler polls the API repeatedly until the candidate is confirmed. Separation means OrderDiscoveryPoller focuses on RPC, CandidateConfirmer focuses on API — different cost profiles, can be tuned independently.
 
 **Writes to**: `discreteOrder`. **Deletes from**: `candidateDiscreteOrder`.
 
-### Component C3: Status Updater (`blockHandler.ts` — handler 3)
+### Component OrderStatusTracker (`blockHandler.ts` — handler 3)
 
 **Responsibility**: Polls the API for status updates on non-terminal discrete orders. Detects when open orders become fulfilled, expired, or cancelled.
 
@@ -72,7 +72,7 @@ The system has seven components. Each has a single responsibility.
 
 **Writes to**: `discreteOrder`, `cow_cache.order_uid_cache` (caches newly terminal).
 
-### Component C4: Historical Bootstrap (`blockHandler.ts` — handler 4)
+### Component OwnerBackfill (`blockHandler.ts` — handler 4)
 
 **Responsibility**: One-time discovery of historical discrete orders for non-deterministic generators that were created during backfill. Runs once at the start of live sync (`startBlock = endBlock = "latest"`).
 
@@ -141,7 +141,7 @@ Confirmed orders. API-authoritative status. What consumers query.
 
 ### `candidateDiscreteOrder`
 
-Orders discovered on-chain (by C1 or UID pre-computation) but not yet confirmed on the Orderbook API. Same schema as `discreteOrder` minus the `status` column — candidates are pending by definition. The Candidate Confirmer (C2) promotes them to `discreteOrder` once the API has them.
+Orders discovered on-chain (by OrderDiscoveryPoller or UID pre-computation) but not yet confirmed on the Orderbook API. Same schema as `discreteOrder` minus the `status` column — candidates are pending by definition. CandidateConfirmer promotes them to `discreteOrder` once the API has them.
 
 ### `cow_cache.order_uid_cache`
 
@@ -177,11 +177,11 @@ Per-UID terminal status cache. Survives Ponder resyncs (external `cow_cache` sch
 
 5. **Insert results.** For each UID:
    - **Found on API** → upsert into `discreteOrder` with API-authoritative status.
-   - **Not found on API** → insert into `candidateDiscreteOrder`. C2 will promote to `discreteOrder` when the API has it.
+   - **Not found on API** → insert into `candidateDiscreteOrder`. CandidateConfirmer will promote to `discreteOrder` when the API has it.
 
-6. **Generator deactivation.** If ALL orders are terminal on the API → set `status = 'Completed'`, `allCandidatesKnown = true`, `lastPollResult = 'precompute:allTerminal'`. No further polling needed. If some UIDs are candidates (not yet on API), the generator stays Active — `allCandidatesKnown` is still set to `true` so C1 skips it.
+6. **Generator deactivation.** If ALL orders are terminal on the API → set `status = 'Completed'`, `allCandidatesKnown = true`, `lastPollResult = 'precompute:allTerminal'`. No further polling needed. If some UIDs are candidates (not yet on API), the generator stays Active — `allCandidatesKnown` is still set to `true` so OrderDiscoveryPoller skips it.
 
-**Result**: Deterministic orders are fully discovered at creation time. They never need the Contract Poller (C1). The Status Updater (C3) handles any open orders that haven't settled yet.
+**Result**: Deterministic orders are fully discovered at creation time. They never need OrderDiscoveryPoller. OrderStatusTracker handles any open orders that haven't settled yet.
 
 ### 3.2 Order Creation — Non-Deterministic Types
 
@@ -191,13 +191,13 @@ Per-UID terminal status cache. Survives Ponder resyncs (external `cow_cache` sch
 
 2. **UID pre-computation returns null.** Can't compute UIDs for PerpetualSwap, GoodAfterTime, TradeAboveThreshold, or Unknown types.
 
-3. **Generator stays Active.** The Contract Poller (C1) will pick it up at live sync.
+3. **Generator stays Active.** OrderDiscoveryPoller will pick it up at live sync.
 
-**During backfill**: No discrete orders created. The Historical Bootstrap (C4) fills this gap at the start of live sync.
+**During backfill**: No discrete orders created. OwnerBackfill fills this gap at the start of live sync.
 
-**During live sync**: The Contract Poller discovers orders when `getTradeableOrderWithSignature` returns success.
+**During live sync**: OrderDiscoveryPoller discovers orders when `getTradeableOrderWithSignature` returns success.
 
-### 3.3 Contract Poller (C1) — Non-Deterministic Orders
+### 3.3 OrderDiscoveryPoller — Non-Deterministic Orders
 
 **When**: Every block at live sync.
 
@@ -215,9 +215,9 @@ Per-UID terminal status cache. Survives Ponder resyncs (external `cow_cache` sch
 | **PollTryAtEpoch(T)** | `nextCheckTimestamp = T` |
 | **PollNever(reason)** | `status = 'Completed'`. Do NOT expire discrete orders. |
 
-4. **Note on `allCandidatesKnown`**: For confirmed single-shot non-deterministic types (**GoodAfterTime**, **TradeAboveThreshold**), once the contract returns success once, set `allCandidatesKnown = true` — the order UID is now known and C2/C3 handle the rest. For repeating orders (**PerpetualSwap**) and **Unknown** types (which may be multi-part), this flag stays `false`.
+4. **Note on `allCandidatesKnown`**: For confirmed single-shot non-deterministic types (**GoodAfterTime**, **TradeAboveThreshold**), once the contract returns success once, set `allCandidatesKnown = true` — the order UID is now known and CandidateConfirmer/OrderStatusTracker handle the rest. For repeating orders (**PerpetualSwap**) and **Unknown** types (which may be multi-part), this flag stays `false`.
 
-### 3.4 Candidate Confirmer (C2) — Promoting Candidates
+### 3.4 CandidateConfirmer — Promoting Candidates
 
 **When**: Every block at live sync.
 
@@ -231,7 +231,7 @@ Per-UID terminal status cache. Survives Ponder resyncs (external `cow_cache` sch
 
 5. **Cleanup:** Delete promoted candidates from `candidateDiscreteOrder`. Also delete stale candidates past their `validTo` — the watch-tower likely never submitted them.
 
-### 3.5 Status Updater (C3) — Tracking Open Orders
+### 3.5 OrderStatusTracker — Tracking Open Orders
 
 **When**: Every block at live sync.
 
@@ -243,7 +243,7 @@ Per-UID terminal status cache. Survives Ponder resyncs (external `cow_cache` sch
 
 4. **Expire by validTo.** Any `discreteOrder` where `status = 'open'` and `validTo <= currentTimestamp` → set to `expired`.
 
-### 3.6 Historical Bootstrap (C4) — One-Time Discovery
+### 3.6 OwnerBackfill — One-Time Discovery
 
 **When**: Once, at `startBlock = endBlock = "latest"`.
 
@@ -285,29 +285,29 @@ The Orderbook Client is used by all other components. Two main entry points:
 
 **Backfill:** Generator created → all N part UIDs pre-computed → API status fetched → UIDs found on API go into `discreteOrder`, UIDs not found go into `candidateDiscreteOrder` → if all terminal on API, generator marked Completed.
 
-**Live sync:** Same as backfill (UID pre-computation works at both). UIDs not yet on API are candidates; C2 promotes when API confirms. C3 tracks open `discreteOrder` rows.
+**Live sync:** Same as backfill (UID pre-computation works at both). UIDs not yet on API are candidates; CandidateConfirmer promotes when API confirms. OrderStatusTracker tracks open `discreteOrder` rows.
 
-**The Contract Poller (C1) is NEVER involved for TWAP.** All discovery happens via UID pre-computation.
+**OrderDiscoveryPoller is NEVER involved for TWAP.** All discovery happens via UID pre-computation.
 
 ### StopLoss — Deterministic, single-part
 
 **Backfill:** Generator created → single UID pre-computed → API status fetched → if found on API, `discreteOrder` created; if not, `candidateDiscreteOrder` → if terminal on API, generator marked Completed.
 
-**Live sync:** Same as backfill. If the order is still open (price hasn't triggered yet), C3 tracks it. The Contract Poller is not involved.
+**Live sync:** Same as backfill. If the order is still open (price hasn't triggered yet), OrderStatusTracker tracks it. OrderDiscoveryPoller is not involved.
 
 **Key insight:** We don't need to call `getTradeableOrderWithSignature` for StopLoss. We know the UID from creation. The API will show `fulfilled` once the watch-tower submits and the solver settles.
 
 ### PerpetualSwap — Non-deterministic, repeating
 
-**Backfill:** Generator created, no discrete orders. Historical Bootstrap (C4) discovers them at live sync start.
+**Backfill:** Generator created, no discrete orders. OwnerBackfill discovers them at live sync start.
 
-**Live sync:** Contract Poller (C1) polls every block → success during active windows → candidate created → C2 confirms on API → C3 tracks until fulfilled.
+**Live sync:** OrderDiscoveryPoller polls every block → success during active windows → candidate created → CandidateConfirmer confirms on API → OrderStatusTracker tracks until fulfilled.
 
 ### GoodAfterTime / TradeAboveThreshold — Non-deterministic, single-part
 
-**Backfill:** Generator created, no discrete orders. Historical Bootstrap (C4) discovers them.
+**Backfill:** Generator created, no discrete orders. OwnerBackfill discovers them.
 
-**Live sync:** Contract Poller (C1) polls → success when condition met → candidate → C2 confirms → after first success, `allCandidatesKnown = true` → C1 stops polling this generator.
+**Live sync:** OrderDiscoveryPoller polls → success when condition met → candidate → CandidateConfirmer confirms → after first success, `allCandidatesKnown = true` → OrderDiscoveryPoller stops polling this generator.
 
 ---
 
@@ -319,34 +319,34 @@ The Orderbook Client is used by all other components. Two main entry points:
 2. API batch fetch: all 5 → `fulfilled`. Cached in `order_uid_cache`.
 3. 5 `discreteOrder` rows created (all fulfilled).
 4. Generator → `Completed` (`allCandidatesKnown = true`).
-5. **At live sync**: Contract Poller skips this generator. Status Updater has nothing to update. Zero ongoing cost.
+5. **At live sync**: OrderDiscoveryPoller skips this generator. OrderStatusTracker has nothing to update. Zero ongoing cost.
 
 ### Scenario B: StopLoss, created at live sync, price triggers 3 hours later
 
 1. Live block: `ConditionalOrderCreated`. Generator inserted. UID Pre-computed = `0xabc...`.
 2. API fetch: `0xabc` not found (watch-tower hasn't submitted yet). `candidateDiscreteOrder` inserted.
-3. **C2 (Candidate Confirmer) polls every block**: `0xabc` → API still not found. Retry next block.
+3. **CandidateConfirmer polls every block**: `0xabc` → API still not found. Retry next block.
 4. 3 hours later: price triggers, watch-tower submits, solver settles.
-5. **C2 polls**: `0xabc` → API returns order. Promoted to `discreteOrder`. Candidate deleted.
-6. **C3 polls**: `0xabc` → `fulfilled`. `discreteOrder` updated. Cached as terminal.
+5. **CandidateConfirmer polls**: `0xabc` → API returns order. Promoted to `discreteOrder`. Candidate deleted.
+6. **OrderStatusTracker polls**: `0xabc` → `fulfilled`. `discreteOrder` updated. Cached as terminal.
 7. Generator stays Active until block handler checks and gets `PollNever` → `Completed`.
 
-**Note:** The Contract Poller (C1) is NOT involved. The UID was known from creation. Status tracking is pure API work.
+**Note:** OrderDiscoveryPoller is NOT involved. The UID was known from creation. Status tracking is pure API work.
 
 ### Scenario C: PerpetualSwap, created 3 months ago (non-deterministic)
 
 1. Backfill: Generator created, `status = 'Active'`. UID Pre-computation returns null.
-2. **C4 (Historical Bootstrap) at live sync start**: Finds this generator has no `discreteOrder` rows. Fetches by owner from API. Discovers 15 historical orders. Upserts all into `discreteOrder`.
-3. **C1 (Contract Poller) at live sync**: Polls `getTradeableOrderWithSignature`. Gets `Success` during active window → candidate created.
-4. **C2 (Candidate Confirmer)**: Checks API → confirms → `discreteOrder`.
-5. **C3 (Status Updater)**: Tracks open orders → `fulfilled` when settled.
-6. PerpetualSwap keeps producing new orders → C1 keeps discovering them.
+2. **OwnerBackfill at live sync start**: Finds this generator has no `discreteOrder` rows. Fetches by owner from API. Discovers 15 historical orders. Upserts all into `discreteOrder`.
+3. **OrderDiscoveryPoller at live sync**: Polls `getTradeableOrderWithSignature`. Gets `Success` during active window → candidate created.
+4. **CandidateConfirmer**: Checks API → confirms → `discreteOrder`.
+5. **OrderStatusTracker**: Tracks open orders → `fulfilled` when settled.
+6. PerpetualSwap keeps producing new orders → OrderDiscoveryPoller keeps discovering them.
 
 ### Scenario D: Unknown order type, created during backfill
 
 1. Backfill: Generator created with `orderType = 'Unknown'`. UID Pre-computation returns null.
-2. **C4 (Bootstrap)**: Fetches by owner. If the API has composable orders for this owner, they're upserted into `discreteOrder`.
-3. **C1 (Contract Poller)**: May poll if generator is still Active. Gets `Success` or error responses.
+2. **OwnerBackfill**: Fetches by owner. If the API has composable orders for this owner, they're upserted into `discreteOrder`.
+3. **OrderDiscoveryPoller**: May poll if generator is still Active. Gets `Success` or error responses.
 4. Normal lifecycle from there.
 
 ---
@@ -355,17 +355,17 @@ The Orderbook Client is used by all other components. Two main entry points:
 
 ### `allCandidatesKnown` — Semantics (Resolved)
 
-A **boolean** is the correct type. It answers one question: "does C1 still need to poll this generator?"
+A **boolean** is the correct type. It answers one question: "does OrderDiscoveryPoller still need to poll this generator?"
 
 **For deterministic types (TWAP, StopLoss)**: Set to `true` at creation time. All UIDs are computed from `staticInput` — no RPC needed.
 
-**For non-deterministic single-part types (GoodAfterTime, TradeAboveThreshold)**: Set to `true` after the first success from the Contract Poller. The UID is now known; C2/C3 handle confirmation and status.
+**For non-deterministic single-part types (GoodAfterTime, TradeAboveThreshold)**: Set to `true` after the first success from OrderDiscoveryPoller. The UID is now known; CandidateConfirmer/OrderStatusTracker handle confirmation and status.
 
-**For PerpetualSwap (repeating)**: Stays `false` — new orders keep appearing. The Contract Poller must keep polling.
+**For PerpetualSwap (repeating)**: Stays `false` — new orders keep appearing. OrderDiscoveryPoller must keep polling.
 
-**Why not a part count?** Part count is TWAP-specific. The polling decision is binary: either C1 needs to discover more UIDs, or it doesn't. A part count would be unused for all order types except TWAP and adds no value over the boolean.
+**Why not a part count?** Part count is TWAP-specific. The polling decision is binary: either OrderDiscoveryPoller needs to discover more UIDs, or it doesn't. A part count would be unused for all order types except TWAP and adds no value over the boolean.
 
-### Historical Bootstrap — Completeness (Resolved)
+### OwnerBackfill — Completeness (Resolved)
 
 The bootstrap discovers orders via `fetchComposableOrders(owner)`, which relies on the Orderbook API having the orders. If an order never reached the API, the bootstrap won't discover it.
 
@@ -382,10 +382,10 @@ flowchart TB
     subgraph OnChain["On-Chain Events (Ponder)"]
         CC["ComposableCow<br/><i>backfill: genesis → latest</i>"]
         CCL["ComposableCowLive<br/><i>live: latest → ∞</i>"]
-        BH1["Block Handler 1<br/><i>Contract Poller — every block</i>"]
-        BH2["Block Handler 2<br/><i>Candidate Confirmer — every block</i>"]
-        BH3["Block Handler 3<br/><i>Status Updater — every block</i>"]
-        BH4["Block Handler 4<br/><i>Historical Bootstrap — once at latest</i>"]
+        BH1["Block Handler 1<br/><i>OrderDiscoveryPoller — every block</i>"]
+        BH2["Block Handler 2<br/><i>CandidateConfirmer — every block</i>"]
+        BH3["Block Handler 3<br/><i>OrderStatusTracker — every block</i>"]
+        BH4["Block Handler 4<br/><i>OwnerBackfill — once at latest</i>"]
         GPV["GPv2Settlement<br/><i>flash loans only</i>"]
         CSF["CoWShedFactory"]
     end
@@ -455,11 +455,11 @@ flowchart TD
     API --> Upsert["API has UID → discreteOrder<br/>API missing UID → candidateDiscreteOrder"]
     Upsert --> Term{"All terminal?"}
     Term -->|Yes| Deactivate["Generator → Completed<br/>allCandidatesKnown = true<br/>No further polling"]
-    Term -->|No| Active["Generator stays Active<br/>C3 tracks open orders"]
+    Term -->|No| Active["Generator stays Active<br/>OrderStatusTracker tracks open orders"]
 
     Skip --> BackfillQ{"Backfill or<br/>Live sync?"}
-    BackfillQ -->|Backfill| Wait["Wait for C4 bootstrap<br/>at live sync start"]
-    BackfillQ -->|Live| Poll["C1 Contract Poller<br/>discovers when tradeable"]
+    BackfillQ -->|Backfill| Wait["Wait for OwnerBackfill bootstrap<br/>at live sync start"]
+    BackfillQ -->|Live| Poll["OrderDiscoveryPoller<br/>discovers when tradeable"]
 
     style Deactivate fill:#d4edda
     style Skip fill:#fff3cd
@@ -472,7 +472,7 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    subgraph C1["C1: Contract Poller"]
+    subgraph OrderDiscoveryPoller["OrderDiscoveryPoller"]
         direction TB
         C1Q["Query: Active generators<br/>non-deterministic<br/>allCandidatesKnown=false<br/>due for check"]
         C1M["RPC multicall:<br/>getTradeableOrderWithSignature"]
@@ -480,7 +480,7 @@ flowchart LR
         C1Q --> C1M --> C1R
     end
 
-    subgraph C2["C2: Candidate Confirmer"]
+    subgraph CandidateConfirmer["CandidateConfirmer"]
         direction TB
         C2Q["Query: candidateDiscreteOrder<br/>not yet in discreteOrder"]
         C2F["API: POST /orders/by_uids"]
@@ -489,7 +489,7 @@ flowchart LR
         C2Q --> C2F --> C2U --> C2X
     end
 
-    subgraph C3["C3: Status Updater"]
+    subgraph OrderStatusTracker["OrderStatusTracker"]
         direction TB
         C3Q["Query: discreteOrder<br/>status = open"]
         C3F["API: POST /orders/by_uids"]
@@ -497,7 +497,7 @@ flowchart LR
         C3Q --> C3F --> C3U
     end
 
-    subgraph C4["C4: Historical Bootstrap"]
+    subgraph OwnerBackfill["OwnerBackfill"]
         direction TB
         C4Q["Query: Active generators<br/>non-deterministic<br/>no discreteOrder rows"]
         C4F["API: GET /account/{owner}/orders<br/>per unique owner"]
@@ -505,10 +505,10 @@ flowchart LR
         C4Q --> C4F --> C4U
     end
 
-    style C1 fill:#ffe0e0
-    style C2 fill:#e0f0ff
-    style C3 fill:#e0ffe0
-    style C4 fill:#f0e0ff
+    style OrderDiscoveryPoller fill:#ffe0e0
+    style CandidateConfirmer fill:#e0f0ff
+    style OrderStatusTracker fill:#e0ffe0
+    style OwnerBackfill fill:#f0e0ff
 ```
 
 ---
@@ -531,9 +531,9 @@ flowchart LR
         E5 -->|No| E7
     end
 
-    subgraph Live["Live sync (C3 only)"]
+    subgraph Live["Live sync (OrderStatusTracker only)"]
         direction TB
-        L1["C3: poll open UIDs"]
+        L1["OrderStatusTracker: poll open UIDs"]
         L2["API returns fulfilled"]
         L3["Update discreteOrder"]
         L1 --> L2 --> L3
@@ -559,11 +559,11 @@ flowchart TD
     Pre --> API["API fetch: 0xabc not found yet"]
     API --> Cand["candidateDiscreteOrder"]
 
-    Cand --> C2["C2: polls API every block"]
-    C2 --> Wait["0xabc not on API yet..."]
+    Cand --> CandidateConfirmer["CandidateConfirmer: polls API every block"]
+    CandidateConfirmer --> Wait["0xabc not on API yet..."]
     Wait --> Trigger["Price triggers →<br/>watch-tower submits →<br/>solver settles"]
-    Trigger --> Promoted["C2: API returns order<br/>→ promote to discreteOrder"]
-    Promoted --> Fulfilled["C3: API returns fulfilled<br/>→ update discreteOrder"]
+    Trigger --> Promoted["CandidateConfirmer: API returns order<br/>→ promote to discreteOrder"]
+    Promoted --> Fulfilled["OrderStatusTracker: API returns fulfilled<br/>→ update discreteOrder"]
 
     style Trigger fill:#fff3cd
     style Fulfilled fill:#d4edda
@@ -581,7 +581,7 @@ flowchart TD
         B1 --> B2
     end
 
-    subgraph Bootstrap["C4: Historical Bootstrap (once)"]
+    subgraph Bootstrap["OwnerBackfill (once)"]
         B3["Find generator with no discrete orders"]
         B4["Fetch by owner from API"]
         B5["Upsert historical discrete orders"]
@@ -589,11 +589,11 @@ flowchart TD
     end
 
     subgraph LiveLoop["Live sync (repeating)"]
-        C1["C1: Contract Poller<br/>getTradeableOrderWithSignature"]
+        OrderDiscoveryPoller["OrderDiscoveryPoller<br/>getTradeableOrderWithSignature"]
         C1S["Success → candidateDiscreteOrder"]
-        C2["C2: Candidate Confirmer<br/>API confirms → discreteOrder"]
-        C3["C3: Status Updater<br/>open → fulfilled"]
-        C1 --> C1S --> C2 --> C3
+        CandidateConfirmer["CandidateConfirmer<br/>API confirms → discreteOrder"]
+        OrderStatusTracker["OrderStatusTracker<br/>open → fulfilled"]
+        OrderDiscoveryPoller --> C1S --> CandidateConfirmer --> OrderStatusTracker
     end
 
     Backfill --> Bootstrap --> LiveLoop
@@ -612,10 +612,10 @@ flowchart LR
         direction TB
         A["Creation Handler<br/>(backfill + live)"]
         B["UID Pre-computation<br/>(backfill + live)"]
-        C1["C1: Contract Poller<br/>(live)"]
-        C2["C2: Candidate Confirmer<br/>(live)"]
-        C3["C3: Status Updater<br/>(live)"]
-        C4["C4: Bootstrap<br/>(once)"]
+        OrderDiscoveryPoller["OrderDiscoveryPoller<br/>(live)"]
+        CandidateConfirmer["CandidateConfirmer<br/>(live)"]
+        OrderStatusTracker["OrderStatusTracker<br/>(live)"]
+        OwnerBackfill["OwnerBackfill<br/>(once)"]
     end
 
     subgraph Tables
@@ -628,18 +628,18 @@ flowchart LR
 
     A -->|"INSERT (Active)"| Gen
     B -->|"UPDATE (Completed)"| Gen
-    C1 -->|"UPDATE (scheduling, status)"| Gen
+    OrderDiscoveryPoller -->|"UPDATE (scheduling, status)"| Gen
 
     B -->|"INSERT (API missing)"| Cand
-    C1 -->|"INSERT"| Cand
-    C2 -->|"DELETE (promoted + stale)"| Cand
+    OrderDiscoveryPoller -->|"INSERT"| Cand
+    CandidateConfirmer -->|"DELETE (promoted + stale)"| Cand
 
     B -->|"UPSERT (API found)"| Disc
-    C2 -->|"UPSERT"| Disc
-    C3 -->|"UPDATE status"| Disc
-    C4 -->|"UPSERT"| Disc
+    CandidateConfirmer -->|"UPSERT"| Disc
+    OrderStatusTracker -->|"UPDATE status"| Disc
+    OwnerBackfill -->|"UPSERT"| Disc
 
-    C3 -->|"INSERT terminal"| Cache
+    OrderStatusTracker -->|"INSERT terminal"| Cache
 
     style Gen fill:#e8f4f8
     style Disc fill:#d4edda

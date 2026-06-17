@@ -33,12 +33,12 @@ export const DEFAULT_MAX_GENERATORS_PER_BLOCK = 200;
  *
  * Every tryNextBlock response increments a counter on the generator; any other
  * response resets it to zero. The counter selects the next-check block offset:
- *   count <= WARMUP_THRESHOLD   → +1 block  (default, healthy behavior)
- *   count <= COOLDOWN_THRESHOLD → +10 blocks
- *   count >  COOLDOWN_THRESHOLD → +50 blocks
+ *   count <= WARMUP_THRESHOLD   -> +1 block  (default, healthy behavior)
+ *   count <= COOLDOWN_THRESHOLD -> +10 blocks
+ *   count >  COOLDOWN_THRESHOLD -> +50 blocks
  *
  * Block counts (not seconds) intentionally — simpler, and the ceiling is
- * acceptable on both gnosis (~5s/block → 250s) and mainnet (~12s/block → 600s).
+ * acceptable on both gnosis (~5s/block -> 250s) and mainnet (~12s/block -> 600s).
  */
 export const TRY_NEXT_BLOCK_WARMUP_THRESHOLD = 50;
 export const TRY_NEXT_BLOCK_COOLDOWN_THRESHOLD = 200;
@@ -110,7 +110,7 @@ export const BOOTSTRAP_MAX_RETRY_COUNT = 5;
  * Maximum number of TWAP parts that precomputeOrderUids will attempt to enumerate.
  * Pathological orders with n > this value skip precompute and fall back to the
  * OrderDiscoveryPoller discovery path (allCandidatesKnown=false). Logged as
- * [COW:PRECOMPUTE] SKIP reason=too_many_parts when triggered.
+ * `precompute:skip` with reason=too_many_parts when triggered.
  */
 export const MAX_TWAP_PRECOMPUTE_PARTS = 100_000;
 

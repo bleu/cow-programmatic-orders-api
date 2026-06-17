@@ -1,5 +1,5 @@
 /**
- * Tests for the C3 StatusUpdater row-building filter logic (COW-988).
+ * Tests for the OrderStatusTracker row-building filter logic.
  *
  * blockHandler.ts defines a module-level constant:
  *   const VALID_DISCRETE_STATUSES = new Set(["fulfilled", "unfilled", "expired", "cancelled"]);
@@ -40,7 +40,7 @@ interface StatusInfo {
 }
 
 /**
- * Pure re-implementation of the row-building logic from C3 StatusUpdater.
+ * Pure re-implementation of the row-building logic from OrderStatusTracker.
  * Returns the list of rows that would be passed to the multi-row upsert.
  */
 function buildRowsToUpdate(
@@ -105,7 +105,7 @@ describe("VALID_DISCRETE_STATUSES membership", () => {
 
 // ── Row-building filter logic ─────────────────────────────────────────────────
 
-describe("C3 StatusUpdater row-building filter", () => {
+describe("OrderStatusTracker row-building filter", () => {
   const CHAIN_ID = 1;
 
   it('includes an order whose API status is "fulfilled"', () => {

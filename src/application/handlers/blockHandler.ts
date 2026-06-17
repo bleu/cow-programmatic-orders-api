@@ -1,17 +1,17 @@
 /**
  * Block handlers — five responsibilities split into separate Ponder block entries.
  *
- * C1 (ContractPoller):      RPC multicall for non-deterministic generators. Every block.
- * C2 (CandidateConfirmer):  API batch check for unconfirmed candidates. Every block.
- * C3 (StatusUpdater):       API batch check for open discrete orders + expiry. Every block.
- * C4 (HistoricalBootstrap): One-time owner fetch for non-deterministic backfill orders.
- * C5 (DeterministicCancellationSweeper): singleOrders() mapping read for
- *                           deterministic generators (allCandidatesKnown=true) that
- *                           C1 skips. Runs every block but re-checks each generator
- *                           only every DETERMINISTIC_CANCEL_SWEEP_INTERVAL blocks.
+ * OrderDiscoveryPoller:  RPC multicall for non-deterministic generators. Every block.
+ * CandidateConfirmer:    API batch check for unconfirmed candidates. Every block.
+ * OrderStatusTracker:    API batch check for open discrete orders + expiry. Every block.
+ * OwnerBackfill:         One-time owner fetch for non-deterministic backfill orders.
+ * CancellationWatcher:   singleOrders() mapping read for
+ *                        deterministic generators (allCandidatesKnown=true) that
+ *                        OrderDiscoveryPoller skips. Runs every block but re-checks each generator
+ *                        only every DETERMINISTIC_CANCEL_SWEEP_INTERVAL blocks.
  *
  * All handlers start at "latest" — only run during live sync.
- * C4 additionally has endBlock: "latest", so it fires exactly once.
+ * OwnerBackfill additionally has endBlock: "latest", so it fires exactly once.
  */
 
 import { ponder } from "ponder:registry";
@@ -53,7 +53,7 @@ const SINGLE_SHOT_NON_DETERMINISTIC: readonly OrderType[] = ["GoodAfterTime", "T
 const BLOCK_NEVER = 2n ** 63n - 1n; // sentinel for epoch-scheduled generators (PollTryAtEpoch)
 const VALID_DISCRETE_STATUSES = new Set(["fulfilled", "unfilled", "expired", "cancelled"]);
 
-// Minimal ABI for C5: reads the singleOrders(owner, hash) mapping on ComposableCoW.
+// Minimal ABI for CancellationWatcher: reads the singleOrders(owner, hash) mapping on ComposableCoW.
 // `false` means the owner called remove() — generator is cancelled on-chain.
 const SINGLE_ORDERS_ABI = [
   {
@@ -69,13 +69,12 @@ const SINGLE_ORDERS_ABI = [
 ] as const;
 
 
-// ─── C1: Contract Poller ─────────────────────────────────────────────────────
+// ─── OrderDiscoveryPoller ────────────────────────────────────────────────────
 // Polls getTradeableOrderWithSignature for any active generator where
 // allCandidatesKnown=false. Normally only non-deterministic types, but also
 // serves as fallback for deterministic types whose precompute failed.
 
 ponder.on("OrderDiscoveryPoller:block", async ({ event, context }) => {
-  if (process.env.DISABLE_POLL_RESULT_CHECK) return;
 
   const chainId = context.chain.id as SupportedChainId;
   const composableCowAddress = COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID[chainId];
@@ -296,7 +295,7 @@ ponder.on("OrderDiscoveryPoller:block", async ({ event, context }) => {
   log("info", "OrderDiscoveryPoller:DONE", { block: String(currentBlock), chainId, due: dueOrders.length, success: successCount, never: neverCount, backedOff: backedOffCount, capped });
 });
 
-// ─── C2: Candidate Confirmer ─────────────────────────────────────────────────
+// ─── CandidateConfirmer ──────────────────────────────────────────────────────
 // Checks if candidate discrete orders exist on the Orderbook API.
 // When confirmed, promotes them to discreteOrder.
 
@@ -350,7 +349,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
     }[];
 
     if (orphanCandidates.length > 0) {
-      // COW-990: preflight /by_uids before writing cancelled. A candidate could have
+      // Preflight /by_uids before writing cancelled. A candidate could have
       // been posted by the watch-tower and filled/expired between generator creation
       // and the cancellation cascade (~0.17% observed rate). Use the API status when
       // available; fall back to 'cancelled' for UIDs not yet on the orderbook.
@@ -367,7 +366,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
         preflightStatuses = new Map();
       }
 
-      // onConflictDoNothing: if C3 already promoted this UID with a terminal status
+      // onConflictDoNothing: if OrderStatusTracker already promoted this UID with a terminal status
       // (e.g. 'fulfilled'), the existing row wins and this insert is a no-op.
       // Chunked to avoid PostgreSQL bind-message parameter limits on large cascades.
       // preflightKnown counts API hits, not rows actually written.
@@ -545,7 +544,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
   if (stale.length > 0) {
     const staleStatuses = await fetchOrderStatusByUids(context, chainId, stale.map((c) => c.orderUid));
 
-    // TWAP parts can age out of /by_uids before C2 sees them, causing fulfilled
+    // TWAP parts can age out of /by_uids before CandidateConfirmer sees them, causing fulfilled
     // parts to be recorded as "expired". For any missed UIDs, fall back to
     // /account/{owner}/orders — one fetch per unique owner.
     const missed = stale.filter((c) => !staleStatuses.has(c.orderUid));
@@ -580,7 +579,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
             if (ownerMissedUids.has(uid)) staleStatuses.set(uid, info);
           }
         } catch (err) {
-          console.warn(`[COW:C2] block=${event.block.number} chain=${chainId} accountFallback failed owner=${owner}`, err);
+          log("warn", "CandidateConfirmer:accountFallback_failed", { block: String(event.block.number), chainId, owner, err: err instanceof Error ? err.message : String(err) });
         }
       }
     }
@@ -623,7 +622,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
   }
 });
 
-// ─── C3: Status Updater ──────────────────────────────────────────────────────
+// ─── OrderStatusTracker ──────────────────────────────────────────────────────
 // Polls the API for status updates on open discrete orders. Expires past validTo.
 
 ponder.on("OrderStatusTracker:block", async ({ event, context }) => {
@@ -755,7 +754,7 @@ ponder.on("OrderStatusTracker:block", async ({ event, context }) => {
     );
 });
 
-// ─── C4: Historical Bootstrap ────────────────────────────────────────────────
+// ─── OwnerBackfill ───────────────────────────────────────────────────────────
 // One-time discovery of historical discrete orders for non-deterministic
 // generators created during backfill. Fires once at startBlock=endBlock="latest".
 
@@ -894,17 +893,16 @@ ponder.on("OwnerBackfill:block", async ({ event, context }) => {
   log("info", "OwnerBackfill:DONE", { block: String(currentBlock), chainId, discovered: totalDiscovered });
 });
 
-// ─── C5: Deterministic Cancellation Sweeper ──────────────────────────────────
-// C1 skips generators with allCandidatesKnown=true (deterministic types: TWAP,
+// ─── CancellationWatcher ─────────────────────────────────────────────────────
+// OrderDiscoveryPoller skips generators with allCandidatesKnown=true (deterministic types: TWAP,
 // StopLoss, CirclesBackingOrder), so SingleOrderNotAuthed is never observed
 // for them. This handler closes that gap by reading
 // ComposableCoW.singleOrders(owner, hash) on a DETERMINISTIC_CANCEL_SWEEP_INTERVAL
-// cadence. A `false` result means the owner called remove() on-chain → flip to
-// Cancelled, which lets the C2/C3 parent-cancelled cascade (COW-918) reconcile
+// cadence. A `false` result means the owner called remove() on-chain -> flip to
+// Cancelled, which lets the CandidateConfirmer/OrderStatusTracker parent-cancelled cascade reconcile
 // the child discrete / candidate rows on the next block.
 
 ponder.on("CancellationWatcher:block", async ({ event, context }) => {
-  if (process.env.DISABLE_DETERMINISTIC_CANCEL_SWEEP) return;
 
   const chainId = context.chain.id as SupportedChainId;
   const composableCowAddress = COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID[chainId];

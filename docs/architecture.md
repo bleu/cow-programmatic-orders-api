@@ -14,7 +14,7 @@ Configuration lives in `src/chains/` (one file per chain). The ComposableCoW con
 
 Currently active chains, their start blocks, and contract addresses are defined in `src/chains/`. To add a chain, create a chain file there and register it in `src/chains/index.ts`.
 
-Stub configs exist for all 12 chains in cow-sdk's `ALL_SUPPORTED_CHAIN_IDS`; contract addresses for the remaining chains need verification before enabling (see COW-986).
+Stub configs exist for all 12 chains in cow-sdk's `ALL_SUPPORTED_CHAIN_IDS`; contract addresses for the remaining chains need verification before enabling.
 
 `ponder.config.ts` derives all config from `ACTIVE_CHAINS` in `src/chains/index.ts` and wires it into Ponder's `createConfig`. It never contains raw addresses or block numbers directly. It also registers the five live-only block handlers from `blockHandler.ts` (`OrderDiscoveryPoller`, `CandidateConfirmer`, `OrderStatusTracker`, `OwnerBackfill`, `CancellationWatcher`) — all run during live sync only (`startBlock: "latest"`).
 
@@ -38,7 +38,7 @@ ConditionalOrderCreated         COWShedBuilt events            Settlement events
         v                               v                               v
 composableCow.ts handler        cowshed.ts handler             settlement.ts handler
   - hash params tuple             - write ownerMapping:          - fetch receipt, scan Trade logs
-  - resolve owner proxy             shed → user EOA              - check FACTORY() on each trader
+  - resolve owner proxy             shed -> user EOA              - check FACTORY() on each trader
   - decode staticInput            (used by composableCow.ts      - if Aave adapter: call owner(),
   - write transaction +             at next order creation)        write ownerMapping
     conditionalOrderGenerator
@@ -54,7 +54,7 @@ composableCow.ts handler        cowshed.ts handler             settlement.ts han
                  OrderDiscoveryPoller     — multicall getTradeableOrderWithSignature for
                                            non-deterministic generators; detects cancellation
                                            via SingleOrderNotAuthed error
-                 CandidateConfirmer      — confirms candidates via orderbook API → discreteOrder;
+                 CandidateConfirmer      — confirms candidates via orderbook API -> discreteOrder;
                                            cascades parent Cancelled to orphan candidates
                  OrderStatusTracker      — polls API for status updates on open discrete orders;
                                            cascades parent Cancelled to orphan open rows
@@ -100,7 +100,7 @@ PK: `(chainId, eventId)`. Indexed on `owner`, `handler`, `hash`, `chainId+owner`
 
 ### discrete_order
 
-Links individual order UIDs (from the CoW Protocol orderbook) back to their parent generator. One generator can produce many discrete orders over its lifetime — a TWAP with 10 parts creates 10 discrete orders. Populated by C2 (CandidateConfirmer) after confirmation against the orderbook API; status kept current by C3 (StatusUpdater).
+Links individual order UIDs (from the CoW Protocol orderbook) back to their parent generator. One generator can produce many discrete orders over its lifetime — a TWAP with 10 parts creates 10 discrete orders. Populated by CandidateConfirmer after confirmation against the orderbook API; status kept current by OrderStatusTracker.
 
 Key columns: `orderUid`, `chainId`, `conditionalOrderGeneratorId` (references `eventId`), `status` (open/fulfilled/unfilled/expired/cancelled), `sellAmount`, `buyAmount`, `executedSellAmount`, `executedBuyAmount`.
 PK: `(chainId, orderUid)`. See [api-reference.md](./api-reference.md) for full field docs.
@@ -164,7 +164,7 @@ Every block, this handler drains up to `MAX_SETTLEMENTS_PER_BLOCK` rows from `se
 5. Call `getCode` on the address (with timeout). Skip if EOA (no bytecode).
 6. Call `FACTORY()` via raw `eth_call` (not `readContract`, which logs a WARN on every revert). If the returned address doesn't match the known AaveV3AdapterFactory address, skip.
 7. Call `owner()` on the adapter to retrieve the underlying EOA.
-8. Write a row to `ownerMapping` (`address` → `owner`, `addressType = FlashLoanHelper`).
+8. Write a row to `ownerMapping` (`address` -> `owner`, `addressType = FlashLoanHelper`).
 9. Update any `conditionalOrderGenerator` rows owned by the adapter address to set `ownerAddressType = FlashLoanHelper`.
 10. Delete the queue row.
 
@@ -176,22 +176,17 @@ Stats (total settlements, trade logs found, EOA skips, adapter mappings, avg FAC
 
 All block handlers run only during live sync (`startBlock: "latest"`) to avoid hammering the orderbook API during historical backfill. `OrderDiscoveryPoller` and `CancellationWatcher` share a per-chain batch cap (`MAX_GENERATORS_PER_BLOCK_<chainId>`, default 200) and pull from a priority queue ordered by oldest `lastCheckBlock` first. Generators past the cap defer to the next block.
 
-**TWAP aged-out fallback**: When a candidate's `orderUid` is no longer served by `/orders/by_uids` (typically after the order expires from the orderbook cache), `CandidateConfirmer` falls back to fetching the owner's full order list from `/account/{owner}/orders`. This resolves TWAP parts that the orderbook stopped tracking before `CandidateConfirmer` processed them. On timeout or API failure, the candidate defaults to `expired`.
-
-**OrderStatusTracker** (every block, mainnet + gnosis): Polls the orderbook API for all `open` discrete orders and updates their status from the API response. Then sweeps any remaining `open` rows whose parent generator is `Cancelled` to `status='cancelled'` (API-terminal statuses from the loop above still win for children that were traded before on-chain cancellation). Finally expires any orders past their `validTo` timestamp.
-
-**OrderDiscoveryPoller** (every block, mainnet + gnosis): Multicalls `getTradeableOrderWithSignature` on ComposableCoW for each `Active` generator where `allCandidatesKnown=false`. A success result creates a `candidateDiscreteOrder` entry. A `SingleOrderNotAuthed` error marks the generator as `Cancelled` with `lastPollResult='cancelled:SingleOrderNotAuthed'`. Other errors (tryNextBlock, tryAtEpoch, etc.) advance the generator's `nextCheckBlock` accordingly. Single-shot non-deterministic types (GoodAfterTime, TradeAboveThreshold) set `allCandidatesKnown=true` after first success. Can be disabled with `DISABLE_POLL_RESULT_CHECK=true`.
+**OrderDiscoveryPoller** (every block, mainnet + gnosis): Multicalls `getTradeableOrderWithSignature` on ComposableCoW for each `Active` generator where `allCandidatesKnown=false`. A success result creates a `candidateDiscreteOrder` entry. A `SingleOrderNotAuthed` error marks the generator as `Cancelled` with `lastPollResult='cancelled:SingleOrderNotAuthed'`. Other errors (tryNextBlock, tryAtEpoch, etc.) advance the generator's `nextCheckBlock` accordingly. Single-shot non-deterministic types (GoodAfterTime, TradeAboveThreshold) set `allCandidatesKnown=true` after first success.
 
 **CandidateConfirmer** (every block, mainnet + gnosis): First drains any `candidateDiscreteOrder` rows whose parent generator is `Cancelled` — promoting them into `discreteOrder` with `status='cancelled'` and deleting the candidate rows. Then checks remaining `candidateDiscreteOrder` rows against the orderbook API: when a candidate appears in the API, it's promoted to `discreteOrder` and deleted from candidates. Candidates past their `validTo` are also pruned.
 
-**TWAP aged-out fallback**: When a candidate's `orderUid` is no longer served by `/orders/by_uids` (typically after the order expires from the orderbook cache), `CandidateConfirmer` falls back to fetching the owner's full order list from `/account/{owner}/orders`. This resolves TWAP parts that the orderbook stopped tracking before C2 processed them. On timeout or API failure, the candidate defaults to `expired`.
-
+**TWAP aged-out fallback**: When a candidate's `orderUid` is no longer served by `/orders/by_uids` (typically after the order expires from the orderbook cache), `CandidateConfirmer` falls back to fetching the owner's full order list from `/account/{owner}/orders`. This resolves TWAP parts that the orderbook stopped tracking before `CandidateConfirmer` processed them. On timeout or API failure, the candidate defaults to `expired`.
 
 **OrderStatusTracker** (every block, mainnet + gnosis): Polls the orderbook API for all `open` discrete orders and updates their status from the API response. Then sweeps any remaining `open` rows whose parent generator is `Cancelled` to `status='cancelled'` (API-terminal statuses from the loop above still win for children that were traded before on-chain cancellation). Finally expires any orders past their `validTo` timestamp.
 
 **OwnerBackfill** (fires once at latest block, mainnet + gnosis): One-time fetch of historical orders for non-deterministic generators (PerpetualSwap, GoodAfterTime, TradeAboveThreshold, Unknown) that were active during backfill but have no discrete orders yet. Queries the CoW Protocol `/orders?owner=` endpoint per owner.
 
-**CancellationWatcher** (every block, mainnet + gnosis): Closes `OrderDiscoveryPoller`'s blind spot. `OrderDiscoveryPoller` skips `allCandidatesKnown=true` generators, so removals via `ComposableCoW.remove()` on deterministic types (TWAP, StopLoss, CirclesBackingOrder) would otherwise go undetected — `remove()` emits no event. `CancellationWatcher` multicalls `singleOrders(owner, hash)` on a per-generator cadence of `DETERMINISTIC_CANCEL_SWEEP_INTERVAL` blocks (default 100). A `false` return means the owner called `remove()` on-chain: the generator is flipped to `Cancelled` with `lastPollResult='cancelled:removeMapping'`, after which `CandidateConfirmer` and `OrderStatusTracker`'s parent-cancelled cascades reconcile the children on the next block. `true` reschedules the next check. Can be disabled with `DISABLE_DETERMINISTIC_CANCEL_SWEEP=true`.
+**CancellationWatcher** (every block, mainnet + gnosis): Closes `OrderDiscoveryPoller`'s blind spot. `OrderDiscoveryPoller` skips `allCandidatesKnown=true` generators, so removals via `ComposableCoW.remove()` on deterministic types (TWAP, StopLoss, CirclesBackingOrder) would otherwise go undetected — `remove()` emits no event. `CancellationWatcher` multicalls `singleOrders(owner, hash)` on a per-generator cadence of `DETERMINISTIC_CANCEL_SWEEP_INTERVAL` blocks (default 100). A `false` return means the owner called `remove()` on-chain: the generator is flipped to `Cancelled` with `lastPollResult='cancelled:removeMapping'`, after which `CandidateConfirmer` and `OrderStatusTracker`'s parent-cancelled cascades reconcile the children on the next block. `true` reschedules the next check.
 
 ## Order Types and Decoders
 
