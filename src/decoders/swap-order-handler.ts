@@ -14,7 +14,7 @@ export interface SwapOrderHandlerDecodedParams {
   appData: string;         // bytes32
 }
 
-const SWAP_ORDER_HANDLER_ABI = [
+export const SWAP_ORDER_HANDLER_ABI = [
   {
     type: "tuple",
     components: [

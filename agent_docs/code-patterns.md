@@ -38,7 +38,7 @@ Every `fetch`, `context.client.multicall`, `context.client.readContract`, or oth
 2. Catch `TimeoutError` at the handler boundary, log `[COW:Cx] <label> timeout …`, and `return` without further DB writes.
 3. Be partial-failure tolerant — writes for affected items are skipped; the next block retries naturally.
 
-Rationale: Ponder 0.16 wraps every block in a single DB transaction (`node_modules/.../ponder/src/runtime/multichain.ts:363,639`) and offers no API to leave/re-enter. An unbounded external call in a handler holds the TX across the network round-trip; on a slow peer, Postgres terminates the connection and Ponder retries the full block 9× before shutting the process down (see `ponder-final-23-04.log`, 2026-04-23). Tuning knobs live in `src/constants.ts` (`ORDERBOOK_HTTP_TIMEOUT_MS`, `BLOCK_HANDLER_RPC_TIMEOUT_MS`, `BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS`).
+Rationale: Ponder 0.16 wraps every block in a single DB transaction (`node_modules/.../ponder/src/runtime/multichain.ts:363,639`) and offers no API to leave/re-enter. An unbounded external call in a handler holds the TX across the network round-trip; on a slow peer, Postgres terminates the connection and Ponder retries the full block 9× before shutting the process down. Tuning knobs live in `src/constants.ts` (`ORDERBOOK_HTTP_TIMEOUT_MS`, `BLOCK_HANDLER_RPC_TIMEOUT_MS`, `BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS`).
 
 ---
 

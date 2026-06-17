@@ -9,11 +9,11 @@ export interface GoodAfterTimeDecodedParams {
   startTime: bigint;
   endTime: bigint;
   allowPartialFill: boolean;
-  priceCheckerPayload: string;  // hex bytes — opaque in M1
+  priceCheckerPayload: string;  // hex bytes — opaque (price-checker payload, not decoded)
   appData: string;
 }
 
-const GOOD_AFTER_TIME_ABI = [
+export const GOOD_AFTER_TIME_ABI = [
   {
     type: "tuple",
     components: [

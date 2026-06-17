@@ -1,0 +1,151 @@
+diff --git a/dist/esm/indexing-store/cache.js b/dist/esm/indexing-store/cache.js
+index e2f6a03650b5b80cae9ec4dc0a8837cb054cae18..0d97ae9bf2820459f8744449e11796897456c65e 100644
+--- a/dist/esm/indexing-store/cache.js
++++ b/dist/esm/indexing-store/cache.js
+@@ -157,6 +157,7 @@ export const recoverBatchError = async (values, callback) => {
+ export const createIndexingCache = ({ common, schemaBuild: { schema }, crashRecoveryCheckpoint, eventCount, chainId, }) => {
+     let event;
+     let qb = undefined;
++    let _flushId = 0;
+     const cache = new Map();
+     const insertBuffer = new Map();
+     const updateBuffer = new Map();
+@@ -283,11 +284,13 @@ export const createIndexingCache = ({ common, schemaBuild: { schema }, crashReco
+             return inInsertBuffer || inUpdateBuffer || inDb;
+         },
+         async flush({ tableNames } = {}) {
++            const sp = `flush_${++_flushId}`;
++            const currentQb = qb;
+             const context = {
+                 logger: common.logger.child({ action: "flush_database_rows" }),
+             };
+             const flushEndClock = startClock();
+-            const copy = getCopyHelper(qb, chainId);
++            const copy = getCopyHelper(currentQb, chainId);
+             const flushTable = async (table) => {
+                 const shouldRecordBytes = cache.get(table).isCacheComplete;
+                 if (tableNames !== undefined &&
+@@ -308,7 +311,7 @@ export const createIndexingCache = ({ common, schemaBuild: { schema }, crashReco
+                         await copy(table, text);
+                     }
+                     else {
+-                        await qb.wrap((db) => db.insert(table).values(insertValues.map(({ row }) => row)), context);
++                        await currentQb.wrap((db) => db.insert(table).values(insertValues.map(({ row }) => row)), context);
+                     }
+                     common.metrics.ponder_indexing_cache_query_duration.observe({
+                         table: getTableName(table),
+@@ -346,15 +349,15 @@ export const createIndexingCache = ({ common, schemaBuild: { schema }, crashReco
+               WHERE ${primaryKeys
+                             .map(({ sql }) => `target."${sql}" = source."${sql}"`)
+                             .join(" AND ")};`;
+-                        await qb.wrap((db) => db.execute(createTempTableQuery), context);
++                        await currentQb.wrap((db) => db.execute(createTempTableQuery), context);
+                         const text = getCopyText(table, updateValues.map(({ row }) => row));
+                         await new Promise(setImmediate);
+                         await copy(table, text, false);
+-                        await qb.wrap((db) => db.execute(updateQuery), context);
+-                        await qb.wrap((db) => db.execute(`TRUNCATE TABLE "${target}"`), context);
++                        await currentQb.wrap((db) => db.execute(updateQuery), context);
++                        await currentQb.wrap((db) => db.execute(`TRUNCATE TABLE "${target}"`), context);
+                     }
+                     else {
+-                        await qb.wrap((db) => db
++                        await currentQb.wrap((db) => db
+                             .insert(table)
+                             .values(updateValues.map(({ row }) => row))
+                             .onConflictDoUpdate({
+@@ -391,10 +394,10 @@ export const createIndexingCache = ({ common, schemaBuild: { schema }, crashReco
+                 }
+             };
+             try {
+-                if (qb.$dialect === "postgres") {
+-                    await qb.wrap((db) => db.execute("SAVEPOINT flush"), context);
++                if (currentQb.$dialect === "postgres") {
++                    await currentQb.wrap((db) => db.execute(`SAVEPOINT ${sp}`), context);
+                     await promiseAllSettledWithThrow(Array.from(cache.keys()).map(flushTable));
+-                    await qb.wrap((db) => db.execute("RELEASE flush"), context);
++                    await currentQb.wrap((db) => db.execute(`RELEASE ${sp}`), context);
+                 }
+                 else {
+                     // Note: pglite must run sequentially
+@@ -405,13 +408,20 @@ export const createIndexingCache = ({ common, schemaBuild: { schema }, crashReco
+             }
+             catch (_error) {
+                 let error = _error;
+-                if (error instanceof ShutdownError || qb.$dialect === "pglite") {
++                if (error instanceof ShutdownError || currentQb.$dialect === "pglite") {
+                     throw error;
+                 }
+                 // Note `isFlushRetry` is true when the previous flush failed. When `isFlushRetry` is false, this
+                 // function takes an optimized fast path, with support for small batch sizes. PGlite always takes
+                 // the fast path because it doesn't support delayed insert errors.
+-                await qb.wrap((db) => db.execute("ROLLBACK to flush"), context);
++                try {
++                    await currentQb.wrap((db) => db.execute(`ROLLBACK to ${sp}`), context);
++                } catch {
++                    // SAVEPOINT was never created (qb was a pool connection, not in a transaction).
++                    // In multichain mode another chain may reset the shared qb before flush() is called.
++                    // Re-throw original error so the outer block transaction rolls back cleanly.
++                    throw error;
++                }
+                 for (const table of cache.keys()) {
+                     if (tableNames !== undefined &&
+                         tableNames.has(getTableName(table)) === false) {
+@@ -424,12 +434,12 @@ export const createIndexingCache = ({ common, schemaBuild: { schema }, crashReco
+                     const updateValues = Array.from(updateBuffer.get(table).values());
+                     if (insertValues.length > 0) {
+                         const endClock = startClock();
+-                        await qb.wrap((db) => db.execute("SAVEPOINT flush"), context);
++                        await currentQb.wrap((db) => db.execute(`SAVEPOINT ${sp}`), context);
+                         const result = await recoverBatchError(insertValues, async (values) => {
+-                            await qb.wrap((db) => db.execute("ROLLBACK to flush"), context);
++                            await currentQb.wrap((db) => db.execute(`ROLLBACK to ${sp}`), context);
+                             const text = getCopyText(table, values.map(({ row }) => row));
+                             await copy(table, text);
+-                            await qb.wrap((db) => db.execute("SAVEPOINT flush"), context);
++                            await currentQb.wrap((db) => db.execute(`SAVEPOINT ${sp}`), context);
+                         });
+                         if (result.status === "error") {
+                             error = new DelayedInsertError(result.error.message);
+@@ -471,15 +481,15 @@ export const createIndexingCache = ({ common, schemaBuild: { schema }, crashReco
+               WITH NO DATA;
+             `;
+                         const endClock = startClock();
+-                        await qb.wrap((db) => db.execute(createTempTableQuery), context);
+-                        await qb.wrap((db) => db.execute("SAVEPOINT flush"), context);
++                        await currentQb.wrap((db) => db.execute(createTempTableQuery), context);
++                        await currentQb.wrap((db) => db.execute(`SAVEPOINT ${sp}`), context);
+                         const result = await recoverBatchError(updateValues, async (values) => {
+-                            await qb.wrap((db) => db.execute("ROLLBACK to flush"), context);
++                            await currentQb.wrap((db) => db.execute(`ROLLBACK to ${sp}`), context);
+                             const text = getCopyText(table, values.map(({ row }) => row));
+                             await copy(table, text, false);
+-                            await qb.wrap((db) => db.execute("SAVEPOINT flush"), context);
++                            await currentQb.wrap((db) => db.execute(`SAVEPOINT ${sp}`), context);
+                         });
+-                        await qb.wrap((db) => db.execute(`TRUNCATE TABLE "${target}"`), context);
++                        await currentQb.wrap((db) => db.execute(`TRUNCATE TABLE "${target}"`), context);
+                         if (result.status === "error") {
+                             error = new DelayedInsertError(result.error.message);
+                             error.stack = undefined;
+diff --git a/dist/esm/rpc/actions.js b/dist/esm/rpc/actions.js
+index ae284fa3d3ba39b259175a4e9869a5ea6d4da4a2..f2b9ec8daddabf09685e717c186517d04a5d7d8c 100644
+--- a/dist/esm/rpc/actions.js
++++ b/dist/esm/rpc/actions.js
+@@ -766,13 +766,9 @@ export const standardizeLogs = (logs, request) => {
+             throw error;
+         }
+         if (hexToBigInt(log.logIndex) > BigInt(PG_INTEGER_MAX)) {
+-            const error = new RpcProviderError(`Invalid RPC response: 'log.logIndex' (${hexToBigInt(log.logIndex)}) is larger than the maximum allowed value (${PG_INTEGER_MAX}).`);
+-            error.meta = [
+-                "Please report this error to the RPC operator.",
+-                requestText(request),
+-            ];
+-            error.stack = undefined;
+-            throw error;
++            // Gnosis uses sentinel logIndex values near 2^32 for synthetic consensus/bridge events.
++            // These are not real EVM logs; skip them instead of crashing.
++            continue;
+         }
+     }
+     return logs;

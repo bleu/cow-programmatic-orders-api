@@ -16,7 +16,7 @@ export interface StopLossDecodedParams {
   maxTimeSinceLastOracleUpdate: bigint;
 }
 
-const STOP_LOSS_ABI = [
+export const STOP_LOSS_ABI = [
   {
     type: "tuple",
     components: [

@@ -33,12 +33,12 @@ export const DEFAULT_MAX_GENERATORS_PER_BLOCK = 200;
  *
  * Every tryNextBlock response increments a counter on the generator; any other
  * response resets it to zero. The counter selects the next-check block offset:
- *   count <= WARMUP_THRESHOLD   → +1 block  (default, healthy behavior)
- *   count <= COOLDOWN_THRESHOLD → +10 blocks
- *   count >  COOLDOWN_THRESHOLD → +50 blocks
+ *   count <= WARMUP_THRESHOLD   -> +1 block  (default, healthy behavior)
+ *   count <= COOLDOWN_THRESHOLD -> +10 blocks
+ *   count >  COOLDOWN_THRESHOLD -> +50 blocks
  *
  * Block counts (not seconds) intentionally — simpler, and the ceiling is
- * acceptable on both gnosis (~5s/block → 250s) and mainnet (~12s/block → 600s).
+ * acceptable on both gnosis (~5s/block -> 250s) and mainnet (~12s/block -> 600s).
  */
 export const TRY_NEXT_BLOCK_WARMUP_THRESHOLD = 50;
 export const TRY_NEXT_BLOCK_COOLDOWN_THRESHOLD = 200;
@@ -82,3 +82,44 @@ export const SETTLEMENT_INNER_RPC_TIMEOUT_MS = 5_000;
  * the normal OrderDiscoveryPoller / CandidateConfirmer path picks them up on subsequent blocks.
  */
 export const BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS = 30_000;
+
+/**
+ * Page size used by fetchComposableOrders when calling /account/{owner}/orders.
+ * Small pages (25 orders) keep each HTTP response tiny and fast, avoiding the
+ * per-page ORDERBOOK_HTTP_TIMEOUT_MS budget even for the largest owners.
+ * The regular fetchAccountOrders callers use PAGE_LIMIT=1000.
+ */
+export const BOOTSTRAP_PAGE_SIZE = 25;
+
+/**
+ * Maximum pages fetched from /account/{owner}/orders in fetchComposableOrders.
+ * At BOOTSTRAP_PAGE_SIZE=25 this caps the fetch at 100 orders per owner —
+ * sufficient for any realistic composable-order history since orders are returned
+ * newest-first and composable orders are typically recent.
+ */
+export const BOOTSTRAP_MAX_PAGES = 4;
+
+/**
+ * Maximum number of times OwnerBackfill will retry a timed-out owner across
+ * indexer restarts. After this many consecutive failures the owner is removed
+ * from bootstrap_retry_queue and left to the normal C1/C2 discovery path.
+ */
+export const BOOTSTRAP_MAX_RETRY_COUNT = 5;
+
+/**
+ * Maximum number of TWAP parts that precomputeOrderUids will attempt to enumerate.
+ * Pathological orders with n > this value skip precompute and fall back to the
+ * OrderDiscoveryPoller discovery path (allCandidatesKnown=false). Logged as
+ * `precompute:skip` with reason=too_many_parts when triggered.
+ */
+export const MAX_TWAP_PRECOMPUTE_PARTS = 100_000;
+
+/**
+ * Hard per-block ceiling on how many open discrete orders OrderStatusTracker
+ * will check in a single block. Caps the /by_uids batch size and keeps block
+ * handler transactions short.
+ *
+ * Override per chain with env var MAX_DISCRETE_ORDERS_PER_BLOCK_<chainId>, e.g.
+ * MAX_DISCRETE_ORDERS_PER_BLOCK_1=200, MAX_DISCRETE_ORDERS_PER_BLOCK_100=500.
+ */
+export const DEFAULT_MAX_DISCRETE_ORDERS_PER_BLOCK = 200;

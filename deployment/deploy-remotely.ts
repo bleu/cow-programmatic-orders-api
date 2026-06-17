@@ -116,9 +116,10 @@ if (deployTarget === "-") {
   // Note: The remote host must have Node 18+ and pnpm installed.
   // After the first deploy, run `pnpm install` on the remote to install tsx.
   const remoteDeployDir = `${remotePath}/deployment`;
+  // Use bash login shell so NVM / system Node.js is in PATH on the remote host.
   run("ssh", [
     sshHost,
-    `cd ${remoteDeployDir} && npx tsx manage.ts ${manageCmd} --env-file .env --revision ${appRevision}`,
+    `bash -lc "cd ${remoteDeployDir} && npx tsx manage.ts ${manageCmd} --env-file .env --revision ${appRevision}"`,
   ]);
 } else {
   console.error(

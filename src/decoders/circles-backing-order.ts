@@ -7,7 +7,7 @@ export interface CirclesBackingOrderDecodedParams {
   appData: string;     // bytes32
 }
 
-const CIRCLES_BACKING_ORDER_ABI = [
+export const CIRCLES_BACKING_ORDER_ABI = [
   {
     type: "tuple",
     components: [

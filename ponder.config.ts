@@ -72,19 +72,21 @@ export default createConfig({
     },
   },
   blocks: {
+    // Block handler intervals are tuned per chain to keep total handler time
+    // well within the available window while reducing unnecessary invocations.
+    //
+    // Gnosis  (5s blocks, interval=10): 10×5s=50s window, ~33s combined → 66% utilization
+    // Mainnet (12s blocks, interval=4):  4×12s=48s window, ~22s combined → 46% utilization
+    //
+    // All handlers fire together on the same block every interval blocks.
+    // Simpler and more efficient than coprime staggering.
+
     // OrderDiscoveryPoller — RPC multicall for non-deterministic generators.
-    // Gnosis interval=4 (~20s) vs mainnet interval=1 (~12s).
-    // The CoW watch-tower processes orders sequentially — with 1,461+ gnosis
-    // generators, a full cycle takes many blocks. Polling every 5s gnosis block
-    // wastes RPC calls since state rarely changes between blocks.
     OrderDiscoveryPoller: {
       chain: Object.fromEntries(
         ACTIVE_CHAINS.map((c) => [
           c.name,
-          {
-            startBlock: "latest" as const,
-            ...(pollerInterval(c.blockTime) > 1 ? { interval: pollerInterval(c.blockTime) } : {}),
-          },
+          { startBlock: "latest" as const, interval: c.blockTime < 8 ? 10 : 4 },
         ]),
       ),
       interval: 1,
@@ -92,14 +94,20 @@ export default createConfig({
     // CandidateConfirmer — checks API for unconfirmed candidates.
     CandidateConfirmer: {
       chain: Object.fromEntries(
-        ACTIVE_CHAINS.map((c) => [c.name, { startBlock: "latest" as const }]),
+        ACTIVE_CHAINS.map((c) => [
+          c.name,
+          { startBlock: "latest" as const, interval: c.blockTime < 8 ? 10 : 4 },
+        ]),
       ),
       interval: 1,
     },
     // OrderStatusTracker — polls API for open discrete order status.
     OrderStatusTracker: {
       chain: Object.fromEntries(
-        ACTIVE_CHAINS.map((c) => [c.name, { startBlock: "latest" as const }]),
+        ACTIVE_CHAINS.map((c) => [
+          c.name,
+          { startBlock: "latest" as const, interval: c.blockTime < 8 ? 10 : 4 },
+        ]),
       ),
       interval: 1,
     },
@@ -113,20 +121,18 @@ export default createConfig({
       ),
       interval: 1,
     },
-    // CancellationWatcher — singleOrders() mapping read for deterministic
-    // generators (allCandidatesKnown=true). Cadence per generator is
-    // DETERMINISTIC_CANCEL_SWEEP_INTERVAL blocks; the handler itself is cheap when nothing is due.
+    // CancellationWatcher — singleOrders() mapping read for deterministic generators
+    // (allCandidatesKnown=true). Cadence per generator is DETERMINISTIC_CANCEL_SWEEP_INTERVAL
+    // blocks; the handler itself is cheap when nothing is due.
     CancellationWatcher: {
       chain: Object.fromEntries(
-        ACTIVE_CHAINS.map((c) => [c.name, { startBlock: "latest" as const }]),
-      ),
-      interval: 1,
-    },
-    // SettlementResolver — async Aave adapter discovery from queued Settlement events.
-    // Only runs on chains that have a flash loan router (currently mainnet only).
-    SettlementResolver: {
-      chain: Object.fromEntries(
-        settlementChains.map((c) => [c.name, { startBlock: "latest" as const }]),
+        ACTIVE_CHAINS.map((c) => [
+          c.name,
+          {
+            startBlock: "latest" as const,
+            interval: c.blockTime < 8 ? 10 : 4,
+          },
+        ]),
       ),
       interval: 1,
     },

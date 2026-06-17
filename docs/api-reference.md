@@ -29,7 +29,7 @@ High-level map of what's queryable:
 - **`discreteOrder`** — individual CoW Protocol orders produced by a generator (a TWAP with 10 parts produces 10 discrete orders). Tracks orderbook status and executed amounts.
 - **`candidateDiscreteOrder`** — unconfirmed discrete orders discovered by the block handler, awaiting confirmation against the orderbook API.
 - **`transaction`** — block and timestamp metadata for indexed transactions.
-- **`ownerMapping`** — proxy/adapter → EOA mappings. Populated from CoWShed factory events and Aave flash loan adapter detection.
+- **`ownerMapping`** — proxy/adapter -> EOA mappings. Populated from CoWShed factory events and Aave flash loan adapter detection.
 
 For schema details (columns, indexes, relations), see [architecture.md](./architecture.md).
 
@@ -151,4 +151,4 @@ The active chain list is `ACTIVE_CHAINS` in `src/chains/index.ts`. Currently act
 
 Filter queries with `where: { chainId: 1 }` (GraphQL) or `?chainId=1` (REST).
 
-> Adding a chain: create `src/chains/<name>.ts` following the existing chain files as a template, add it to `ACTIVE_CHAINS` in `src/chains/index.ts`, and add its RPC URL env var. See COW-986 for the full checklist.
+> Adding a chain: create `src/chains/<name>.ts` following the existing chain files as a template, add it to `ACTIVE_CHAINS` in `src/chains/index.ts`, and add its RPC URL env var.

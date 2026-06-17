@@ -6,6 +6,30 @@ Analyze `ponder.log` to diagnose indexer issues. Run after `pnpm dev --disable-u
 
 **NEVER use the `Read` tool on `ponder.log`** — the file is too large and will crash context. Use only `Bash` with `grep`, `tail`, or `sed`.
 
+## Log Format
+
+Handler code uses a structured JSON logger (`src/application/helpers/logger.ts`). Each `log(level, msg, fields)` call emits exactly one JSON line:
+
+```json
+{"time":1700000000000,"level":"info","msg":"OrderDiscoveryPoller:DONE","block":"12345678","chainId":1,"due":12,"success":2,"never":0,"backedOff":0}
+```
+
+Practical consequences for grep:
+- The `msg` token is the stable search key. Grep it directly: `grep OrderDiscoveryPoller:DONE ponder.log` (or `grep '"OrderDiscoveryPoller:DONE"'` to avoid substring collisions).
+- Fields like `block`, `chainId`, `owner`, `due` are JSON keys, not `key=value` text. Filter on them with `grep '"chainId":100'`, not `grep 'chain=100'`.
+- Severity is the JSON `"level"` key (`info` / `warn` / `error`), not a bare `INFO` / `WARN` / `ERROR` word — though Ponder's own framework lines still use the bare-word format, so both appear in the file.
+- Pretty-print a matched line with `jq`: `grep OrderDiscoveryPoller:DONE ponder.log | tail -1 | jq`.
+
+The block handlers split work across five Ponder block entries. The canonical handler names are:
+
+| Handler | Role |
+|---------|------|
+| `OrderDiscoveryPoller` | RPC multicall for non-deterministic generators, every block |
+| `CandidateConfirmer`   | API batch check for unconfirmed candidates, every block |
+| `OrderStatusTracker`   | API batch check for open discrete orders + expiry, every block |
+| `OwnerBackfill`         | One-shot owner fetch for non-deterministic backfill orders |
+| `CancellationWatcher`  | `singleOrders()` mapping read for deterministic generators OrderDiscoveryPoller skips |
+
 ---
 
 ## Investigation Steps
@@ -15,39 +39,42 @@ Run all steps before reporting. If a step returns nothing, note it explicitly �
 ### Step 1 — Fatal errors
 
 ```bash
-grep -n "ERROR" ponder.log | head -40
+# Framework errors (bare-word) plus structured error lines
+grep -n "ERROR\|\"level\":\"error\"" ponder.log | head -40
 ```
 
 If any errors found, grab context around the first one:
 
 ```bash
 # Replace N with the line number from above
-grep -n "ERROR" ponder.log | head -1
+grep -n "ERROR\|\"level\":\"error\"" ponder.log | head -1
 # Then run: sed -n 'N-2,N+20p' ponder.log
 ```
 
 ### Step 2 — Warnings
 
 ```bash
-grep -n "WARN\|console.warn\|\[ComposableCow\].*failed\|\[ComposableCow\].*Unknown" ponder.log | head -40
+grep -n "WARN\|\"level\":\"warn\"" ponder.log | head -40
 ```
+
+The structured warn lines worth scanning include `composableCow:decodeFailed`, `composableCow:unknownHandler`, the `ob:*` fetch failures/timeouts, and the `*:multicall_timeout` handler lines.
 
 ### Step 3 — Handler events (success path)
 
 ```bash
-grep -n "\[ComposableCow\]" ponder.log | tail -30
+grep -n "composableCow:" ponder.log | tail -30
 ```
 
 Healthy output looks like:
-```
-[ComposableCow] ConditionalOrderCreated event=... orderType=TWAP block=...
-[ComposableCow] Decoded event=... orderType=TWAP decodedParams=ok
+```json
+{"level":"info","msg":"composableCow:created","event":"...","chainId":1,"orderType":"TWAP","block":"..."}
+{"level":"info","msg":"composableCow:decoded","event":"...","orderType":"TWAP","decodedParams":"ok"}
 ```
 
 Red flags:
-- `decodedParams=null` on a known orderType → decoder returned nothing
-- `Decode failed` line → malformed staticInput, check `decodeError` column in DB
-- `Unknown handler` line → address not in `HANDLER_MAP` in `src/utils/order-types.ts`
+- `composableCow:decoded` with `"decodedParams":"null"` on a known orderType -> decoder returned nothing
+- `composableCow:decodeFailed` line -> malformed staticInput; the `err` field has the message
+- `composableCow:unknownHandler` line -> address not in `HANDLER_MAP` in `src/utils/order-types.ts`
 
 ### Step 4 — Startup / DB / RPC health
 
@@ -55,7 +82,7 @@ Red flags:
 grep -n "INFO\|WARN\|ERROR" ponder.log | head -20
 ```
 
-Healthy startup sequence:
+These are Ponder's own framework lines (bare-word format). Healthy startup sequence:
 ```
 INFO  Connected to database
 INFO  Connected to JSON-RPC
@@ -107,158 +134,130 @@ After running all steps, output:
 
 ## Precompute Diagnostics
 
-Deterministic types (TWAP, StopLoss) should have all UIDs precomputed at creation — they should NOT appear in C1 polling. If precompute fails, the generator falls into C1 and wastes RPC calls every block.
+Deterministic types (TWAP, StopLoss) should have all UIDs precomputed at creation — they should NOT appear in `OrderDiscoveryPoller` polling. If precompute fails, the generator falls into OrderDiscoveryPoller and wastes RPC calls every block.
 
-### Precompute failures — why generators fall into C1
+### Precompute failures — why generators fall into OrderDiscoveryPoller
 
 ```bash
-grep -n "\[COW:PRECOMPUTE\] SKIP" ponder.log | head -20
+grep -n "precompute:skip" ponder.log | head -20
 ```
 
-Each line is a deterministic generator that FAILED precompute and will fall into C1 polling. The `reason=` field tells you why:
+Each line is a deterministic generator that FAILED precompute and will fall into OrderDiscoveryPoller polling. The JSON `reason` field tells you why:
 
 | reason | meaning | fix |
 |--------|---------|-----|
 | `decodedParams_null` | Decode of staticInput returned null | Check decoder for that order type; likely malformed on-chain data |
-| `missing_params` | Required fields missing after decode (see `missing=` for which) | Decoder returned incomplete data |
+| `missing_params` | Required fields missing after decode (see the `missing` field for which) | Decoder returned incomplete data |
 | `invalid_math` | nParts <= 0 or tSeconds <= 0 | Invalid TWAP params on-chain |
 | `too_many_parts` | nParts > 100,000 | Extremely large TWAP; raise limit if legitimate |
 
-**If you see SKIP lines**: count them and cross-reference with C1's `due=` count. If they match, precompute failures are the sole cause of C1 polling for deterministic types.
+**If you see skip lines**: count them and cross-reference with OrderDiscoveryPoller's `due` count. If they match, precompute failures are the sole cause of OrderDiscoveryPoller polling for deterministic types.
 
 ```bash
-grep -c "\[COW:PRECOMPUTE\] SKIP" ponder.log
+grep -c "precompute:skip" ponder.log
 ```
 
-### Verify deterministic types are NOT in C1
-
-After precompute fixes, C1 should only poll non-deterministic types. Check if C1 success lines show TWAP/StopLoss (they shouldn't):
+The counterpart success log is `precompute:allTerminal` (all UIDs for a generator precomputed up front):
 
 ```bash
-grep "\[COW:C1\] DONE" ponder.log | grep 'chain=100' | tail -5
+grep -c "precompute:allTerminal" ponder.log
 ```
 
-A healthy `due=` count should be much smaller than total generators — only non-deterministic types should remain.
+### Verify deterministic types are NOT in OrderDiscoveryPoller
+
+After precompute fixes, OrderDiscoveryPoller should only poll non-deterministic types. Inspect recent OrderDiscoveryPoller DONE lines on gnosis:
+
+```bash
+grep '"OrderDiscoveryPoller:DONE"' ponder.log | grep '"chainId":100' | tail -5
+```
+
+A healthy `due` count should be much smaller than total generators — only non-deterministic types should remain.
 
 ---
 
-## Orderbook Cache (M3)
+## Orderbook Cache
 
 The `orderbook_cache` table persists across Ponder resyncs (it is NOT an `onchainTable`). These steps verify the cache is alive and working.
 
 ### Cache startup — verify persistence across restarts
 
-Look for the setup log emitted once at startup:
+Look for the setup log emitted once at startup (`setup:cacheReady`):
 
 ```bash
-grep -n "\[COW:SETUP\]" ponder.log | head -5
+grep -n "setup:cacheReady" ponder.log | head -5
+```
+
+Healthy output (the `count` field is the row count loaded from the previous run):
+```json
+{"level":"info","msg":"setup:cacheReady","count":42,"entries":"42 entries from previous run"}
+```
+
+If you see `"count":0` on a restart (not a first run), the cache table was dropped — this indicates a schema migration or Docker volume wipe, not a bug.
+
+### Orderbook fetches — what is served from cache vs. the API
+
+Each orderbook fetch emits an `ob:fetch` entry on start and an `ob:fetchResult` on completion. The result line carries the cache breakdown:
+
+```bash
+grep -n "ob:fetchResult" ponder.log | tail -20
 ```
 
 Healthy output:
-```
-[COW:SETUP] orderbook_cache ready — 42 entries from previous run
+```json
+{"level":"info","msg":"ob:fetchResult","owner":"0x1234...","chainId":1,"apiTotal":12,"composable":5,"cached":3,"refreshed":2}
 ```
 
-If you see `0 entries from previous run` on a restart (not a first run), the cache table was dropped — this indicates a schema migration or Docker volume wipe, not a bug.
+- `cached` = composable orders served from the cache (no per-UID status refresh needed).
+- `refreshed` = composable orders whose status was re-fetched this cycle.
 
-### Cache hits — verify terminal owners are served from cache
+High `cached` relative to `composable` means the cache is working. If `cached` stays near zero after a warm restart, the cache was not populated in the previous run (all owners were non-terminal) or the table was reset.
+
+Fetch-side failures and timeouts are warn lines worth scanning when fetches look wrong:
 
 ```bash
-grep -n "\[COW:OB:CACHE\] HIT" ponder.log | tail -20
+grep -nE "ob:(noApiUrl|accountError|accountFetchFailed|accountTimeout|batchFetchError|batchFetchFailed|batchFetchTimeout|statusByUidsTimeout)" ponder.log | tail -20
 ```
 
-Each line confirms a terminal owner was served from cache instead of hitting the API:
-```
-[COW:OB:CACHE] HIT owner=0x1234... chain=1 orders=5
-```
+### OwnerBackfill — one-shot (`endBlock: "latest"`)
 
-If you see zero hits after a warm restart, the cache was not populated in the previous run (all owners were non-terminal) or the table was reset.
-
-### Cache saves — verify terminal owners are being cached
+`OwnerBackfill` in `ponder.config.ts` uses `startBlock: "latest"` and `endBlock: "latest"` so it should run **once per chain** when the indexer reaches live (not every block). Use logs to confirm.
 
 ```bash
-grep -n "\[COW:OB:CACHE\] SAVED" ponder.log | tail -20
+grep -nE "OwnerBackfill:(START|bootstrap_start|no_bootstrap_needed|DONE)" ponder.log
 ```
 
-Healthy output:
-```
-[COW:OB:CACHE] SAVED owner=0x1234... chain=1 orders=3 (all terminal, cached permanently)
-```
-
-Active owners (with any `open` order) are intentionally NOT saved — they must be re-fetched on every poll cycle.
-
-### Orderbook poll cycle metrics
-
-```bash
-grep -n "\[COW:OB:POLL\] DONE" ponder.log | tail -10
+Healthy output (per chain, after live sync starts):
+```json
+{"level":"info","msg":"OwnerBackfill:START","block":"...","chainId":1,"pendingRetry":0}
+{"level":"info","msg":"OwnerBackfill:bootstrap_start","block":"...","chainId":1,"generators":7,"freshOwners":7}
+{"level":"info","msg":"OwnerBackfill:DONE","block":"...","chainId":1,"discovered":3}
 ```
 
-Healthy output includes cache hit ratio and active owner count:
-```
-[COW:OB:POLL] DONE block=12345678 chain=1 owners=20 discovered=3 cacheHits=15 apiFetches=5 activeOwners=2 totalOrders=47
-```
-
-High `cacheHits` relative to `owners` means the cache is working. High `apiFetches` with low `activeOwners` may indicate many owners are not yet cached.
-
-### C4 HistoricalBootstrap — one-shot (`endBlock: "latest"`) — PR #29 entrada 9
-
-`HistoricalBootstrap` in `ponder.config.ts` uses `startBlock: "latest"` and `endBlock: "latest"` so it should run **once per chain** when the indexer reaches live (not every block). Use logs to confirm.
-
-**Invocation counter (expect `#1` only per chain per process):**
-
-```bash
-grep -n "\[COW:C4\] HistoricalBootstrap invocation" ponder.log
-```
-
-Healthy output (one line per chain after live starts):
-
-```
-... [COW:C4] HistoricalBootstrap invocation=#1 chain=1 block=... (one-shot bootstrap; see .claude/commands/debug-ponder.md — C4 section)
-```
-
-If you see **`invocation=#2`** or a **`WARN`** line saying *invocation #2* / *repeats every block*, `endBlock: "latest"` is not behaving as a one-shot in your Ponder version — escalate or check Ponder release notes. A **full resync** resets the process: you will see `#1` again on the next run (expected).
-
-**Full C4 trace (bootstrap work or empty):**
-
-```bash
-grep -n "\[COW:C4\]" ponder.log
-```
-
-You should see `invocation=#1`, then either `no generators need bootstrap` or `generators=...` + `DONE`, then **no further `[COW:C4]` lines** for that chain until restart.
-
-### Backfill skip — verify poller is not running during historical sync
-
-During backfill, the orderbook poller is silently skipped (no log line). To confirm live-only behavior, check that poll DONE lines only appear near the tip:
-
-```bash
-grep -n "\[COW:OB:POLL\] DONE" ponder.log | head -5
-```
-
-The `block=` values should be close to the current chain head. If you see poll DONE lines during historical blocks, the `PollResultPoller` start block may not be set to `"latest"`.
+When nothing needs bootstrapping you get `OwnerBackfill:no_bootstrap_needed` instead of `bootstrap_start`/`DONE`. Either way you should see this sequence run roughly once per chain after live, not every block. Owner-fetch timeouts during bootstrap surface as `OwnerBackfill:owner_timeout` (and `OwnerBackfill:owner_retry_timeout` on the retry queue) — both carry the offending `owner` and `timeoutMs`. A **full resync** resets the process and you will see the START/DONE pair fire again on the next run (expected).
 
 ---
 
-## C1 tryNextBlock backoff
+## OrderDiscoveryPoller tryNextBlock backoff
 
 Generators that keep returning `PollResult.tryNextBlock` are progressively rate-limited. After 50 consecutive tryNextBlock responses the recheck interval jumps from +1 to +10 blocks; after 200, to +50.
 
 ### DONE log — backoff count per cycle
 
 ```bash
-grep -n "\[COW:C1\] DONE" ponder.log | tail -20
+grep -n '"OrderDiscoveryPoller:DONE"' ponder.log | tail -20
 ```
 
 Healthy output (mainnet, few stuck generators):
-```
-[COW:C1] DONE block=12345678 chain=1 due=12 success=2 never=0 backedOff=0
-```
-
-Gnosis after warm-up — expect non-zero `backedOff=` as chronic offenders climb past the 50-threshold:
-```
-[COW:C1] DONE block=45678901 chain=100 due=180 success=3 never=0 backedOff=150
+```json
+{"level":"info","msg":"OrderDiscoveryPoller:DONE","block":"12345678","chainId":1,"due":12,"success":2,"never":0,"backedOff":0,"capped":false}
 ```
 
-`backedOff=` counts generators whose counter exceeded the warmup threshold on *this* block — i.e., they received a backoff longer than +1.
+Gnosis after warm-up — expect non-zero `backedOff` as chronic offenders climb past the 50-threshold:
+```json
+{"level":"info","msg":"OrderDiscoveryPoller:DONE","block":"45678901","chainId":100,"due":180,"success":3,"never":0,"backedOff":150,"capped":false}
+```
+
+`backedOff` counts generators whose counter exceeded the warmup threshold on *this* block — i.e., they received a backoff longer than +1. A `"NEVER"` entry (`OrderDiscoveryPoller:NEVER`) records a generator that returned `PollResult.dontTryNextBlock` with its `reason`.
 
 ### Counter distribution — verify the mechanism is climbing
 
@@ -279,49 +278,49 @@ GROUP BY 1, 2
 ORDER BY 1, 2;
 ```
 
-On a healthy gnosis run post-sync you should see a non-trivial bucket in `51-200` and/or `201+`. If everything sits at `0-50` after >300 gnosis blocks, either COW-904 eliminated all such generators (success) *or* the counter is not incrementing (bug).
+On a healthy gnosis run post-sync you should see a non-trivial bucket in `51-200` and/or `201+`. If everything sits at `0-50` after >300 gnosis blocks, either there genuinely are no chronic tryNextBlock generators (precompute eliminated them — success) *or* the counter is not incrementing (bug).
 
-### Red flag — counter stuck high but `due=` still huge
+### Red flag — counter stuck high but `due` still huge
 
-If `consecutive_try_next_block` is large for many generators *and* the C1 `due=` count is still massive every block, the backoff is not actually deferring those generators — check that the C1 SELECT filters by `nextCheckBlock <= currentBlock` and that the handler updated `nextCheckBlock = currentBlock + <backoff>` correctly on tryNextBlock.
+If `consecutive_try_next_block` is large for many generators *and* the OrderDiscoveryPoller `due` count is still massive every block, the backoff is not actually deferring those generators — check that the OrderDiscoveryPoller SELECT filters by `nextCheckBlock <= currentBlock` and that the handler updated `nextCheckBlock = currentBlock + <backoff>` correctly on tryNextBlock.
 
 ---
 
-## C5 DeterministicCancellationSweeper — singleOrders() mapping sweep
+## CancellationWatcher — singleOrders() mapping sweep
 
-`DeterministicCancellationSweeper` in `ponder.config.ts` runs every block but only does work when at least one deterministic generator (`allCandidatesKnown = true AND status = "Active"`) has `nextCheckBlock <= currentBlock`. Per-generator cadence is `DETERMINISTIC_CANCEL_SWEEP_INTERVAL` blocks (see `src/constants.ts`, default 100). The handler reads `ComposableCoW.singleOrders(owner, hash)` — `false` means the owner called `remove()` on-chain.
+`CancellationWatcher` in `ponder.config.ts` runs every block but only does work when at least one deterministic generator (`allCandidatesKnown = true AND status = "Active"`) has `nextCheckBlock <= currentBlock`. Per-generator cadence is `DETERMINISTIC_CANCEL_SWEEP_INTERVAL` blocks (see `src/constants.ts`, default 100). The handler reads `ComposableCoW.singleOrders(owner, hash)` — `false` means the owner called `remove()` on-chain.
 
 ### ENTER / DONE — per-sweep summary
 
 ```bash
-grep -n "\[COW:C5\]" ponder.log | tail -40
+grep -nE "CancellationWatcher:(ENTER|DONE)" ponder.log | tail -40
 ```
 
 Healthy output (one ENTER + one DONE per block where work happens):
-```
-... [COW:C5] ENTER block=... chain=1 due=12
-... [COW:C5] DONE block=... chain=1 due=12 cancelled=0 stillActive=12 errors=0
+```json
+{"level":"info","msg":"CancellationWatcher:ENTER","block":"...","chainId":1,"due":12}
+{"level":"info","msg":"CancellationWatcher:DONE","block":"...","chainId":1,"due":12,"cancelled":0,"stillActive":12,"errors":0}
 ```
 
-If `due=0` on every block for a long time, either there are no Active deterministic generators on that chain yet, or the kill-switch is on (see below).
+If `due` is 0 on every block for a long time, either there are no Active deterministic generators on that chain yet, or the kill-switch is on (see below). When the multicall itself times out you get `CancellationWatcher:multicall_timeout` instead of a DONE line.
 
 ### Cancellations detected
 
 ```bash
-grep -n "\[COW:C5\] CANCELLED" ponder.log
+grep -n "CancellationWatcher:CANCELLED" ponder.log
 ```
 
 Each line is a deterministic generator whose on-chain `singleOrders(owner, hash)` returned `false`:
-```
-[COW:C5] CANCELLED generatorId=... orderType=StopLoss block=... chain=1
-```
-
-After any `CANCELLED` line you should see COW-918's cascade fire on the next C2 block tick:
-```
-[COW:C2] block=... chain=1 parent-cancelled=N   ← candidates drained to discrete_order
+```json
+{"level":"info","msg":"CancellationWatcher:CANCELLED","block":"...","chainId":1,"generatorId":"...","orderType":"StopLoss"}
 ```
 
-C3's parent-cancelled sweep has no dedicated log line — verify via SQL:
+After any `CANCELLED` line the candidate-cancellation cascade fires on the next CandidateConfirmer block tick — candidates are drained to `discrete_order`:
+```json
+{"level":"info","msg":"CandidateConfirmer:parent_cancelled","block":"...","chainId":1,"parentCancelled":3,"preflightKnown":0}
+```
+
+The OrderStatusTracker parent-cancelled sweep has no dedicated log line — verify via SQL:
 ```sql
 SELECT count(*) FROM discrete_order
 WHERE status='cancelled' AND conditional_order_generator_id = '<eventId>';
@@ -329,20 +328,20 @@ WHERE status='cancelled' AND conditional_order_generator_id = '<eventId>';
 
 ### Multicall errors
 
-`errors > 0` on a DONE line is not fatal: C5 leaves `nextCheckBlock` untouched for errored entries so they retry on the next sweep. Sustained nonzero `errors` across many blocks means the RPC provider is flaky — consider swapping provider (see COW-887 on DRPC flakiness).
+`errors > 0` on a DONE line is not fatal: CancellationWatcher leaves `nextCheckBlock` untouched for errored entries so they retry on the next sweep. Sustained nonzero `errors` across many blocks means the RPC provider is flaky — consider swapping provider.
 
 ### Sweep disabled (kill-switch)
 
-If operators see no `[COW:C5]` lines at all and expect them:
+If operators see no `CancellationWatcher:` lines at all and expect them:
 ```bash
 grep -n "DISABLE_DETERMINISTIC_CANCEL_SWEEP" .env.local env.prod 2>/dev/null
 ```
 
-Non-empty means the sweeper is intentionally disabled via env var — same pattern as `DISABLE_POLL_RESULT_CHECK` for C1.
+Non-empty means the sweeper is intentionally disabled via env var — same pattern as `DISABLE_POLL_RESULT_CHECK` for OrderDiscoveryPoller.
 
 ### lastPollResult audit
 
-SQL spot-check for what C5 has touched:
+SQL spot-check for what CancellationWatcher has touched:
 ```sql
 SELECT chain_id, order_type, status, last_poll_result, count(*)
 FROM conditional_order_generator
@@ -364,3 +363,4 @@ ORDER BY 1,2,3,4;
 | `Unknown handler ... saving as Unknown` | Handler address not in `HANDLER_MAP` in `src/utils/order-types.ts` | Add address to map; expected for new/unsupported contracts |
 | `Decode failed ... orderType=...` | `staticInput` does not match expected ABI for that order type | Check ABI tuple in `src/decoders/<type>.ts`; compare with `agent_docs/decoder-reference.md` |
 | `Fetching backfill JSON-RPC data is taking longer than expected` | RPC rate limit or slow provider | Transient — monitor; switch RPC if persistent |
+| `[COW:timeout] <label> exceeded <ms>ms` | A wrapped async op blew its `withTimeout` budget (`src/application/helpers/withTimeout.ts`) — the `<label>` names the call site (e.g. `c2:stale:accountFallback`) | Usually surfaces as a handler `*:multicall_timeout` / `ob:*Timeout` warn line too; check RPC/API latency for that call site |

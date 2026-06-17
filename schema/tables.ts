@@ -11,6 +11,9 @@ export const orderTypeEnum = onchainEnum("order_type", [
   "CirclesBackingOrder",
   "SwapOrderHandler",
   "ERC4626CowSwapFeeBurner",
+  "CurveCowSwapBurner",
+  "BalancerCowSwapFeeBurner",
+  "CowAmmConstantProduct",
   "Unknown",
 ]);
 
@@ -70,7 +73,7 @@ export const conditionalOrderGenerator = onchainTable(
     status: orderStatusEnum("order_status").notNull().default("Active"),
     decodedParams: t.json(),               // null if unknown type or decode failed
     decodeError: t.text(),                 // "invalid_static_input" | null
-    txHash: t.hex().notNull(),             // FK → transaction.hash
+    txHash: t.hex().notNull(),             // FK -> transaction.hash
     allCandidatesKnown: t.boolean().notNull().default(false),
     nextCheckBlock: t.bigint(),            // block handler scheduling
     lastCheckBlock: t.bigint(),
@@ -86,8 +89,11 @@ export const conditionalOrderGenerator = onchainTable(
     chainOwnerIdx: index().on(table.chainId, table.owner),
     resolvedOwnerIdx: index().on(table.resolvedOwner),
     ownerAddressTypeIdx: index().on(table.ownerAddressType),
-    checkBlockActiveIdx: index("generator_check_block_active_idx")
-      .on(table.nextCheckBlock, table.status),
+    // OrderDiscoveryPoller + CancellationWatcher: per-block SELECT with
+    // chainId + status + allCandidatesKnown equality filters, ORDER BY lastCheckBlock.
+    // Covers both handlers — OrderDiscoveryPoller queries allCandidatesKnown=false, CancellationWatcher queries true.
+    c1c5PollIdx: index("generator_c1c5_poll_idx")
+      .on(table.chainId, table.status, table.allCandidatesKnown, table.lastCheckBlock),
   })
 );
 
@@ -105,13 +111,15 @@ export const discreteOrder = onchainTable(
     creationDate: t.bigint().notNull(),               // block timestamp (seconds)
     executedSellAmount: t.text(),                     // actual executed amount (from API, post-settlement)
     executedBuyAmount: t.text(),                      // actual executed amount (from API, post-settlement)
-    promotedAt: t.bigint(),                           // block timestamp when C2 promoted from candidate; null = created directly (precompute or C4)
+    promotedAt: t.bigint(),                           // block timestamp when CandidateConfirmer promoted from candidate; null = created directly (precompute or OwnerBackfill)
   }),
   (table) => ({
     pk: primaryKey({ columns: [table.chainId, table.orderUid] }),
     generatorIdx: index("discrete_order_generator_idx")
       .on(table.chainId, table.conditionalOrderGeneratorId),
-    statusIdx: index("discrete_order_status_idx").on(table.status),
+    // OrderStatusTracker: per-block SELECT with chainId + status='open', ORDER BY promotedAt.
+    c3StatusIdx: index("discrete_order_c3_status_idx")
+      .on(table.chainId, table.status, table.promotedAt),
   })
 );
 
@@ -132,6 +140,9 @@ export const candidateDiscreteOrder = onchainTable(
     pk: primaryKey({ columns: [table.chainId, table.orderUid] }),
     generatorIdx: index("candidate_discrete_order_generator_idx")
       .on(table.chainId, table.conditionalOrderGeneratorId),
+    // CandidateConfirmer stale sweep: SELECT WHERE chainId + validTo <= timestamp LIMIT 500.
+    staleIdx: index("candidate_discrete_order_stale_idx")
+      .on(table.chainId, table.validTo),
   })
 );
 
@@ -146,19 +157,6 @@ export const bootstrapRetryQueue = onchainTable(
   }),
   (table) => ({
     pk: primaryKey({ columns: [table.chainId, table.owner] }),
-  })
-);
-
-export const settlementQueue = onchainTable(
-  "settlement_queue",
-  (t) => ({
-    txHash: t.hex().notNull(),
-    chainId: t.integer().notNull(),
-    blockNumber: t.bigint().notNull(),
-    blockTimestamp: t.bigint().notNull(),
-  }),
-  (table) => ({
-    pk: primaryKey({ columns: [table.chainId, table.txHash] }),
   })
 );
 

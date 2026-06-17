@@ -11,7 +11,7 @@ vi.mock("ponder:schema", () => {
   const conditionalOrderGenerator = {
     eventId: "eventId", chainId: "chainId", orderType: "orderType",
     owner: "owner", resolvedOwner: "resolvedOwner", status: "status",
-    ownerAddressType: "ownerAddressType",
+    ownerAddressType: "ownerAddressType", hash: "hash",
   };
   const discreteOrder = {
     conditionalOrderGeneratorId: "conditionalOrderGeneratorId",
@@ -173,6 +173,8 @@ describe("ordersByOwnerHandler", () => {
   });
 });
 
+// ─── Schema tests ──────────────────────────────────────────────────
+
 // A minimal valid GeneratorSummary payload that satisfies all required fields.
 const validGenerator = {
   eventId: "0xabc123",
@@ -186,7 +188,7 @@ const validGenerator = {
 } as const;
 
 describe("GeneratorSummary schema", () => {
-  // Regression guard for COW-993: hash was previously missing from the schema,
+  // Regression guard: hash was previously missing from the schema,
   // causing it to be silently dropped from API responses. safeParse accepts
   // unknown so TS gives no protection here at runtime.
   it("fails parse when hash is missing", () => {
@@ -199,9 +201,24 @@ describe("GeneratorSummary schema", () => {
     }
   });
 
-  // Regression guard: ownerAddressType is nullable — null is the common case
-  // for generators that don't go through a proxy.
-  it("ownerAddressType accepts null", () => {
+  it("fails parse when hash is not a string (number supplied)", () => {
+    const result = GeneratorSummary.safeParse({ ...validGenerator, hash: 12345 });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const paths = result.error.issues.map((i) => i.path.join("."));
+      expect(paths).toContain("hash");
+    }
+  });
+
+  it("hash field carries the correct describe() text", () => {
+    const shape = GeneratorSummary.shape;
+    const description = shape.hash.description;
+    expect(description).toBe(
+      "On-chain canonical identifier: keccak256(abi.encode(ConditionalOrderParams { handler, salt, staticInput })) — the value returned by ComposableCow.hash(params) and used as the key in singleOrders(owner, hash) and remove(owner, hash).",
+    );
+  });
+
+  it("ownerAddressType accepts null (regression guard for unchanged field)", () => {
     const result = GeneratorSummary.safeParse({ ...validGenerator, ownerAddressType: null });
     expect(result.success).toBe(true);
     if (result.success) {
@@ -243,3 +260,4 @@ describe("OrdersByOwnerResponse schema", () => {
     }
   });
 });
+

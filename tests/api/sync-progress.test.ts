@@ -95,14 +95,38 @@ describe("GET /api/sync-progress", () => {
     expect(body["gnosis"]!.historicalBlocksFetchedPct).toBe(14.1);
   });
 
-  it("sets isRealtime and isComplete from metrics flags", async () => {
+  it("sets isRealtime from ponder_sync_is_realtime metric", async () => {
     mockFetch(SAMPLE_METRICS);
     const app = buildApp();
     const res = await app.request("http://localhost/api/sync-progress");
     const body = (await res.json()) as Record<string, ChainProgress>;
     expect(body["mainnet"]!.isRealtime).toBe(false);
-    expect(body["mainnet"]!.isComplete).toBe(false);
     expect(body["gnosis"]!.isRealtime).toBe(true);
+  });
+
+  it("isComplete requires both isRealtime=true and pct>=100 (ignores ponder_sync_is_complete)", async () => {
+    // gnosis is realtime but only 14.1% processed — must NOT be complete
+    mockFetch(SAMPLE_METRICS);
+    const app = buildApp();
+    const res = await app.request("http://localhost/api/sync-progress");
+    const body = (await res.json()) as Record<string, ChainProgress>;
+    expect(body["gnosis"]!.isRealtime).toBe(true);
+    expect(body["gnosis"]!.isComplete).toBe(false);
+  });
+
+  it("isComplete is true when isRealtime=true and all blocks processed", async () => {
+    // Regression: ponder_sync_is_complete=0 must not block isComplete when realtime+100%
+    const fullSyncMetrics = `
+ponder_historical_total_blocks{chain="gnosis"} 1000
+ponder_historical_completed_blocks{chain="gnosis"} 600
+ponder_historical_cached_blocks{chain="gnosis"} 400
+ponder_sync_is_realtime{chain="gnosis"} 1
+ponder_sync_is_complete{chain="gnosis"} 0
+`.trim();
+    mockFetch(fullSyncMetrics);
+    const app = buildApp();
+    const res = await app.request("http://localhost/api/sync-progress");
+    const body = (await res.json()) as Record<string, ChainProgress>;
     expect(body["gnosis"]!.isComplete).toBe(true);
   });
 

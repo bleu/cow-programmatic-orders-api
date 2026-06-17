@@ -18,12 +18,12 @@ import {
   conditionalOrderGenerator,
   discreteOrder,
 } from "ponder:schema";
-import { and, eq, inArray } from "ponder";
+import { and, eq, inArray, sql } from "ponder";
 import { pgSchema, integer, text } from "drizzle-orm/pg-core";
 import { encodeAbiParameters, keccak256, type Hex } from "viem";
 import { type OrderType } from "../../utils/order-types";
 import { COMPOSABLE_COW_HANDLER_ADDRESSES, ORDERBOOK_API_URLS } from "../../data";
-import { ORDERBOOK_HTTP_TIMEOUT_MS, SIGNING_SCHEME_EIP1271 } from "../../constants";
+import { BOOTSTRAP_MAX_PAGES, BOOTSTRAP_PAGE_SIZE, ORDERBOOK_HTTP_TIMEOUT_MS, SIGNING_SCHEME_EIP1271 } from "../../constants";
 import { decodeEip1271Signature } from "../decoders/erc1271Signature";
 import { fetchWithTimeout, TimeoutError, withTimeout } from "./withTimeout";
 import { log } from "./logger";
@@ -46,8 +46,7 @@ interface OrderbookOrder {
 }
 
 /** Processed composable order stored in cache and returned to callers.
- *  Shares field types with the discreteOrder schema for the DB-mapped fields.
- *  creationDate is number here (unix seconds) and converted to bigint at insert time. */
+ *  Shares field types with the discreteOrder schema for the DB-mapped fields. */
 export type ComposableOrder = Pick<
   typeof discreteOrder.$inferInsert,
   "status" | "sellAmount" | "buyAmount" | "feeAmount" | "validTo" | "executedSellAmount" | "executedBuyAmount"
@@ -56,7 +55,7 @@ export type ComposableOrder = Pick<
   generatorId: string;
   generatorHash: string;
   orderType: OrderType;
-  creationDate: number;
+  creationDate: bigint;
 };
 
 /** Status + executed amounts returned by fetchOrderStatusByUids. */
@@ -93,7 +92,7 @@ export async function fetchComposableOrders(
   }
 
   log("info", "ob:fetch", { owner, chainId });
-  const allApiOrders = await fetchAccountOrders(apiBaseUrl, owner);
+  const allApiOrders = await fetchAccountOrders(apiBaseUrl, owner, BOOTSTRAP_MAX_PAGES, SIGNING_SCHEME_EIP1271, BOOTSTRAP_PAGE_SIZE);
   const composable = await filterAndProcess(context, chainId, allApiOrders);
 
   if (composable.length === 0) {
@@ -147,23 +146,6 @@ export async function fetchComposableOrders(
 }
 
 /**
- * Invalidate the UID cache for orders belonging to an owner's generators.
- * Called when ConditionalOrderCreated fires so that the next fetch discovers new orders.
- *
- * Note: This is a no-op for per-UID cache since new orders won't have cache entries.
- * Kept for API compatibility; callers may add owner-level invalidation logic later.
- */
-export async function invalidateOwnerCache(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  _context: any,
-  _chainId: number,
-  _owner: Hex,
-): Promise<void> {
-  // Per-UID cache doesn't need owner-level invalidation — new orders
-  // won't have cache entries, so they'll be fetched fresh from the API.
-}
-
-/**
  * Upsert composable orders into the discrete_order table.
  * Uses onConflictDoUpdate so the API's authoritative status overwrites
  * the block handler's initial "open".
@@ -174,35 +156,33 @@ export async function upsertDiscreteOrders(
   chainId: number,
   orders: ComposableOrder[],
 ): Promise<number> {
-  let count = 0;
-  for (const order of orders) {
-    await context.db.sql
-      .insert(discreteOrder)
-      .values({
-        orderUid: order.uid,
-        chainId,
-        conditionalOrderGeneratorId: order.generatorId,
-        status: order.status,
-        sellAmount: order.sellAmount,
-        buyAmount: order.buyAmount,
-        feeAmount: order.feeAmount,
-        validTo: order.validTo,
-        creationDate: BigInt(order.creationDate),
-        executedSellAmount: order.executedSellAmount,
-        executedBuyAmount: order.executedBuyAmount,
-      })
-      .onConflictDoUpdate({
-        target: [discreteOrder.chainId, discreteOrder.orderUid],
-        set: {
-          status: order.status,
-          validTo: order.validTo,
-          executedSellAmount: order.executedSellAmount,
-          executedBuyAmount: order.executedBuyAmount,
-        },
-      });
-    count++;
-  }
-  return count;
+  if (orders.length === 0) return 0;
+  // One multi-row upsert instead of N individual roundtrips.
+  await context.db.sql
+    .insert(discreteOrder)
+    .values(orders.map((order) => ({
+      orderUid: order.uid,
+      chainId,
+      conditionalOrderGeneratorId: order.generatorId,
+      status: order.status,
+      sellAmount: order.sellAmount,
+      buyAmount: order.buyAmount,
+      feeAmount: order.feeAmount,
+      validTo: order.validTo,
+      creationDate: order.creationDate,
+      executedSellAmount: order.executedSellAmount,
+      executedBuyAmount: order.executedBuyAmount,
+    })))
+    .onConflictDoUpdate({
+      target: [discreteOrder.chainId, discreteOrder.orderUid],
+      set: {
+        status: sql`excluded.status`,
+        validTo: sql`excluded.valid_to`,
+        executedSellAmount: sql`excluded.executed_sell_amount`,
+        executedBuyAmount: sql`excluded.executed_buy_amount`,
+      },
+    });
+  return orders.length;
 }
 
 /**
@@ -278,7 +258,7 @@ export async function fetchOrderStatusByUids(
           buyAmount: order.buyAmount,
           feeAmount: order.feeAmount,
           validTo: order.validTo,
-          creationDate: 0,
+          creationDate: 0n,
           executedSellAmount: order.executedSellAmount,
           executedBuyAmount: order.executedBuyAmount,
         });
@@ -320,11 +300,16 @@ export async function fetchOwnerOrderStatuses(
 
 // ─── API calls ───────────────────────────────────────────────────────────────
 
-/** Fetch orders for an owner with pagination. maxPages limits how many pages are fetched (0 = unlimited). */
+/** Fetch orders for an owner with pagination. maxPages limits how many pages are fetched (0 = unlimited).
+ *  signingScheme, if provided, is appended as a query param — the API filters server-side when supported,
+ *  reducing payload for owners with many ECDSA orders mixed with composable ones.
+ *  pageSize overrides the default PAGE_LIMIT per request. */
 async function fetchAccountOrders(
   apiBaseUrl: string,
   owner: Hex,
   maxPages = 0,
+  signingScheme?: string,
+  pageSize = PAGE_LIMIT,
 ): Promise<OrderbookOrder[]> {
   const allOrders: OrderbookOrder[] = [];
   let offset = 0;
@@ -332,7 +317,9 @@ async function fetchAccountOrders(
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const url = `${apiBaseUrl}/api/v1/account/${owner}/orders?limit=${PAGE_LIMIT}&offset=${offset}`;
+    const params = new URLSearchParams({ limit: String(pageSize), offset: String(offset) });
+    if (signingScheme) params.set("signingScheme", signingScheme);
+    const url = `${apiBaseUrl}/api/v1/account/${owner}/orders?${params.toString()}`;
     try {
       const response = await fetchWithTimeout(
         url,
@@ -347,7 +334,7 @@ async function fetchAccountOrders(
       const page = (await response.json()) as OrderbookOrder[];
       allOrders.push(...page);
       pagesFetched++;
-      if (page.length < PAGE_LIMIT) break; // last page
+      if (page.length < pageSize) break; // last page
       if (maxPages > 0 && pagesFetched >= maxPages) break; // page cap reached
       offset += page.length;
     } catch (err) {
@@ -363,45 +350,52 @@ async function fetchAccountOrders(
   return allOrders;
 }
 
-/** Batch-fetch orders by UID to refresh status of open orders. Chunks into BATCH_SIZE to avoid HTTP 413. */
+/** Batch-fetch orders by UID to refresh status of open orders.
+ *  Chunks into BATCH_SIZE to avoid HTTP 413, then fires all chunks in parallel
+ *  so N chunks take the time of one instead of N × one. */
 async function fetchOrdersByUids(
   apiBaseUrl: string,
   uids: string[],
 ): Promise<OrderbookOrder[]> {
   if (uids.length === 0) return [];
 
-  const results: OrderbookOrder[] = [];
   const url = `${apiBaseUrl}/api/v1/orders/by_uids`;
-
+  const chunks: string[][] = [];
   for (let i = 0; i < uids.length; i += BATCH_SIZE) {
-    const chunk = uids.slice(i, i + BATCH_SIZE);
-    try {
-      const response = await fetchWithTimeout(
-        url,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(chunk),
-        },
-        ORDERBOOK_HTTP_TIMEOUT_MS,
-        "ob:byUids",
-      );
-      if (!response.ok) {
-        log("warn", "ob:batchFetchError", { status: response.status, uids: chunk.length, offset: i });
-        continue;
-      }
-      const raw = (await response.json()) as { order: OrderbookOrder }[];
-      results.push(...raw.map((item) => item.order));
-    } catch (err) {
-      if (err instanceof TimeoutError) {
-        log("warn", "ob:batchFetchTimeout", { uids: chunk.length, offset: i, after: ORDERBOOK_HTTP_TIMEOUT_MS });
-        continue;
-      }
-      log("warn", "ob:batchFetchFailed", { err: String(err), offset: i });
-    }
+    chunks.push(uids.slice(i, i + BATCH_SIZE));
   }
 
-  return results;
+  const chunkResults = await Promise.all(
+    chunks.map(async (chunk, idx) => {
+      try {
+        const response = await fetchWithTimeout(
+          url,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(chunk),
+          },
+          ORDERBOOK_HTTP_TIMEOUT_MS,
+          "ob:byUids",
+        );
+        if (!response.ok) {
+          log("warn", "ob:batchFetchError", { status: response.status, uids: chunk.length, offset: idx * BATCH_SIZE });
+          return [] as OrderbookOrder[];
+        }
+        const raw = (await response.json()) as { order: OrderbookOrder }[];
+        return raw.flatMap((item) => (item?.order != null ? [item.order] : []));
+      } catch (err) {
+        if (err instanceof TimeoutError) {
+          log("warn", "ob:batchFetchTimeout", { uids: chunk.length, offset: idx * BATCH_SIZE, after: ORDERBOOK_HTTP_TIMEOUT_MS });
+          return [] as OrderbookOrder[];
+        }
+        log("warn", "ob:batchFetchFailed", { err: String(err), offset: idx * BATCH_SIZE });
+        return [] as OrderbookOrder[];
+      }
+    }),
+  );
+
+  return chunkResults.flat();
 }
 
 // ─── Processing ──────────────────────────────────────────────────────────────
@@ -441,23 +435,28 @@ async function filterAndProcess(
       ),
     );
 
-    // Find the generator — there should be exactly one per (chainId, hash)
-    const generators = (await context.db.sql
-      .select({
-        eventId: conditionalOrderGenerator.eventId,
-        orderType: conditionalOrderGenerator.orderType,
-      })
-      .from(conditionalOrderGenerator)
-      .where(
-        and(
-          eq(conditionalOrderGenerator.chainId, chainId),
-          eq(conditionalOrderGenerator.hash, paramHash),
-        ),
-      )
-      .limit(1)) as {
-      eventId: string;
-      orderType: OrderType;
-    }[];
+    // Find the generator — there should be exactly one per (chainId, hash).
+    // Uses context.db.sql (raw SQL) because Ponder ORM has no non-PK findMany.
+    // Wrapped in try-catch: in multichain realtime mode a shared-qb race can cause
+    // a SAVEPOINT error here; skipping the order is safe — it's retried next block.
+    let generators: { eventId: string; orderType: OrderType }[];
+    try {
+      generators = (await context.db.sql
+        .select({
+          eventId: conditionalOrderGenerator.eventId,
+          orderType: conditionalOrderGenerator.orderType,
+        })
+        .from(conditionalOrderGenerator)
+        .where(
+          and(
+            eq(conditionalOrderGenerator.chainId, chainId),
+            eq(conditionalOrderGenerator.hash, paramHash),
+          ),
+        )
+        .limit(1)) as { eventId: string; orderType: OrderType }[];
+    } catch {
+      continue;
+    }
 
     if (generators.length === 0) continue;
 
@@ -473,7 +472,7 @@ async function filterAndProcess(
       buyAmount: order.buyAmount,
       feeAmount: order.feeAmount,
       validTo: order.validTo,
-      creationDate: Math.floor(new Date(order.creationDate).getTime() / 1000),
+      creationDate: BigInt(Math.floor(new Date(order.creationDate).getTime() / 1000)),
       executedSellAmount: order.executedSellAmount,
       executedBuyAmount: order.executedBuyAmount,
     });
@@ -552,30 +551,30 @@ async function cacheUidStatuses(
   chainId: number,
   orders: ComposableOrder[],
 ): Promise<void> {
+  if (orders.length === 0) return;
   const now = Math.floor(Date.now() / 1000);
-  for (const order of orders) {
-    try {
-      await context.db.sql
-        .insert(orderUidCache)
-        .values({
-          chainId,
-          orderUid: order.uid,
-          status: order.status,
+  try {
+    // One multi-row upsert instead of N individual roundtrips.
+    await context.db.sql
+      .insert(orderUidCache)
+      .values(orders.map((order) => ({
+        chainId,
+        orderUid: order.uid,
+        status: order.status,
+        fetchedAt: now,
+        executedSellAmount: order.executedSellAmount,
+        executedBuyAmount: order.executedBuyAmount,
+      })))
+      .onConflictDoUpdate({
+        target: [orderUidCache.chainId, orderUidCache.orderUid],
+        set: {
+          status: sql`excluded.status`,
           fetchedAt: now,
-          executedSellAmount: order.executedSellAmount,
-          executedBuyAmount: order.executedBuyAmount,
-        })
-        .onConflictDoUpdate({
-          target: [orderUidCache.chainId, orderUidCache.orderUid],
-          set: {
-            status: order.status,
-            fetchedAt: now,
-            executedSellAmount: order.executedSellAmount,
-            executedBuyAmount: order.executedBuyAmount,
-          },
-        });
-    } catch {
-      // Best-effort cache write
-    }
+          executedSellAmount: sql`excluded.executed_sell_amount`,
+          executedBuyAmount: sql`excluded.executed_buy_amount`,
+        },
+      });
+  } catch {
+    // Best-effort cache write
   }
 }

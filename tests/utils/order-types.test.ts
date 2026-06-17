@@ -15,7 +15,7 @@ describe("DETERMINISTIC_ORDER_TYPE", () => {
   it("marks TWAP, StopLoss, CirclesBackingOrder as deterministic", () => {
     expect(DETERMINISTIC_ORDER_TYPE["TWAP"]).toBe(true);
     expect(DETERMINISTIC_ORDER_TYPE["StopLoss"]).toBe(true);
-    // Regression guard for COW-1003: CirclesBackingOrder must be deterministic
+    // Regression guard: CirclesBackingOrder must be deterministic
     expect(DETERMINISTIC_ORDER_TYPE["CirclesBackingOrder"]).toBe(true);
   });
 
@@ -25,6 +25,9 @@ describe("DETERMINISTIC_ORDER_TYPE", () => {
     expect(DETERMINISTIC_ORDER_TYPE["TradeAboveThreshold"]).toBe(false);
     expect(DETERMINISTIC_ORDER_TYPE["SwapOrderHandler"]).toBe(false);
     expect(DETERMINISTIC_ORDER_TYPE["ERC4626CowSwapFeeBurner"]).toBe(false);
+    expect(DETERMINISTIC_ORDER_TYPE["CurveCowSwapBurner"]).toBe(false);
+    expect(DETERMINISTIC_ORDER_TYPE["BalancerCowSwapFeeBurner"]).toBe(false);
+    expect(DETERMINISTIC_ORDER_TYPE["CowAmmConstantProduct"]).toBe(false);
     expect(DETERMINISTIC_ORDER_TYPE["Unknown"]).toBe(false);
   });
 });

@@ -24,14 +24,6 @@ export const CHAIN_NAMES: Record<SupportedChainId, string> = Object.fromEntries(
 ) as Record<SupportedChainId, string>;
 
 /**
- * Approximate block time in seconds per chain ID.
- * Derived from ACTIVE_CHAINS — update chain files to change block times.
- */
-export const BLOCK_TIME_SECONDS: Record<SupportedChainId, number> = Object.fromEntries(
-  ACTIVE_CHAINS.map((c) => [c.chainId, c.blockTime]),
-) as Record<SupportedChainId, number>;
-
-/**
  * ComposableCoW address keyed by numeric chain ID.
  * Derived from ACTIVE_CHAINS — update chain files to change addresses.
  */
