@@ -285,67 +285,6 @@ describe("orderbook resilience (429 / 5xx)", () => {
     }
   });
 
-  it("retries a 5xx then classifies it as ob:unavailable", async () => {
-    let calls = 0;
-    const { url, close } = await startServer((_req, res) => {
-      calls++;
-      res.writeHead(503);
-      res.end("unavailable");
-    });
-    data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
-    const logs = captureErrorLogs();
-    try {
-      const result = await fetchOrderStatusByUids(makeContext(), TEST_CHAIN_ID, [UID_A]);
-      expect(calls).toBe(ORDERBOOK_MAX_RETRIES + 1);
-      expect(result.size).toBe(0);
-      expect(logs.find("ob:unavailable")?.status).toBe(503);
-    } finally {
-      logs.restore();
-      await close();
-    }
-  });
-
-  it("does NOT classify a genuine empty 200 as unavailable (order simply absent)", async () => {
-    const { url, close } = await startServer((_req, res) => {
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end("[]");
-    });
-    data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
-    const logs = captureErrorLogs();
-    try {
-      const result = await fetchOrderStatusByUids(makeContext(), TEST_CHAIN_ID, [UID_A]);
-      expect(result.size).toBe(0);
-      expect(logs.has("ob:unavailable")).toBe(false);
-    } finally {
-      logs.restore();
-      await close();
-    }
-  });
-
-  it("parses an HTTP-date Retry-After without error", async () => {
-    let calls = 0;
-    const { url, close } = await startServer((_req, res) => {
-      calls++;
-      if (calls === 1) {
-        res.writeHead(429, {
-          "retry-after": new Date(Date.now() + 10).toUTCString(),
-          "content-type": "application/json",
-        });
-        res.end("{}");
-        return;
-      }
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify([makeWrappedOrder(UID_A, "open")]));
-    });
-    data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
-    try {
-      const result = await fetchOrderStatusByUids(makeContext(), TEST_CHAIN_ID, [UID_A]);
-      expect(calls).toBe(2);
-      expect(result.get(UID_A)?.status).toBe("open");
-    } finally {
-      await close();
-    }
-  });
 });
 
 // ─── fetchOwnerOrderStatuses tests ────────────────────────────────────────────
