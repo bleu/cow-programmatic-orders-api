@@ -1,6 +1,6 @@
 # Programmatic Orders API
 
-Indexes on-chain events from [CoW Protocol](https://cow.fi)'s ComposableCoW contract, decodes eight programmatic order types (TWAP, Stop Loss, Perpetual Swap, Good After Time, Trade Above Threshold, Circles Backing Order, Swap Order Handler, ERC4626 CoW Swap Fee Burner), and serves the data through a GraphQL API. Built with [Ponder](https://ponder.sh) by [@bleu](https://github.com/bleu) for CoW Protocol.
+Indexes on-chain events from [CoW Protocol](https://cow.fi)'s ComposableCoW contract, decodes the programmatic order types the indexer supports (see [`src/decoders/`](./src/decoders/) for the canonical list), and serves the data through a GraphQL API. Built with [Ponder](https://ponder.sh) by [@bleu](https://github.com/bleu) for CoW Protocol.
 
 ## Tech stack
 
