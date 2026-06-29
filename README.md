@@ -26,7 +26,7 @@ Copy the env file and configure your RPC endpoints:
 cp .env.example .env.local
 ```
 
-Open `.env.local` and set `MAINNET_RPC_URL` and `GNOSIS_RPC_URL`.
+Open `.env.local` and set `MAINNET_RPC_URL` and `GNOSIS_RPC_URL`. Optionally set `<CHAIN>_WS_RPC_URL` (e.g. `MAINNET_WS_RPC_URL`) to enable Ponder realtime WS subscriptions, which are more efficient than HTTP polling.
 
 Start PostgreSQL and run the indexer:
 

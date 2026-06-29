@@ -52,6 +52,6 @@ Start PostgreSQL with `docker compose up -d` to use it instead of the default SQ
 
 - Run `pnpm codegen` after any change to `ponder.config.ts` or `ponder.schema.ts`
 - New event handlers go in `src/application/handlers/` (one file per contract)
-- Adding a chain: create a chain file in `src/chains/` and register it in `src/chains/index.ts`
+- Adding a chain: create a chain file in `src/chains/` and register it in `src/chains/index.ts`; set its `rpcEnvVar` and optionally `wsRpcEnvVar` (the optional `<CHAIN>_WS_RPC_URL` enables Ponder realtime WS subscriptions)
 - External HTTP / RPC calls in block handlers must use `withTimeout(...)` and be partial-failure tolerant — see `agent_docs/code-patterns.md` § External I/O in block handlers
 - Current scope: mainnet + gnosis; Arbitrum planned

@@ -7,6 +7,7 @@ export const linea: ChainConfig = {
   name: "linea",
   chainId: SupportedChainId.LINEA,
   rpcEnvVar: "LINEA_RPC_URL",
+  wsRpcEnvVar: "LINEA_WS_RPC_URL",
   blockTime,
   composableCow: {
     address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74", // CREATE2 — same across chains

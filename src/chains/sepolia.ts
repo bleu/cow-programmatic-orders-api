@@ -7,6 +7,7 @@ export const sepolia: ChainConfig = {
   name: "sepolia",
   chainId: SupportedChainId.SEPOLIA,
   rpcEnvVar: "SEPOLIA_RPC_URL",
+  wsRpcEnvVar: "SEPOLIA_WS_RPC_URL",
   blockTime,
   composableCow: {
     address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74", // CREATE2 — same across chains
