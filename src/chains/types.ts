@@ -65,4 +65,18 @@ export interface ChainConfig {
    * e.g. "mainnet", "xdai", "arbitrum_one". Combined with the base URL at call sites.
    */
   orderbookApiPath: string;
+
+  /**
+   * Orderbook recheck cadence for this chain, in **seconds** (wall-clock).
+   *
+   * Replaces the former global ORDERBOOK_POLL_INTERVAL (a single block count
+   * shared across all chains — a scaling smell flagged in grant review F17).
+   * Converted to a per-chain block offset at runtime as
+   * `max(1, round(orderbookPollInterval / blockTime))` (see src/data.ts
+   * RECHECK_INTERVAL_BLOCKS_BY_CHAIN_ID).
+   *
+   * Defaults preserve the prior cadence (20 blocks): each chain sets
+   * `20 * blockTime` seconds. Tune per chain as the chain list grows.
+   */
+  orderbookPollInterval: number;
 }

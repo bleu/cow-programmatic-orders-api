@@ -28,4 +28,5 @@ export const base: ChainConfig = {
     adapterFactory: "0xdeCC46a4b09162F5369c5C80383AAa9159bCf192", // CREATE2 — same across chains
   },
   orderbookApiPath: "base",
+  orderbookPollInterval: 40, // ~20 blocks at 2s/block (prior global cadence)
 };

@@ -9,11 +9,24 @@ export const GPV2_SETTLEMENT_ADDRESS =
   "0x9008D19f58AAbD9eD0D60971565AA8510560ab41" as const;
 
 /**
- * Orderbook polling interval in blocks.
- * ~20 blocks ≈ 4 min on mainnet (12s/block), ~2 min on Gnosis (5s/block).
- * Used in ponder.config.ts for block handler intervals and in constants.ts for RECHECK_INTERVAL.
+ * Per-chain orderbook recheck cadence, in blocks, keyed by chain ID.
+ *
+ * Replaces the former global ORDERBOOK_POLL_INTERVAL (a single block count
+ * shared across all chains — grant review F17). Derived from each chain's
+ * ChainConfig.orderbookPollInterval (seconds) and blockTime:
+ *   blocks = max(1, round(orderbookPollInterval / blockTime)).
+ *
+ * Derived from ALL_DEFINED_CHAINS so inactive-but-defined chains are covered too.
+ * Partial: lookups are `bigint | undefined`; consumers fall back to
+ * DEFAULT_RECHECK_INTERVAL_BLOCKS (src/constants.ts).
  */
-export const ORDERBOOK_POLL_INTERVAL = 20;
+export const RECHECK_INTERVAL_BLOCKS_BY_CHAIN_ID: Partial<Record<SupportedChainId, bigint>> =
+  Object.fromEntries(
+    ALL_DEFINED_CHAINS.map((c) => [
+      c.chainId,
+      BigInt(Math.max(1, Math.round(c.orderbookPollInterval / c.blockTime))),
+    ]),
+  );
 
 /**
  * Human-readable chain names keyed by chain ID.

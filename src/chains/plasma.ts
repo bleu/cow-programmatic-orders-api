@@ -28,4 +28,5 @@ export const plasma: ChainConfig = {
     adapterFactory: "0xdeCC46a4b09162F5369c5C80383AAa9159bCf192", // CREATE2 — same across chains
   },
   orderbookApiPath: "plasma", // TODO: verify CoW Protocol orderbook URL for Plasma
+  orderbookPollInterval: 20, // ~20 blocks at 1s/block (prior global cadence)
 };

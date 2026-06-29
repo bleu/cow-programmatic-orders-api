@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   SIGNING_SCHEME_EIP1271,
-  RECHECK_INTERVAL,
+  DEFAULT_RECHECK_INTERVAL_BLOCKS,
   TRY_NEXT_BLOCK_WARMUP_THRESHOLD,
   TRY_NEXT_BLOCK_COOLDOWN_THRESHOLD,
   TRY_NEXT_BLOCK_BACKOFF_WARMUP,
@@ -42,14 +42,13 @@ describe("SIGNING_SCHEME_EIP1271", () => {
   });
 });
 
-describe("RECHECK_INTERVAL", () => {
+describe("DEFAULT_RECHECK_INTERVAL_BLOCKS", () => {
   it("is a bigint", () => {
-    expect(typeof RECHECK_INTERVAL).toBe("bigint");
+    expect(typeof DEFAULT_RECHECK_INTERVAL_BLOCKS).toBe("bigint");
   });
 
-  it("equals BigInt(ORDERBOOK_POLL_INTERVAL) which is 20", () => {
-    // ORDERBOOK_POLL_INTERVAL = 20 (from data.ts)
-    expect(RECHECK_INTERVAL).toBe(20n);
+  it("mirrors the former global default of 20 blocks", () => {
+    expect(DEFAULT_RECHECK_INTERVAL_BLOCKS).toBe(20n);
   });
 });
 

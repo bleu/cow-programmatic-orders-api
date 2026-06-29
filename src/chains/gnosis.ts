@@ -31,4 +31,5 @@ export const gnosis: ChainConfig = {
     adapterFactory: "0xdeCc46a4b09162f5369c5c80383aaa9159bcf192", // verified on Gnosisscan
   },
   orderbookApiPath: "xdai",
+  orderbookPollInterval: 100, // ~20 blocks at 5s/block (prior global cadence)
 };
