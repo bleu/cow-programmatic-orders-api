@@ -18,19 +18,19 @@ export const ORDERBOOK_POLL_INTERVAL = 20;
 /**
  * Human-readable chain names keyed by chain ID.
  * Derived from ACTIVE_CHAINS — used for API schema descriptions and logging.
+ * Partial: only the active chains are present, so lookups are `string | undefined`.
  */
-export const CHAIN_NAMES: Record<SupportedChainId, string> = Object.fromEntries(
-  ACTIVE_CHAINS.map((c) => [c.chainId, c.name]),
-) as Record<SupportedChainId, string>;
+export const CHAIN_NAMES: Partial<Record<SupportedChainId, string>> =
+  Object.fromEntries(ACTIVE_CHAINS.map((c) => [c.chainId, c.name]));
 
 /**
  * ComposableCoW address keyed by numeric chain ID.
  * Derived from ACTIVE_CHAINS — update chain files to change addresses.
+ * Partial: only the active chains are present, so lookups are `0x… | undefined`.
  */
-export const COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID: Record<SupportedChainId, `0x${string}`> =
-  Object.fromEntries(
-    ACTIVE_CHAINS.map((c) => [c.chainId, c.composableCow.address]),
-  ) as Record<SupportedChainId, `0x${string}`>;
+export const COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID: Partial<
+  Record<SupportedChainId, `0x${string}`>
+> = Object.fromEntries(ACTIVE_CHAINS.map((c) => [c.chainId, c.composableCow.address]));
 
 /**
  * Known ComposableCoW order handler addresses — derived from the ALL_HANDLER_ADDRESSES
@@ -56,24 +56,22 @@ export const ORDERBOOK_API_URLS: Record<number, string> = Object.fromEntries(
 
 /**
  * AaveV3AdapterFactory addresses keyed by chain name.
- * Derived from ACTIVE_CHAINS — only chains with a non-null aaveV3AdapterFactory are included.
+ * Derived from ACTIVE_CHAINS — every active chain has flash-loan infra
+ * (flashLoan is non-null on a ChainConfig), so no filter is needed.
  * Used by settlement.ts to resolve per-chain factory addresses at runtime.
  */
 export const AAVE_V3_ADAPTER_FACTORY_ADDRESSES: Record<string, `0x${string}`> =
   Object.fromEntries(
-    ACTIVE_CHAINS
-      .filter((c) => c.aaveV3AdapterFactory !== null)
-      .map((c) => [c.name, c.aaveV3AdapterFactory!]),
+    ACTIVE_CHAINS.map((c) => [c.name, c.flashLoan.adapterFactory]),
   );
 
 /**
  * GPv2Settlement deployment info keyed by chain name.
- * Derived from ACTIVE_CHAINS — only chains with a non-null gpv2Settlement are included.
+ * Derived from ACTIVE_CHAINS — gpv2Settlement is non-null on a ChainConfig,
+ * so no filter is needed.
  * Used by settlement.ts to resolve the settlement contract address per chain.
  */
 export const GPV2_SETTLEMENT_DEPLOYMENTS: Record<string, { address: `0x${string}`; startBlock: number }> =
   Object.fromEntries(
-    ACTIVE_CHAINS
-      .filter((c) => c.gpv2Settlement !== null)
-      .map((c) => [c.name, c.gpv2Settlement!]),
+    ACTIVE_CHAINS.map((c) => [c.name, c.gpv2Settlement]),
   );

@@ -23,7 +23,9 @@ export const mainnet: ChainConfig = {
     address: "0x9008D19f58AAbD9eD0D60971565AA8510560ab41",
     startBlock: 23812751, // AaveV3AdapterFactory deployment block (Nov 16, 2025)
   },
-  flashLoanRouter: "0x9da8B48441583a2b93e2eF8213aAD0EC0b392C69",
-  aaveV3AdapterFactory: "0xdeCc46a4b09162f5369c5c80383aaa9159bcf192",
+  flashLoan: {
+    router: "0x9da8B48441583a2b93e2eF8213aAD0EC0b392C69",
+    adapterFactory: "0xdeCc46a4b09162f5369c5c80383aaa9159bcf192",
+  },
   orderbookApiPath: "mainnet",
 };

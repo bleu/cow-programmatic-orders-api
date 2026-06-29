@@ -1,57 +1,65 @@
+import { SupportedChainId } from "@cowprotocol/cow-sdk";
+import { type ChainConfig } from "./types";
 import { mainnet } from "./mainnet";
 import { gnosis } from "./gnosis";
 import { arbitrum } from "./arbitrum";
 import { base } from "./base";
-import { sepolia } from "./sepolia";
 import { bnb } from "./bnb";
 import { polygon } from "./polygon";
-import { lens } from "./lens";
 import { plasma } from "./plasma";
 import { avalanche } from "./avalanche";
-import { ink } from "./ink";
 import { linea } from "./linea";
 
 /**
- * ALL_DEFINED_CHAINS — one entry per chain in cow-sdk's ALL_SUPPORTED_CHAIN_IDS.
+ * CHAIN_CONFIGS — the chain registry, keyed by SupportedChainId.
  *
- * When cow-sdk adds a new chain to ALL_SUPPORTED_CHAIN_IDS, add a corresponding
- * src/chains/<name>.ts here. Populate contract addresses from the block explorer
- * (ComposableCow is CREATE2 at 0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74;
- * CoWShedFactory and AaveV3AdapterFactory addresses vary per chain and must be verified).
+ * `satisfies Record<SupportedChainId, ChainConfig | null>` makes coverage
+ * exhaustive: when cow-sdk adds a member to SupportedChainId, `pnpm typecheck`
+ * FAILS ("Property … is missing") until a developer adds an entry here that is
+ * either a full ChainConfig or `null`.
+ *
+ * `null` = explicitly skipped. A chain is skipped when it lacks the flash-loan
+ * infra (router + AaveV3AdapterFactory) and/or GPv2Settlement deployment that a
+ * full ChainConfig now requires (see the constraint note in types.ts). Today
+ * that is sepolia, ink, and lens; their verified ComposableCoW/CoWShed
+ * deployment data lives in git history and can be restored if they ever gain the
+ * infra (or if `flashLoan`/`gpv2Settlement` are reverted to nullable per the
+ * note in types.ts).
  */
-export const ALL_DEFINED_CHAINS = [
-  mainnet,
-  gnosis,
-  arbitrum,
-  base,
-  sepolia,
-  bnb,
-  polygon,
-  lens,
-  plasma,
-  avalanche,
-  ink,
-  linea,
-];
+export const CHAIN_CONFIGS = {
+  [SupportedChainId.MAINNET]: mainnet,
+  [SupportedChainId.BNB]: bnb,
+  [SupportedChainId.GNOSIS_CHAIN]: gnosis,
+  [SupportedChainId.POLYGON]: polygon,
+  [SupportedChainId.LENS]: null, // no AaveV3AdapterFactory / flash-loan infra; orderbook not live (api.cow.fi/lens 404s)
+  [SupportedChainId.BASE]: base,
+  [SupportedChainId.PLASMA]: plasma,
+  [SupportedChainId.ARBITRUM_ONE]: arbitrum,
+  [SupportedChainId.AVALANCHE]: avalanche,
+  [SupportedChainId.INK]: null, // no CoWShedFactory and no AaveV3AdapterFactory / flash-loan infra confirmed
+  [SupportedChainId.LINEA]: linea,
+  [SupportedChainId.SEPOLIA]: null, // no AaveV3AdapterFactory / flash-loan infra
+} satisfies Record<SupportedChainId, ChainConfig | null>;
+
+/**
+ * ALL_DEFINED_CHAINS — every chain configured with a full ChainConfig.
+ * Derived from CHAIN_CONFIGS (drops the `null` / skipped entries). Used for
+ * API-only lookups (e.g. orderbook URLs) across all configured chains, not just
+ * the actively indexed ones.
+ */
+export const ALL_DEFINED_CHAINS: ChainConfig[] = Object.values(CHAIN_CONFIGS).filter(
+  (c): c is ChainConfig => c !== null,
+);
 
 /**
  * ACTIVE_CHAINS — the chains this indexer instance actually processes.
  *
- * To enable a chain: add it here and supply its RPC URL env var in docker-compose.yml
- * and the deployment .env file. To disable: remove it from this array.
- * ponder.config.ts derives all RPC/contract config from this array.
+ * Explicit in-code selection (not env-gated). To enable a chain: add it here and
+ * supply its RPC URL env var in docker-compose.yml and the deployment .env file.
+ * To disable: remove it from this array. ponder.config.ts derives all
+ * RPC/contract config from this array.
+ *
+ * Inactive-but-defined chains (arbitrum, base, bnb, polygon, avalanche, linea,
+ * plasma) are fully verified — add one here once its RPC URL is provisioned.
  */
-export const ACTIVE_CHAINS = [
-  mainnet,
-  gnosis,
-  // arbitrum, // fully verified — enable when ARBITRUM_RPC_URL is provisioned
-  // base,     // fully verified — enable when BASE_RPC_URL is provisioned
-  // bnb,      // fully verified — enable when BNB_RPC_URL is provisioned
-  // polygon,  // fully verified — enable when POLYGON_RPC_URL is provisioned
-  // avalanche,// fully verified — enable when AVALANCHE_RPC_URL is provisioned
-  // linea,    // fully verified — enable when LINEA_RPC_URL is provisioned
-  // plasma,   // fully verified — enable when PLASMA_RPC_URL is provisioned
-  // lens,     // enable when LENS_RPC_URL is provisioned; aaveV3AdapterFactory=null (no flash loan detection); orderbook not live yet
-  // sepolia,  // enable when SEPOLIA_RPC_URL is provisioned; aaveV3AdapterFactory=null (no flash loan detection)
-  // ink,      // enable when INK_RPC_URL is provisioned; cowShedFactory=null (no CoWShed indexing); aaveV3AdapterFactory=null (no flash loan detection)
-];
+export const ACTIVE_CHAINS: ChainConfig[] = [mainnet, gnosis];

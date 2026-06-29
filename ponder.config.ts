@@ -19,9 +19,9 @@ const chains = Object.fromEntries(
 );
 
 const cowShedChains = ACTIVE_CHAINS.filter((c) => c.cowShedFactory !== null);
-const settlementChains = ACTIVE_CHAINS.filter(
-  (c) => c.gpv2Settlement !== null && c.flashLoanRouter !== null,
-);
+// Every active chain has settlement + flash-loan infra (both non-null on a
+// ChainConfig — see src/chains/types.ts), so all active chains are settlement chains.
+const settlementChains = ACTIVE_CHAINS;
 
 export default createConfig({
   chains,
@@ -59,11 +59,11 @@ export default createConfig({
         settlementChains.map((c) => [
           c.name,
           {
-            address: c.gpv2Settlement!.address,
-            startBlock: c.gpv2Settlement!.startBlock,
+            address: c.gpv2Settlement.address,
+            startBlock: c.gpv2Settlement.startBlock,
             filter: {
               event: "Settlement" as const,
-              args: { solver: c.flashLoanRouter! },
+              args: { solver: c.flashLoan.router },
             },
           },
         ]),

@@ -6,7 +6,17 @@ import { SupportedChainId } from "@cowprotocol/cow-sdk";
  *
  * Add a new chain by:
  *   1. Creating src/chains/<name>.ts implementing this interface.
- *   2. Importing and appending it to ACTIVE_CHAINS in src/chains/index.ts.
+ *   2. Registering it under its SupportedChainId key in the CHAIN_CONFIGS
+ *      registry in src/chains/index.ts (a full ChainConfig, or `null` to skip).
+ *   3. Adding it to ACTIVE_CHAINS in src/chains/index.ts to actually index it.
+ *
+ * Flash-loan-required constraint: `flashLoan` and `gpv2Settlement` are non-null,
+ * so any chain configured as a full ChainConfig MUST have flash-loan infra
+ * (router + adapter factory) and a settlement deployment. A chain lacking that
+ * infra (today: sepolia, ink, lens) cannot be a ChainConfig — it must be a `null`
+ * entry in CHAIN_CONFIGS. If a future need arises to index an orders-only chain
+ * WITHOUT flash-loan infra, revert `flashLoan` (and `gpv2Settlement`) to `| null`
+ * and re-add the per-chain settlement gate in ponder.config.ts.
  */
 export interface ChainConfig {
   /** Ponder chain key (e.g. "mainnet", "gnosis"). Must match ponder chain names. */
@@ -34,22 +44,21 @@ export interface ChainConfig {
   } | null;
 
   /**
-   * GPv2Settlement deployment — null if not indexed on this chain.
-   * Currently only indexed where AaveV3AdapterFactory is deployed.
+   * GPv2Settlement deployment. Always indexed on a configured chain
+   * (chains without it are `null` in CHAIN_CONFIGS — see the constraint note above).
    */
-  gpv2Settlement: { address: `0x${string}`; startBlock: number } | null;
+  gpv2Settlement: { address: `0x${string}`; startBlock: number };
 
   /**
-   * FlashLoanRouter address — used to filter GPv2Settlement:Settlement events.
-   * Null if GPv2Settlement is not indexed on this chain.
+   * Flash-loan infrastructure for this chain. Always present on a configured chain.
+   *  - `router`: FlashLoanRouter address — used to filter GPv2Settlement:Settlement events.
+   *  - `adapterFactory`: AaveV3AdapterFactory address — used for view calls
+   *    (not a Ponder-indexed contract).
+   *
+   * Grouped (rather than two independent nullable fields) so the router and factory
+   * cannot drift out of sync — a chain has flash-loan infra or it doesn't.
    */
-  flashLoanRouter: `0x${string}` | null;
-
-  /**
-   * AaveV3AdapterFactory address — used for view calls (not a Ponder-indexed contract).
-   * Null if not deployed/confirmed on this chain.
-   */
-  aaveV3AdapterFactory: `0x${string}` | null;
+  flashLoan: { router: `0x${string}`; adapterFactory: `0x${string}` };
 
   /**
    * CoW Protocol Orderbook API path for this chain (the part after https://api.cow.fi/).

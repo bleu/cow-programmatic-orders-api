@@ -23,7 +23,9 @@ export const linea: ChainConfig = {
     address: "0x9008D19f58AAbD9eD0D60971565AA8510560ab41",
     startBlock: 26288706, // AaveV3AdapterFactory deployment block on Linea
   },
-  flashLoanRouter: "0x9da8B48441583a2b93e2eF8213aAD0EC0b392C69", // verified: ROUTER() on Linea AaveV3AdapterFactory
-  aaveV3AdapterFactory: "0xdeCC46a4b09162F5369c5C80383AAa9159bCf192", // CREATE2 — same across chains
+  flashLoan: {
+    router: "0x9da8B48441583a2b93e2eF8213aAD0EC0b392C69", // verified: ROUTER() on Linea AaveV3AdapterFactory
+    adapterFactory: "0xdeCC46a4b09162F5369c5C80383AAa9159bCf192", // CREATE2 — same across chains
+  },
   orderbookApiPath: "linea", // TODO: verify CoW Protocol orderbook URL for Linea
 };
