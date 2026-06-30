@@ -325,8 +325,8 @@ export interface FlashLoanEnrichment {
  * Flash-loan adapters wipe their getHookData() struct in the settlement tx, so
  * the orderbook is the authoritative source for kind / receiver / intended
  * amounts. Flash-loan orders are always settled (terminal), so a fetched result
- * never goes stale — it is cached in cow_cache.flash_loan_order_cache, which
- * survives reindex, so a schema-hash change does not re-hit the orderbook for
+ * never goes stale — it is cached in cow_cache.order_uid_cache (shared with the
+ * discrete path), which survives reindex, so a schema-hash change does not re-hit the orderbook for
  * historical orders. UIDs absent from both cache and the API body (not yet
  * indexed, or aged out) are omitted — the caller retries on a later block.
  */

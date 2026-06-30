@@ -6,7 +6,7 @@ This document covers how the indexer works, from on-chain events to the GraphQL 
 
 The system is a Ponder 0.16.x indexer that watches the ComposableCoW contract on all active chains (see `ponder.config.ts`). When a user creates a programmatic order (TWAP, Stop Loss, etc.), the contract emits a `ConditionalOrderCreated` event. The indexer picks that up, decodes the order parameters, resolves the actual owner (which may be behind a proxy), and writes the result to Postgres. A Hono HTTP server exposes the data through GraphQL and a SQL passthrough endpoint.
 
-Ponder registers handlers for three independent on-chain event streams: `ComposableCow` (conditional order creation), `CoWShedFactory` (proxy wallet deployment), and `GPv2Settlement` (Aave adapter detection via `Settlement` events — `Trade` logs in the receipt identify the adapter address). During live sync, additional block handlers in `blockHandler.ts` poll contract state and the CoW orderbook API. See `blockHandler.ts` for the current handler list and responsibilities. `settlement.ts` detects Aave flash loan adapters and records the flash-loan orders they settle: the `GPv2Settlement:Settlement` event handler does all RPC work inline (each call wrapped in `withTimeout` with its own try/catch, so errors never crash the handler), writing both an `ownerMapping` row and a `flashLoanOrder` row per confirmed adapter.
+Ponder registers handlers for three independent on-chain event streams: `ComposableCow` (conditional order creation), `CoWShedFactory` (proxy wallet deployment), and `GPv2Settlement` (Aave adapter detection via `Settlement` events — `Trade` logs in the receipt identify the adapter address). During live sync, additional block handlers in `src/application/handlers/block/` (one file per handler) poll contract state and the CoW orderbook API. See that directory for the current handler list and responsibilities. `settlement.ts` detects Aave flash loan adapters and records the flash-loan orders they settle: the `GPv2Settlement:Settlement` event handler does all RPC work inline (each call wrapped in `withTimeout` with its own try/catch, so errors never crash the handler), writing both an `ownerMapping` row and a `flashLoanOrder` row per confirmed adapter.
 
 ## Contracts and Chains
 
@@ -16,7 +16,7 @@ Currently active chains, their start blocks, and contract addresses are defined 
 
 Stub configs exist for all 12 chains in cow-sdk's `ALL_SUPPORTED_CHAIN_IDS`; contract addresses for the remaining chains need verification before enabling.
 
-`ponder.config.ts` derives all config from `ACTIVE_CHAINS` in `src/chains/index.ts` and wires it into Ponder's `createConfig`. It never contains raw addresses or block numbers directly. It also registers the live-only block handlers from [`blockHandler.ts`](../src/application/handlers/blockHandler.ts) — all run during live sync only (`startBlock: "latest"`).
+`ponder.config.ts` derives all config from `ACTIVE_CHAINS` in `src/chains/index.ts` and wires it into Ponder's `createConfig`. It never contains raw addresses or block numbers directly. It also registers the live-only block handlers in [`src/application/handlers/block/`](../src/application/handlers/block/) (one file per handler; `blockHandler.ts` is a barrel that imports them) — all run during live sync only (`startBlock: "latest"`).
 
 
 Three contracts are indexed:
@@ -50,7 +50,7 @@ composableCow.ts handler        cowshed.ts handler             settlement.ts han
                         |
                         |  (live sync only)
                         v
-               blockHandler.ts — live block handlers
+               block/ — live block handlers
                  OrderDiscoveryPoller     — multicall getTradeableOrderWithSignature for
                                            non-deterministic generators; detects cancellation
                                            via SingleOrderNotAuthed error
@@ -180,9 +180,9 @@ The raw `eth_call` for `FACTORY()` avoids Ponder's built-in WARN logs on reverts
 
 Stats (total settlements, trade logs found, EOA skips, adapter mappings, avg FACTORY() latency) are accumulated and logged every 30 seconds.
 
-### blockHandler.ts -- live block handlers
+### block/ -- live block handlers
 
-All block handlers run only during live sync (`startBlock: "latest"`) to avoid hammering the orderbook API during historical backfill. `OrderDiscoveryPoller` and `CancellationWatcher` share a per-chain batch cap (`MAX_GENERATORS_PER_BLOCK_<chainId>`, default 200) and pull from a priority queue ordered by oldest `lastCheckBlock` first. Generators past the cap defer to the next block.
+The block handlers live in `src/application/handlers/block/` (one file per handler); `blockHandler.ts` is a thin barrel that imports them so their `ponder.on(...)` registrations run. All run only during live sync (`startBlock: "latest"`) to avoid hammering the orderbook API during historical backfill. `OrderDiscoveryPoller` and `CancellationWatcher` share a per-chain batch cap (`MAX_GENERATORS_PER_BLOCK_<chainId>`, default 200) and pull from a priority queue ordered by oldest `lastCheckBlock` first. Generators past the cap defer to the next block.
 
 **OrderDiscoveryPoller** (every block, mainnet + gnosis): Multicalls `getTradeableOrderWithSignature` on ComposableCoW for each `Active` generator where `allCandidatesKnown=false`. A success result creates a `candidateDiscreteOrder` entry. A `SingleOrderNotAuthed` error marks the generator as `Cancelled` with `lastPollResult='cancelled:SingleOrderNotAuthed'`. Other errors (tryNextBlock, tryAtEpoch, etc.) advance the generator's `nextCheckBlock` accordingly. Single-shot non-deterministic types (GoodAfterTime, TradeAboveThreshold) set `allCandidatesKnown=true` after first success.
 
@@ -194,7 +194,7 @@ All block handlers run only during live sync (`startBlock: "latest"`) to avoid h
 
 **FlashLoanOrderBackfiller** (fires once at latest block, mainnet + gnosis): The flash-loan enrichment counterpart of `OwnerBackfill`. The settlement handler records `flashLoanOrder` rows with on-chain data only (the adapter's `getHookData()` struct is wiped at settlement, so the orderbook is the source of truth for `receiver`/`kind`/intended amounts). Enrichment is **not** done in the historical path — instead this one-shot handler bulk-drains the entire backlog (`enrichedAt IS NULL`) at go-live, in bounded sequential slices of `FLASH_LOAN_BACKFILL_SLICE_SIZE` (500) to cap orderbook concurrency. Doing the whole drain in a single firing keeps the post-promotion incomplete-data window to roughly one firing rather than hours.
 
-**FlashLoanOrderEnricher** (every block, mainnet + gnosis): Steady-state enrichment for orders that settle *during* live sync, plus any stragglers the backfiller left (timeouts / not-yet-on-API). Selects pending rows (`enrichedAt IS NULL`, oldest `blockNumber` first) up to `MAX_FLASH_LOAN_ORDERS_PER_BLOCK_<chainId>` (default 200). Both handlers share one enrichment routine: batch-fetch via `/orders/by_uids` (cache-first against `cow_cache.flash_loan_order_cache`, which survives reindex), upsert the orderbook fields + `enrichedAt` on hits, and bump `enrichmentAttempts` on misses until `MAX_FLASH_LOAN_ENRICHMENT_ATTEMPTS` (then left permanently un-enriched rather than polled forever).
+**FlashLoanOrderEnricher** (every block, mainnet + gnosis): Steady-state enrichment for orders that settle *during* live sync, plus any stragglers the backfiller left (timeouts / not-yet-on-API). Selects pending rows (`enrichedAt IS NULL`, oldest `blockNumber` first) up to `MAX_FLASH_LOAN_ORDERS_PER_BLOCK_<chainId>` (default 200). Both handlers share one enrichment routine: batch-fetch via `/orders/by_uids` (cache-first against `cow_cache.order_uid_cache`, the shared per-UID cache, which survives reindex), upsert the orderbook fields + `enrichedAt` on hits, and bump `enrichmentAttempts` on misses until `MAX_FLASH_LOAN_ENRICHMENT_ATTEMPTS` (then left permanently un-enriched rather than polled forever).
 
 **OwnerBackfill** (fires once at latest block, mainnet + gnosis): One-time fetch of historical orders for non-deterministic generators (PerpetualSwap, GoodAfterTime, TradeAboveThreshold, Unknown) that were active during backfill but have no discrete orders yet. Queries the CoW Protocol `/orders?owner=` endpoint per owner.
 
@@ -205,7 +205,7 @@ All block handlers run only during live sync (`startBlock: "latest"`) to avoid h
 All order types supported by the indexer have a dedicated decoder in `src/decoders/` (see that directory for the current list). Two categories exist based on how UIDs are discovered:
 
 - **Deterministic** (`allCandidatesKnown=true`): UIDs are precomputed at order creation time from the params alone, so all candidate UIDs are known immediately. Currently: TWAP, StopLoss, CirclesBackingOrder. Not polled by `OrderDiscoveryPoller`.
-- **Non-deterministic** (`allCandidatesKnown=false`): UIDs depend on runtime state and cannot be precomputed, so they are polled every block by `OrderDiscoveryPoller`. The authoritative set is `NON_DETERMINISTIC_TYPES` in [`blockHandler.ts`](../src/application/handlers/blockHandler.ts) (plus the `Unknown` fallback).
+- **Non-deterministic** (`allCandidatesKnown=false`): UIDs depend on runtime state and cannot be precomputed, so they are polled every block by `OrderDiscoveryPoller`. The authoritative set is `NON_DETERMINISTIC_TYPES` in [`block/ownerBackfill.ts`](../src/application/handlers/block/ownerBackfill.ts) (plus the `Unknown` fallback).
 
 The canonical list of decoded order types is `src/decoders/`; handler addresses (including per-chain overlays for newer handlers) are tracked in `src/utils/order-types.ts`.
 

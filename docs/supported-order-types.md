@@ -386,7 +386,7 @@ Two live-only block handlers then fill those fields from the CoW orderbook by `o
 - **`FlashLoanOrderBackfiller`** fires once at go-live (like `OwnerBackfill`) and bulk-drains the entire historical backlog in bounded slices — so the deploy's incomplete-data window after promotion is ~one firing, not hours.
 - **`FlashLoanOrderEnricher`** runs every block for orders that settle during live sync, plus any stragglers.
 
-Both are cache-first (`cow_cache.flash_loan_order_cache`, which survives reindex), so a schema-hash change does not re-hit the orderbook for historical orders. UIDs not on the API yet are retried up to `MAX_FLASH_LOAN_ENRICHMENT_ATTEMPTS`; `enrichedAt` is set once enrichment succeeds. Until then a row is fully usable for its on-chain fields and queryable by `adapter`/`orderUid`/`owner`, just with the orderbook fields `null`.
+Both are cache-first (`cow_cache.order_uid_cache`, the shared per-UID cache, which survives reindex), so a schema-hash change does not re-hit the orderbook for historical orders. UIDs not on the API yet are retried up to `MAX_FLASH_LOAN_ENRICHMENT_ATTEMPTS`; `enrichedAt` is set once enrichment succeeds. Until then a row is fully usable for its on-chain fields and queryable by `adapter`/`orderUid`/`owner`, just with the orderbook fields `null`.
 
 ### Exposure
 
