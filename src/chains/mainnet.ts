@@ -7,6 +7,7 @@ export const mainnet: ChainConfig = {
   name: "mainnet",
   chainId: SupportedChainId.MAINNET,
   rpcEnvVar: "MAINNET_RPC_URL",
+  wsRpcEnvVar: "MAINNET_WS_RPC_URL",
   blockTime,
   composableCow: {
     address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74",

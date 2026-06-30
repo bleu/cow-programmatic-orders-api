@@ -11,6 +11,11 @@ const chains = Object.fromEntries(
     {
       id: c.chainId,
       rpc: process.env[c.rpcEnvVar]!,
+      // Optional WS endpoint for realtime eth_subscribe newHeads (more efficient than HTTP
+      // polling). Built only when declared AND set; otherwise omitted → HTTP-only, no error.
+      ...(c.wsRpcEnvVar && process.env[c.wsRpcEnvVar]
+        ? { ws: process.env[c.wsRpcEnvVar] }
+        : {}),
       // Many RPC providers cap eth_getLogs at 1000–2000 blocks; set conservatively to avoid
       // InvalidInputRpcError retry storms during backfill. Override via ETH_GET_LOGS_BLOCK_RANGE_<chainId>.
       ethGetLogsBlockRange: Number(process.env[`ETH_GET_LOGS_BLOCK_RANGE_${c.chainId}`] ?? 1000),

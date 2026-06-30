@@ -1,6 +1,6 @@
 # Programmatic Orders API
 
-Indexes on-chain events from [CoW Protocol](https://cow.fi)'s ComposableCoW contract, decodes eight programmatic order types (TWAP, Stop Loss, Perpetual Swap, Good After Time, Trade Above Threshold, Circles Backing Order, Swap Order Handler, ERC4626 CoW Swap Fee Burner), and serves the data through a GraphQL API. Built with [Ponder](https://ponder.sh) by [@bleu](https://github.com/bleu) for CoW Protocol.
+Indexes on-chain events from [CoW Protocol](https://cow.fi)'s ComposableCoW contract, decodes the programmatic order types the indexer supports (see [`src/decoders/`](./src/decoders/) for the canonical list), and serves the data through a GraphQL API. Built with [Ponder](https://ponder.sh) by [@bleu](https://github.com/bleu) for CoW Protocol.
 
 ## Tech stack
 
@@ -26,7 +26,7 @@ Copy the env file and configure your RPC endpoints:
 cp .env.example .env.local
 ```
 
-Open `.env.local` and set `MAINNET_RPC_URL` and `GNOSIS_RPC_URL`.
+Open `.env.local` and set `MAINNET_RPC_URL` and `GNOSIS_RPC_URL`. Optionally set `<CHAIN>_WS_RPC_URL` (e.g. `MAINNET_WS_RPC_URL`) to enable Ponder realtime WS subscriptions, which are more efficient than HTTP polling.
 
 Start PostgreSQL and run the indexer:
 

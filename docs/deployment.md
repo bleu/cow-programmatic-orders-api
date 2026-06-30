@@ -12,10 +12,12 @@ All config goes in a `.env` file (production) or `.env.local` (local dev). Start
 |----------|----------|-------------|
 | `MAINNET_RPC_URL` | Yes | Ethereum mainnet RPC endpoint |
 | `GNOSIS_RPC_URL` | Yes | Gnosis Chain RPC endpoint |
+| `MAINNET_WS_RPC_URL` | No | Mainnet WebSocket endpoint — enables Ponder realtime subscriptions; falls back to HTTP polling when unset |
+| `GNOSIS_WS_RPC_URL` | No | Gnosis WebSocket endpoint — enables Ponder realtime subscriptions; falls back to HTTP polling when unset |
 
 The indexer is RPC-heavy during initial sync. Rate-limited endpoints will work but sync takes considerably longer. Use an endpoint with generous throughput for production.
 
-> **Adding a new chain:** when a chain is added to `ACTIVE_CHAINS` in `src/chains/index.ts`, its RPC URL env var (defined as `rpcEnvVar` in the chain config file) must be added here and to the `ponder` service environment in `docker-compose.yml` under the `deploy` profile.
+> **Adding a new chain:** when a chain is added to `ACTIVE_CHAINS` in `src/chains/index.ts`, its RPC URL env var (defined as `rpcEnvVar` in the chain config file) must be added here and to the `ponder` service environment in `docker-compose.yml` under the `deploy` profile. The RPC used must be a dedicated/paid one, since the public endpoint rate limits is insuficient for the app. The optional WS RPC URL env var (`wsRpcEnvVar`) may be added the same way to enable realtime WS subscriptions.
 
 ### Database
 
