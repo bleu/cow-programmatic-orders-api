@@ -7,6 +7,7 @@ export const ink: ChainConfig = {
   name: "ink",
   chainId: SupportedChainId.INK,
   rpcEnvVar: "INK_RPC_URL",
+  wsRpcEnvVar: "INK_WS_RPC_URL",
   blockTime,
   composableCow: {
     address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74", // CREATE2 — same across chains

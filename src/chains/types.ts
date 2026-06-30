@@ -15,6 +15,11 @@ export interface ChainConfig {
   chainId: SupportedChainId;
   /** Environment variable name holding the RPC URL for this chain. */
   rpcEnvVar: string;
+  /**
+   * Environment variable name holding the WebSocket RPC URL for this chain.
+   * Optional; enables Ponder realtime WS subscriptions, falls back to HTTP polling when unset.
+   */
+  wsRpcEnvVar?: string;
   /** Approximate block time in seconds — used to estimate block numbers from epoch timestamps. */
   blockTime: number;
 

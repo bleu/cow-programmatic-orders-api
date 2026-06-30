@@ -101,6 +101,7 @@ src/data.ts
 | `DATABASE_URL` | No | PostgreSQL URL (defaults to SQLite if unset) |
 | `GNOSIS_RPC_URL` | No | Reserved for future gnosis chain |
 | `ARBITRUM_RPC_URL` | No | Reserved for future arbitrum chain |
+| `<CHAIN>_WS_RPC_URL` | No | Optional WebSocket endpoint (e.g. `MAINNET_WS_RPC_URL`) — enables Ponder realtime subscriptions; falls back to HTTP polling when unset |
 
 ---
 
