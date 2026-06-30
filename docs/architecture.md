@@ -129,10 +129,10 @@ The `resolutionDepth` column records how many hops were needed to reach the EOA.
 
 Standalone CoW orders settled by an Aave V3 flash-loan adapter — **not** ComposableCoW conditional orders (no generator, no `staticInput`). Recorded executed-only from the on-chain `Trade` event at settlement; there is **no `status` column** (presence means executed). Each adapter is a fresh CREATE2 deployment per order, so adapter ↔ order is 1:1.
 
-Columns: `orderUid`, `chainId`, `adapter`, `sellToken`, `buyToken`, `executedSellAmount`, `executedBuyAmount`, `feeAmount`, `txHash`, `blockNumber`, `blockTimestamp` (from the `Trade` event); `validTo` (decoded from the order UID); `owner`, `receiver`, `kind`, `sellAmountIntended`, `buyAmountIntended`, `flashLoanAmount`, `flashLoanFeeAmount` (nullable, from `getHookData()`); `source` (`"aave"`); `type` (nullable: `RepayWithCollateral` / `CollateralSwap` / `DebtSwap`).
-PK: `(chainId, orderUid)`. Indexes on `owner` and `adapter`. Relations: `transaction`, `ownerMapping` (via `adapter`).
+Columns: `orderUid`, `chainId`, `adapter`, `sellToken`, `buyToken`, `executedSellAmount`, `executedBuyAmount`, `feeAmount`, `txHash`, `blockNumber`, `blockTimestamp` (from the `Trade` event); `validTo` (decoded from the order UID); `owner` (resolved EOA, from the adapter's `owner()` call); `receiver`, `kind`, `sellAmountIntended`, `buyAmountIntended` (nullable, filled from the orderbook by `FlashLoanOrderEnricher`); `source` (`"aave"`); `type` (nullable: `RepayWithCollateral` / `CollateralSwap` / `DebtSwap`); `enrichedAt` (block time enrichment succeeded; null = pending) and `enrichmentAttempts` (retry counter).
+PK: `(chainId, orderUid)`. Indexes on `owner`, `adapter`, and `(chainId, enrichedAt, blockNumber)` (the enricher poll query). Relations: `transaction`, `ownerMapping` (via `adapter`).
 
-See [supported-order-types.md](./supported-order-types.md#aave-flash-loan-orders) for the full flow (type detection, graceful `getHookData` degradation).
+See [supported-order-types.md](./supported-order-types.md#aave-flash-loan-orders) for the full flow (type detection, orderbook enrichment).
 
 ## Handlers in Detail
 
@@ -171,8 +171,10 @@ Once the adapter is confirmed, this branch records the **order** as well as the 
 
 7. Decode the non-indexed `Trade` log data (tokens, executed amounts, fee, `orderUid`) that step 3 discarded, and decode `validTo` from the trailing `uint32` of the `orderUid`.
 8. Derive `type` from the adapter's EIP-1167 implementation address (extracted from the step-5 `getCode` bytecode — no extra RPC).
-9. **Graceful degradation:** call `getHookData()` first — on success its `owner` resolves the mapping AND its fields enrich the order. On failure, fall back to `owner()` for the mapping and leave the `getHookData`-sourced order fields null.
-10. Insert `transaction` and `flashLoanOrder` (always, `onConflictDoNothing` on `chainId + orderUid`). Insert `ownerMapping` (`addressType = FlashLoanHelper`, `resolutionDepth = 1`) whenever the EOA resolved — owner-mapping reliability does not regress.
+9. Call `owner()` on the adapter to resolve the EOA. Unlike the adapter's `getHookData()` struct (which is wiped in the settlement tx, so reads after settlement return zeros), `owner()` is durable on-chain state.
+10. Insert `transaction` and `flashLoanOrder` (always, `onConflictDoNothing` on `chainId + orderUid`) with the on-chain fields plus the resolved `owner`; the orderbook fields (`receiver`, `kind`, intended amounts) start `null` and `enrichedAt` is `null`. Insert `ownerMapping` (`addressType = FlashLoanHelper`, `resolutionDepth = 1`) whenever the EOA resolved.
+
+The orderbook-sourced fields are filled later by `FlashLoanOrderEnricher` (see below) — the adapter does not retain them on-chain.
 
 The raw `eth_call` for `FACTORY()` avoids Ponder's built-in WARN logs on reverts — most addresses are not Aave adapters, so reverts are the common case and would flood the logs if `readContract` were used.
 
@@ -189,6 +191,10 @@ All block handlers run only during live sync (`startBlock: "latest"`) to avoid h
 **TWAP aged-out fallback**: When a candidate's `orderUid` is no longer served by `/orders/by_uids` (typically after the order expires from the orderbook cache), `CandidateConfirmer` falls back to fetching the owner's full order list from `/account/{owner}/orders`. This resolves TWAP parts that the orderbook stopped tracking before `CandidateConfirmer` processed them. On timeout or API failure, the candidate defaults to `expired`.
 
 **OrderStatusTracker** (every block, mainnet + gnosis): Polls the orderbook API for all `open` discrete orders and updates their status from the API response. Then sweeps any remaining `open` rows whose parent generator is `Cancelled` to `status='cancelled'` (API-terminal statuses from the loop above still win for children that were traded before on-chain cancellation). Finally expires any orders past their `validTo` timestamp.
+
+**FlashLoanOrderBackfiller** (fires once at latest block, mainnet + gnosis): The flash-loan enrichment counterpart of `OwnerBackfill`. The settlement handler records `flashLoanOrder` rows with on-chain data only (the adapter's `getHookData()` struct is wiped at settlement, so the orderbook is the source of truth for `receiver`/`kind`/intended amounts). Enrichment is **not** done in the historical path — instead this one-shot handler bulk-drains the entire backlog (`enrichedAt IS NULL`) at go-live, in bounded sequential slices of `FLASH_LOAN_BACKFILL_SLICE_SIZE` (500) to cap orderbook concurrency. Doing the whole drain in a single firing keeps the post-promotion incomplete-data window to roughly one firing rather than hours.
+
+**FlashLoanOrderEnricher** (every block, mainnet + gnosis): Steady-state enrichment for orders that settle *during* live sync, plus any stragglers the backfiller left (timeouts / not-yet-on-API). Selects pending rows (`enrichedAt IS NULL`, oldest `blockNumber` first) up to `MAX_FLASH_LOAN_ORDERS_PER_BLOCK_<chainId>` (default 200). Both handlers share one enrichment routine: batch-fetch via `/orders/by_uids` (cache-first against `cow_cache.flash_loan_order_cache`, which survives reindex), upsert the orderbook fields + `enrichedAt` on hits, and bump `enrichmentAttempts` on misses until `MAX_FLASH_LOAN_ENRICHMENT_ATTEMPTS` (then left permanently un-enriched rather than polled forever).
 
 **OwnerBackfill** (fires once at latest block, mainnet + gnosis): One-time fetch of historical orders for non-deterministic generators (PerpetualSwap, GoodAfterTime, TradeAboveThreshold, Unknown) that were active during backfill but have no discrete orders yet. Queries the CoW Protocol `/orders?owner=` endpoint per owner.
 

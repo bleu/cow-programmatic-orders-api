@@ -84,17 +84,24 @@ export const FlashLoanOrderItem = z.object({
     .string()
     .nullable()
     .describe(
-      "Resolved EOA owner from getHookData(). Null when getHookData() was unavailable at settlement.",
+      "Resolved EOA owner, from the adapter's owner() call. Null only if that read failed at settlement.",
     ),
-  receiver: z.string().nullable(),
+  receiver: z
+    .string()
+    .nullable()
+    .describe("Order receiver, from the orderbook. Null until the order is enriched."),
   kind: z
     .enum(["sell", "buy"])
     .nullable()
-    .describe("CoW order kind from getHookData(). Null when undetermined."),
-  sellAmountIntended: z.string().nullable(),
-  buyAmountIntended: z.string().nullable(),
-  flashLoanAmount: z.string().nullable(),
-  flashLoanFeeAmount: z.string().nullable(),
+    .describe("CoW order kind, from the orderbook. Null until the order is enriched."),
+  sellAmountIntended: z
+    .string()
+    .nullable()
+    .describe("Signed sell amount, from the orderbook. Null until enriched."),
+  buyAmountIntended: z
+    .string()
+    .nullable()
+    .describe("Signed buy amount, from the orderbook. Null until enriched."),
   source: z.literal("aave"),
   type: z
     .enum(["RepayWithCollateral", "CollateralSwap", "DebtSwap"])

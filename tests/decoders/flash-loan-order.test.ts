@@ -4,29 +4,7 @@ import {
   detectFlashLoanOrderType,
   decodeValidToFromOrderUid,
   decodeTradeData,
-  normalizeHookData,
 } from "../../src/decoders/flash-loan-order";
-
-const KIND_SELL =
-  "0xf3b277728b3fee749481eb3e0b3b48980dbbab78658fc419025cb16eee346775" as const;
-const KIND_BUY =
-  "0x6ed88e868af0a1983e3886d5f3e95a2fafbd6c3450bc229e27342283dc429ccc" as const;
-
-const makeHookData = (overrides: Record<string, unknown> = {}) => ({
-  owner: "0x3EBC89534D84Ca51987Af62EBCc7B356BFd65728" as `0x${string}`,
-  receiver: "0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD" as `0x${string}`,
-  sellToken: SELL_TOKEN,
-  buyToken: BUY_TOKEN,
-  sellAmount: 1000n,
-  buyAmount: 900n,
-  kind: KIND_SELL,
-  validTo: 1700000000n,
-  flashLoanAmount: 500n,
-  flashLoanFeeAmount: 3n,
-  hookSellTokenAmount: 0n,
-  hookBuyTokenAmount: 0n,
-  ...overrides,
-});
 
 const SELL_TOKEN = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as const;
 const BUY_TOKEN = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" as const;
@@ -77,28 +55,6 @@ describe("detectFlashLoanOrderType", () => {
     const badSuffix =
       `0x${EIP1167_PREFIX}${REPAY_IMPL}deadbeefdeadbeefdeadbeefdeadbe` as `0x${string}`;
     expect(detectFlashLoanOrderType(badSuffix)).toBeNull();
-  });
-});
-
-describe("normalizeHookData", () => {
-  it("maps a sell-kind hook tuple to nullable enrichment fields", () => {
-    const r = normalizeHookData(makeHookData());
-    expect(r.owner).toBe("0x3ebc89534d84ca51987af62ebcc7b356bfd65728");
-    expect(r.receiver).toBe("0xdddddddddddddddddddddddddddddddddddddddd");
-    expect(r.kind).toBe("sell");
-    expect(r.sellAmountIntended).toBe("1000");
-    expect(r.buyAmountIntended).toBe("900");
-    expect(r.flashLoanAmount).toBe("500");
-    expect(r.flashLoanFeeAmount).toBe("3");
-  });
-
-  it("maps buy kind, and an unrecognised kind hash to null", () => {
-    expect(normalizeHookData(makeHookData({ kind: KIND_BUY })).kind).toBe(
-      "buy",
-    );
-    expect(
-      normalizeHookData(makeHookData({ kind: `0x${"00".repeat(32)}` })).kind,
-    ).toBeNull();
   });
 });
 

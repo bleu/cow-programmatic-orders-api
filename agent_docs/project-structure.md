@@ -95,10 +95,12 @@ src/data.ts
 | `txHash` | hex NOT NULL | FK → transaction.hash |
 | `blockNumber` / `blockTimestamp` | bigint NOT NULL | |
 | `validTo` | integer NOT NULL | Decoded from order UID (uint32) |
-| `owner` | hex | Resolved EOA from `getHookData()`; indexed; null on degradation |
-| `receiver` / `kind` / `sellAmountIntended` / `buyAmountIntended` / `flashLoanAmount` / `flashLoanFeeAmount` | nullable | From `getHookData()` |
+| `owner` | hex | Resolved EOA from the adapter's `owner()` call; indexed |
+| `receiver` / `kind` / `sellAmountIntended` / `buyAmountIntended` | nullable | From the orderbook; filled by `FlashLoanOrderEnricher` (null until enriched) |
 | `source` | enum NOT NULL | `aave` (default) |
 | `type` | enum | RepayWithCollateral / CollateralSwap / DebtSwap; null when undetectable |
+| `enrichedAt` | bigint | Block time orderbook enrichment succeeded; null = pending |
+| `enrichmentAttempts` | integer NOT NULL | Failed/empty orderbook lookups; caps retries |
 
 ### Relations (`schema/relations.ts`)
 

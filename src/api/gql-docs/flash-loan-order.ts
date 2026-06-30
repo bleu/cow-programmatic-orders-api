@@ -19,20 +19,22 @@ export const flashLoanOrderDocs: DocMap = {
   "flashLoanOrder.validTo":
     "Unix seconds (UTC) when the order expires, decoded from the order UID. JSON number. See docs/api-reference.md#timestamp-fields.",
   "flashLoanOrder.owner":
-    "Resolved EOA owner from getHookData(). Null when getHookData() was unavailable at settlement.",
-  "flashLoanOrder.receiver": "Order receiver from getHookData(). Nullable.",
-  "flashLoanOrder.kind": "CoW order kind (sell/buy) from getHookData(). Nullable.",
+    "Resolved EOA owner, from the adapter's owner() call (durable on-chain state). Null only if that read failed at settlement.",
+  "flashLoanOrder.receiver":
+    "Order receiver, from the orderbook. Null until FlashLoanOrderEnricher fills it.",
+  "flashLoanOrder.kind":
+    "CoW order kind (sell/buy), from the orderbook. Null until enriched.",
   "flashLoanOrder.sellAmountIntended":
-    "Intended sell amount from getHookData() (decimal string). Compare with executedSellAmount for partial fills. Nullable.",
+    "Signed sell amount, from the orderbook (decimal string). Compare with executedSellAmount for partial fills. Null until enriched.",
   "flashLoanOrder.buyAmountIntended":
-    "Intended buy amount from getHookData() (decimal string). Nullable.",
-  "flashLoanOrder.flashLoanAmount":
-    "Flash-loan principal from getHookData() (decimal string). Nullable.",
-  "flashLoanOrder.flashLoanFeeAmount":
-    "Flash-loan fee from getHookData() (decimal string). Nullable.",
+    "Signed buy amount, from the orderbook (decimal string). Null until enriched.",
   "flashLoanOrder.source": "Integration the order came from. Currently always 'aave'.",
   "flashLoanOrder.type":
     "Adapter operation derived from the EIP-1167 implementation address: RepayWithCollateral, CollateralSwap, or DebtSwap. Nullable.",
+  "flashLoanOrder.enrichedAt":
+    "Block time (Unix seconds, BigInt scalar) when orderbook enrichment succeeded. Null while the order is still pending enrichment.",
+  "flashLoanOrder.enrichmentAttempts":
+    "Number of orderbook enrichment lookups that returned nothing for this order. Internal retry counter.",
   "flashLoanOrder.blockNumber": "Settlement block number (BigInt scalar).",
   "flashLoanOrder.blockTimestamp":
     "Settlement block time, Unix seconds (UTC), BigInt scalar. See docs/api-reference.md#timestamp-fields.",

@@ -82,6 +82,18 @@ The system has seven components. Each has a single responsibility.
 
 **Writes to**: `discreteOrder`.
 
+### Component FlashLoanOrderBackfiller + FlashLoanOrderEnricher (`blockHandler.ts` — handlers 5 & 6)
+
+**Responsibility**: Enrich `flashLoanOrder` rows (recorded by the settlement handler with on-chain data only) with the CoW-order fields the orderbook holds — `kind`, `receiver`, `sellAmountIntended`, `buyAmountIntended`, and authoritative executed amounts. The adapter's `getHookData()` struct is wiped at settlement, so the orderbook is the source of truth.
+
+**Split (mirrors OwnerBackfill + OrderStatusTracker)**:
+- `FlashLoanOrderBackfiller` — one-shot at go-live (`startBlock = endBlock = "latest"`). Bulk-drains the entire historical backlog (`enrichedAt IS NULL`) in bounded sequential slices (`FLASH_LOAN_BACKFILL_SLICE_SIZE`) so the whole drain happens in one firing.
+- `FlashLoanOrderEnricher` — every block. Enriches orders that settle during live sync, plus any stragglers, capped at `MAX_FLASH_LOAN_ORDERS_PER_BLOCK_<chainId>`.
+
+**How it works**: both call one shared routine — fetch the batch via `fetchFlashLoanEnrichmentByUids` (cache-first), upsert orderbook fields + `enrichedAt` on hits, bump `enrichmentAttempts` on misses (up to `MAX_FLASH_LOAN_ENRICHMENT_ATTEMPTS`, then abandoned). Enrichment never runs in the historical path.
+
+**Writes to**: `flashLoanOrder`, `cow_cache.flash_loan_order_cache`.
+
 ### Component D: Orderbook Client (`orderbookClient.ts`)
 
 **Responsibility**: The single interface to the CoW Protocol Orderbook API. All API calls go through this module. It handles fetching, filtering, EIP-1271 signature decoding, generator matching, and per-UID caching.
@@ -89,9 +101,10 @@ The system has seven components. Each has a single responsibility.
 **Public functions**:
 - `fetchComposableOrders(context, chainId, owner)` — full owner fetch, filter, decode, match, cache
 - `fetchOrderStatusByUids(context, chainId, uids)` — batch UID status lookup with cache
+- `fetchFlashLoanEnrichmentByUids(context, chainId, uids)` — batch UID enrichment for flash-loan orders, cache-first
 - `upsertDiscreteOrders(context, chainId, orders)` — write to discreteOrder table
 
-**Writes to**: `discreteOrder`, `cow_cache.order_uid_cache`.
+**Writes to**: `discreteOrder`, `cow_cache.order_uid_cache`, `cow_cache.flash_loan_order_cache`.
 
 ### Component E: API Endpoints (`api/index.ts`)
 
@@ -151,6 +164,16 @@ Per-UID terminal status cache. Survives Ponder resyncs (external `cow_cache` sch
 |--------|---------|
 | `chain_id`, `order_uid` | Primary key |
 | `status` | Terminal only: fulfilled, expired, cancelled |
+| `fetched_at` | When it was cached |
+
+### `cow_cache.flash_loan_order_cache`
+
+Per-UID enrichment cache for flash-loan orders. Always terminal (settled), so cached indefinitely. Survives Ponder resyncs (external `cow_cache` schema), so a reindex doesn't re-hit the orderbook for historical orders.
+
+| Column | Purpose |
+|--------|---------|
+| `chain_id`, `order_uid` | Primary key |
+| `receiver`, `kind`, `sell_amount`, `buy_amount`, `executed_sell_amount`, `executed_buy_amount` | Orderbook enrichment fields |
 | `fetched_at` | When it was cached |
 
 ---

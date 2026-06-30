@@ -13,12 +13,13 @@ vi.mock("ponder:schema", () => ({
 vi.mock("ponder", () => ({
   and: vi.fn(),
   eq: vi.fn(),
+  inArray: vi.fn(),
   sql: Object.assign(vi.fn(), { raw: vi.fn() }),
 }));
 
 import * as data from "../../src/data";
 import { ORDERBOOK_MAX_RETRIES } from "../../src/constants";
-import { fetchOrderStatusByUids, fetchOwnerOrderStatuses } from "../../src/application/helpers/orderbookClient";
+import { fetchFlashLoanEnrichmentByUids, fetchOrderStatusByUids, fetchOwnerOrderStatuses } from "../../src/application/helpers/orderbookClient";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -472,6 +473,168 @@ describe("fetchOwnerOrderStatuses", () => {
       expect(firstPath).toContain(`/api/v1/account/${FAKE_OWNER}/orders`);
       expect(firstPath).toContain("limit=1000");
       expect(firstPath).toContain("offset=0");
+    } finally {
+      await close();
+    }
+  });
+});
+
+// ─── fetchFlashLoanEnrichmentByUids tests ─────────────────────────────────────
+
+function makeWrappedFlashLoanOrder(
+  uid: string,
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    order: {
+      uid,
+      status: "fulfilled",
+      kind: "sell",
+      receiver: "0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+      sellAmount: "5000000000000000000",
+      buyAmount: "4800000000000000000",
+      feeAmount: "1000000000000000",
+      validTo: 9_999_999_999,
+      creationDate: "2024-01-01T00:00:00Z",
+      signingScheme: "eip1271",
+      signature: "0x",
+      executedSellAmount: "5000000000000000000",
+      executedBuyAmount: "4900000000000000000",
+      ...overrides,
+    },
+  };
+}
+
+describe("fetchFlashLoanEnrichmentByUids", () => {
+  it("returns an empty map for empty uids without hitting the network", async () => {
+    const result = await fetchFlashLoanEnrichmentByUids(makeContext(), TEST_CHAIN_ID, []);
+    expect(result.size).toBe(0);
+  });
+
+  it("returns an empty map for an unknown chainId (no API URL configured)", async () => {
+    const result = await fetchFlashLoanEnrichmentByUids(makeContext(), 424242, [UID_A]);
+    expect(result.size).toBe(0);
+  });
+
+  it("maps kind, receiver (lowercased), intended and executed amounts from the by_uids body", async () => {
+    const { url, close } = await startServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify([makeWrappedFlashLoanOrder(UID_A)]));
+    });
+    try {
+      await withFakeApi(TEST_CHAIN_ID, url, async () => {
+        const result = await fetchFlashLoanEnrichmentByUids(makeContext(), TEST_CHAIN_ID, [UID_A]);
+        const info = result.get(UID_A);
+        expect(info).toBeDefined();
+        expect(info!.kind).toBe("sell");
+        expect(info!.receiver).toBe("0xcccccccccccccccccccccccccccccccccccccccc");
+        expect(info!.sellAmount).toBe("5000000000000000000");
+        expect(info!.buyAmount).toBe("4800000000000000000");
+        expect(info!.executedSellAmount).toBe("5000000000000000000");
+        expect(info!.executedBuyAmount).toBe("4900000000000000000");
+      });
+    } finally {
+      await close();
+    }
+  });
+
+  it("keeps receiver null when the orderbook returns null", async () => {
+    const { url, close } = await startServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify([makeWrappedFlashLoanOrder(UID_A, { receiver: null })]));
+    });
+    try {
+      await withFakeApi(TEST_CHAIN_ID, url, async () => {
+        const result = await fetchFlashLoanEnrichmentByUids(makeContext(), TEST_CHAIN_ID, [UID_A]);
+        expect(result.get(UID_A)!.receiver).toBeNull();
+      });
+    } finally {
+      await close();
+    }
+  });
+
+  it("omits uids the orderbook does not return (caller retries later)", async () => {
+    const { url, close } = await startServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify([makeWrappedFlashLoanOrder(UID_A)]));
+    });
+    try {
+      await withFakeApi(TEST_CHAIN_ID, url, async () => {
+        const result = await fetchFlashLoanEnrichmentByUids(makeContext(), TEST_CHAIN_ID, [UID_A, UID_B]);
+        expect(result.has(UID_A)).toBe(true);
+        expect(result.has(UID_B)).toBe(false);
+      });
+    } finally {
+      await close();
+    }
+  });
+
+  it("returns an empty map on HTTP error without throwing", async () => {
+    const { url, close } = await startServer((_req, res) => {
+      res.writeHead(500, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "boom" }));
+    });
+    try {
+      await withFakeApi(TEST_CHAIN_ID, url, async () => {
+        const result = await fetchFlashLoanEnrichmentByUids(makeContext(), TEST_CHAIN_ID, [UID_A]);
+        expect(result.size).toBe(0);
+      });
+    } finally {
+      await close();
+    }
+  });
+
+  it("serves cached UIDs without hitting the orderbook", async () => {
+    let requests = 0;
+    const { url, close } = await startServer((_req, res) => {
+      requests++;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify([]));
+    });
+    const cachedRow = {
+      orderUid: UID_A,
+      receiver: "0xcccccccccccccccccccccccccccccccccccccccc",
+      kind: "buy",
+      sellAmount: "111",
+      buyAmount: "222",
+      executedSellAmount: "111",
+      executedBuyAmount: "220",
+    };
+    const ctx = { db: { sql: { select: () => ({ from: () => ({ where: async () => [cachedRow] }) }) } } };
+    try {
+      await withFakeApi(TEST_CHAIN_ID, url, async () => {
+        const result = await fetchFlashLoanEnrichmentByUids(ctx, TEST_CHAIN_ID, [UID_A]);
+        expect(result.get(UID_A)?.kind).toBe("buy");
+        expect(result.get(UID_A)?.receiver).toBe("0xcccccccccccccccccccccccccccccccccccccccc");
+        expect(requests).toBe(0); // fully served from cache
+      });
+    } finally {
+      await close();
+    }
+  });
+
+  it("writes freshly fetched enrichment to the cache", async () => {
+    const { url, close } = await startServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify([makeWrappedFlashLoanOrder(UID_A)]));
+    });
+    const inserted: Record<string, unknown>[] = [];
+    const ctx = {
+      db: {
+        sql: {
+          select: () => ({ from: () => ({ where: async () => [] }) }), // empty cache
+          insert: () => ({ values: (vals: Record<string, unknown>[]) => ({ onConflictDoNothing: async () => { inserted.push(...vals); } }) }),
+        },
+      },
+    };
+    try {
+      await withFakeApi(TEST_CHAIN_ID, url, async () => {
+        await fetchFlashLoanEnrichmentByUids(ctx, TEST_CHAIN_ID, [UID_A]);
+        expect(inserted).toHaveLength(1);
+        expect(inserted[0]!.orderUid).toBe(UID_A);
+        expect(inserted[0]!.kind).toBe("sell");
+        expect(inserted[0]!.receiver).toBe("0xcccccccccccccccccccccccccccccccccccccccc");
+      });
     } finally {
       await close();
     }

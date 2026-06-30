@@ -18,9 +18,6 @@ import {
   decodeTradeData,
   decodeValidToFromOrderUid,
   detectFlashLoanOrderType,
-  normalizeHookData,
-  type HookEnrichment,
-  type HookOrderData,
 } from "../../decoders/flash-loan-order";
 
 // Trade(address,address,address,uint256,uint256,uint256,bytes) — topic0 hash
@@ -177,39 +174,24 @@ ponder.on("GPv2Settlement:Settlement", async ({ event, context }) => {
     // EIP-1167 implementation → adapter type, from the getCode result above (no extra RPC).
     const flashLoanType = detectFlashLoanOrderType(code);
 
-    // Graceful degradation: getHookData() first — one RPC yields the resolved
-    // owner (for the mapping) and the order enrichment fields. On failure, fall
-    // back to owner() for the mapping; the order is still written with the
-    // getHookData-sourced fields null. owner-mapping reliability must not regress.
+    // Resolve the EOA from the adapter's owner() — durable on-chain state that
+    // survives settlement (unlike getHookData(), whose struct is wiped). The CoW
+    // order fields (kind, receiver, intended amounts) are filled later by
+    // FlashLoanOrderEnricher:block from the orderbook, so no extra read here.
     let eoaOwner: `0x${string}` | undefined;
-    let hook: HookEnrichment | null = null;
     try {
-      const hookData = await withTimeout(
+      const resolved = await withTimeout(
         context.client.readContract({
           address: owner,
           abi: AaveV3AdapterHelperAbi,
-          functionName: "getHookData",
+          functionName: "owner",
         }),
-        SETTLEMENT_INNER_RPC_TIMEOUT_MS,
-        "settlement:readContract:getHookData",
+        BLOCK_HANDLER_RPC_TIMEOUT_MS,
+        "settlement:readContract:owner",
       );
-      hook = normalizeHookData(hookData as HookOrderData);
-      eoaOwner = hook.owner;
-    } catch {
-      try {
-        const resolved = await withTimeout(
-          context.client.readContract({
-            address: owner,
-            abi: AaveV3AdapterHelperAbi,
-            functionName: "owner",
-          }),
-          BLOCK_HANDLER_RPC_TIMEOUT_MS,
-          "settlement:readContract:owner",
-        );
-        eoaOwner = resolved.toLowerCase() as `0x${string}`;
-      } catch (err) {
-        log("warn", "SettlementResolver:readOwner_failed", { chainId, owner, err: err instanceof Error ? err.message : String(err) });
-      }
+      eoaOwner = resolved.toLowerCase() as `0x${string}`;
+    } catch (err) {
+      log("warn", "SettlementResolver:readOwner_failed", { chainId, owner, err: err instanceof Error ? err.message : String(err) });
     }
 
     await context.db
@@ -222,7 +204,8 @@ ponder.on("GPv2Settlement:Settlement", async ({ event, context }) => {
       })
       .onConflictDoNothing();
 
-    // The order row is always created (idempotent for re-org replay).
+    // The order row is always created (idempotent for re-org replay), enrichedAt
+    // null so FlashLoanOrderEnricher picks it up.
     await context.db
       .insert(flashLoanOrder)
       .values({
@@ -238,19 +221,13 @@ ponder.on("GPv2Settlement:Settlement", async ({ event, context }) => {
         blockNumber: event.block.number,
         blockTimestamp: event.block.timestamp,
         validTo,
-        owner: hook?.owner ?? null,
-        receiver: hook?.receiver ?? null,
-        kind: hook?.kind ?? null,
-        sellAmountIntended: hook?.sellAmountIntended ?? null,
-        buyAmountIntended: hook?.buyAmountIntended ?? null,
-        flashLoanAmount: hook?.flashLoanAmount ?? null,
-        flashLoanFeeAmount: hook?.flashLoanFeeAmount ?? null,
+        owner: eoaOwner ?? null,
         source: "aave",
         type: flashLoanType,
       })
       .onConflictDoNothing();
 
-    // The mapping is written whenever the EOA resolved (happy path or fallback).
+    // The mapping is written whenever the EOA resolved.
     if (eoaOwner) {
       await context.db
         .insert(ownerMapping)
@@ -269,7 +246,7 @@ ponder.on("GPv2Settlement:Settlement", async ({ event, context }) => {
     }
     logStatsIfIntervalPassed();
 
-    log("info", "SettlementResolver:aave_adapter_mapped", { chainId, adapter: ownerAddress, eoa: eoaOwner ?? null, orderUid: trade.orderUid, type: flashLoanType, hookData: hook !== null, block: String(event.block.number) });
+    log("info", "SettlementResolver:aave_adapter_mapped", { chainId, adapter: ownerAddress, eoa: eoaOwner ?? null, orderUid: trade.orderUid, type: flashLoanType, block: String(event.block.number) });
   }
 
   logStatsIfIntervalPassed();

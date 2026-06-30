@@ -32,11 +32,35 @@ ponder.on("ComposableCow:setup", async ({ context }) => {
     )
   `);
 
+  // Per-UID cache for flash-loan order enrichment (kind/receiver/intended +
+  // executed amounts from the orderbook). Flash-loan orders are always settled,
+  // so every entry is terminal and cached indefinitely. Survives reindex, so a
+  // schema-hash change does not re-hit the orderbook for historical orders.
+  await context.db.sql.execute(sql`
+    CREATE TABLE IF NOT EXISTS cow_cache.flash_loan_order_cache (
+      chain_id              INTEGER NOT NULL,
+      order_uid             TEXT NOT NULL,
+      receiver              TEXT,
+      kind                  TEXT,
+      sell_amount           TEXT NOT NULL,
+      buy_amount            TEXT NOT NULL,
+      executed_sell_amount   TEXT NOT NULL,
+      executed_buy_amount    TEXT NOT NULL,
+      fetched_at            BIGINT NOT NULL,
+      PRIMARY KEY (chain_id, order_uid)
+    )
+  `);
+
   // Log surviving cache entries — non-zero means cache persisted across restart/resync
   const result = await context.db.sql.execute(
     sql`SELECT COUNT(*)::int AS count FROM cow_cache.order_uid_cache`,
   ) as { count: number }[];
   const count = result[0]?.count ?? 0;
 
-  log("info", "setup:cacheReady", { count, entries: `${count} entr${count === 1 ? "y" : "ies"} from previous run` });
+  const flResult = await context.db.sql.execute(
+    sql`SELECT COUNT(*)::int AS count FROM cow_cache.flash_loan_order_cache`,
+  ) as { count: number }[];
+  const flCount = flResult[0]?.count ?? 0;
+
+  log("info", "setup:cacheReady", { count, flashLoanCount: flCount, entries: `${count} order + ${flCount} flash-loan entr${count === 1 ? "y" : "ies"} from previous run` });
 });

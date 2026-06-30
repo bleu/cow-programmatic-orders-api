@@ -53,7 +53,7 @@ export const flashLoanOrderTypeEnum = onchainEnum("flash_loan_order_type", [
   "DebtSwap",
 ]);
 
-// CoW order kind from getHookData(). Nullable.
+// CoW order kind, from the orderbook. Nullable until the order is enriched.
 export const flashLoanOrderKindEnum = onchainEnum("flash_loan_order_kind", [
   "sell",
   "buy",
@@ -198,6 +198,12 @@ export const ownerMapping = onchainTable(
 // Standalone CoW orders settled through GPv2Settlement by an Aave V3 flash-loan
 // adapter (not ComposableCoW conditional orders). Executed-only: a row exists
 // iff the order settled. adapter <-> order is 1:1 (fresh CREATE2 per order).
+//
+// The order is recorded at settlement with only durable on-chain data (Trade
+// event + orderUid + owner()). The CoW-order fields (kind, receiver, intended
+// amounts) are filled afterwards by FlashLoanOrderEnricher:block from the
+// orderbook — the adapter's getHookData() struct is wiped post-settlement, so
+// it cannot be relied on. enrichedAt is null until enrichment succeeds.
 export const flashLoanOrder = onchainTable(
   "flash_loan_order",
   (t) => ({
@@ -207,29 +213,35 @@ export const flashLoanOrder = onchainTable(
     adapter: t.hex().notNull(),                   // the per-order Aave adapter (Trade event owner topic)
     sellToken: t.hex().notNull(),
     buyToken: t.hex().notNull(),
-    executedSellAmount: t.text().notNull(),       // uint256 as decimal string
+    executedSellAmount: t.text().notNull(),       // uint256 as decimal string (Trade event; refined by enricher)
     executedBuyAmount: t.text().notNull(),
     feeAmount: t.text().notNull(),
     txHash: t.hex().notNull(),                    // FK -> transaction.hash
     blockNumber: t.bigint().notNull(),
     blockTimestamp: t.bigint().notNull(),
-    // ── Decoded from orderUid (always present, authoritative over getHookData) ──
+    // ── Decoded from orderUid (always present) ──
     validTo: t.integer().notNull(),               // trailing uint32 of the order UID
-    // ── From getHookData() (nullable enrichment; null on graceful degradation) ──
-    owner: t.hex(),                               // resolved EOA
+    // ── Resolved EOA, from the adapter's owner() call (durable on-chain) ──
+    owner: t.hex(),
+    // ── From the orderbook (nullable until FlashLoanOrderEnricher fills them) ──
     receiver: t.hex(),
     kind: flashLoanOrderKindEnum("kind"),
     sellAmountIntended: t.text(),
     buyAmountIntended: t.text(),
-    flashLoanAmount: t.text(),
-    flashLoanFeeAmount: t.text(),
     // ── Derived ──
     source: flashLoanOrderSourceEnum("source").notNull().default("aave"),
     type: flashLoanOrderTypeEnum("type"),         // null when undetectable
+    // ── Orderbook-enrichment scheduling ──
+    enrichedAt: t.bigint(),                        // block timestamp enrichment succeeded; null = pending
+    enrichmentAttempts: t.integer().notNull().default(0), // failed/empty orderbook lookups; caps retries
   }),
   (table) => ({
     pk: primaryKey({ columns: [table.chainId, table.orderUid] }),
     ownerIdx: index().on(table.owner),
     adapterIdx: index().on(table.adapter),
+    // FlashLoanOrderEnricher: per-block SELECT WHERE chainId + enrichedAt IS NULL,
+    // ORDER BY blockNumber asc (oldest-first).
+    enrichmentIdx: index("flash_loan_order_enrichment_idx")
+      .on(table.chainId, table.enrichedAt, table.blockNumber),
   })
 );

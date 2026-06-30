@@ -46,58 +46,6 @@ export function decodeTradeData(data: `0x${string}`): TradeData {
   };
 }
 
-// CoW Protocol order-kind constants (keccak256 of "sell" / "buy").
-const KIND_SELL =
-  "0xf3b277728b3fee749481eb3e0b3b48980dbbab78658fc419025cb16eee346775";
-const KIND_BUY =
-  "0x6ed88e868af0a1983e3886d5f3e95a2fafbd6c3450bc229e27342283dc429ccc";
-
-/** The getHookData() tuple as decoded by viem readContract. */
-export interface HookOrderData {
-  owner: `0x${string}`;
-  receiver: `0x${string}`;
-  sellToken: `0x${string}`;
-  buyToken: `0x${string}`;
-  sellAmount: bigint;
-  buyAmount: bigint;
-  kind: `0x${string}`;
-  validTo: bigint;
-  flashLoanAmount: bigint;
-  flashLoanFeeAmount: bigint;
-  hookSellTokenAmount: bigint;
-  hookBuyTokenAmount: bigint;
-}
-
-export interface HookEnrichment {
-  owner: `0x${string}`;
-  receiver: `0x${string}`;
-  kind: "sell" | "buy" | null;
-  sellAmountIntended: string;
-  buyAmountIntended: string;
-  flashLoanAmount: string;
-  flashLoanFeeAmount: string;
-}
-
-/**
- * Normalise the getHookData() tuple into the order's nullable enrichment
- * fields: resolved owner/receiver lowercased, kind bytes32 decoded to
- * "sell"/"buy" (null when unrecognised), and intended/flash-loan amounts as
- * decimal strings for the text columns.
- */
-export function normalizeHookData(hook: HookOrderData): HookEnrichment {
-  const kind =
-    hook.kind === KIND_SELL ? "sell" : hook.kind === KIND_BUY ? "buy" : null;
-  return {
-    owner: hook.owner.toLowerCase() as `0x${string}`,
-    receiver: hook.receiver.toLowerCase() as `0x${string}`,
-    kind,
-    sellAmountIntended: hook.sellAmount.toString(),
-    buyAmountIntended: hook.buyAmount.toString(),
-    flashLoanAmount: hook.flashLoanAmount.toString(),
-    flashLoanFeeAmount: hook.flashLoanFeeAmount.toString(),
-  };
-}
-
 export type FlashLoanOrderType =
   | "RepayWithCollateral"
   | "CollateralSwap"

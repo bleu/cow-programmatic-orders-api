@@ -139,3 +139,24 @@ export const MAX_TWAP_PRECOMPUTE_PARTS = 100_000;
  * MAX_DISCRETE_ORDERS_PER_BLOCK_1=200, MAX_DISCRETE_ORDERS_PER_BLOCK_100=500.
  */
 export const DEFAULT_MAX_DISCRETE_ORDERS_PER_BLOCK = 200;
+
+/**
+ * Per-block cap on how many pending flash-loan orders FlashLoanOrderEnricher
+ * enriches from the orderbook per chain. Override per chain with env var
+ * MAX_FLASH_LOAN_ORDERS_PER_BLOCK_<chainId>.
+ */
+export const DEFAULT_MAX_FLASH_LOAN_ORDERS_PER_BLOCK = 200;
+
+/**
+ * Max orderbook-enrichment attempts before a flash-loan order is treated as
+ * permanently un-enrichable (never indexed by the orderbook / aged out) and is
+ * no longer polled. Keeps the enricher from hammering the API forever.
+ */
+export const MAX_FLASH_LOAN_ENRICHMENT_ATTEMPTS = 10;
+
+/**
+ * Slice size for the one-shot FlashLoanOrderBackfiller drain. The historical
+ * backlog is processed in sequential slices of this many UIDs to bound orderbook
+ * concurrency (each slice fans out to ceil(size / 50) parallel by_uids requests).
+ */
+export const FLASH_LOAN_BACKFILL_SLICE_SIZE = 500;

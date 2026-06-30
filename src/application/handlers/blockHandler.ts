@@ -1,22 +1,26 @@
 /**
- * Block handlers — five responsibilities split into separate Ponder block entries.
+ * Block handlers — split into separate Ponder block entries.
  *
- * OrderDiscoveryPoller:  RPC multicall for non-deterministic generators. Every block.
- * CandidateConfirmer:    API batch check for unconfirmed candidates. Every block.
- * OrderStatusTracker:    API batch check for open discrete orders + expiry. Every block.
- * OwnerBackfill:         One-time owner fetch for non-deterministic backfill orders.
- * CancellationWatcher:   singleOrders() mapping read for
- *                        deterministic generators (allCandidatesKnown=true) that
- *                        OrderDiscoveryPoller skips. Runs every block but re-checks each generator
- *                        only every DETERMINISTIC_CANCEL_SWEEP_INTERVAL blocks.
+ * OrderDiscoveryPoller:     RPC multicall for non-deterministic generators. Every block.
+ * CandidateConfirmer:       API batch check for unconfirmed candidates. Every block.
+ * OrderStatusTracker:       API batch check for open discrete orders + expiry. Every block.
+ * FlashLoanOrderBackfiller: One-time bulk enrichment of the flash_loan_order backlog
+ *                           recorded during backfill (orderbook fields). Fires once.
+ * FlashLoanOrderEnricher:   Per-block enrichment of new live flash-loan orders + stragglers.
+ * OwnerBackfill:            One-time owner fetch for non-deterministic backfill orders.
+ * CancellationWatcher:      singleOrders() mapping read for
+ *                           deterministic generators (allCandidatesKnown=true) that
+ *                           OrderDiscoveryPoller skips. Runs every block but re-checks each generator
+ *                           only every DETERMINISTIC_CANCEL_SWEEP_INTERVAL blocks.
  *
  * All handlers start at "latest" — only run during live sync.
- * OwnerBackfill additionally has endBlock: "latest", so it fires exactly once.
+ * OwnerBackfill and FlashLoanOrderBackfiller additionally have endBlock: "latest",
+ * so they fire exactly once.
  */
 
 import { ponder } from "ponder:registry";
-import { bootstrapRetryQueue, candidateDiscreteOrder, conditionalOrderGenerator, discreteOrder, discreteOrderStatusEnum } from "ponder:schema";
-import { and, asc, eq, gt, inArray, isNull, lte, ne, or, sql } from "ponder";
+import { bootstrapRetryQueue, candidateDiscreteOrder, conditionalOrderGenerator, discreteOrder, discreteOrderStatusEnum, flashLoanOrder } from "ponder:schema";
+import { and, asc, eq, gt, inArray, isNull, lt, lte, ne, or, sql } from "ponder";
 import type { Hex } from "viem";
 import {
   COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID,
@@ -28,7 +32,10 @@ import {
   BOOTSTRAP_MAX_RETRY_COUNT,
   BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
   DEFAULT_MAX_DISCRETE_ORDERS_PER_BLOCK,
+  DEFAULT_MAX_FLASH_LOAN_ORDERS_PER_BLOCK,
   DEFAULT_MAX_GENERATORS_PER_BLOCK,
+  FLASH_LOAN_BACKFILL_SLICE_SIZE,
+  MAX_FLASH_LOAN_ENRICHMENT_ATTEMPTS,
   DEFAULT_RECHECK_INTERVAL_BLOCKS,
   DETERMINISTIC_CANCEL_SWEEP_INTERVAL,
   ORDERBOOK_HTTP_TIMEOUT_MS,
@@ -38,7 +45,7 @@ import {
   TRY_NEXT_BLOCK_BACKOFF_MID,
   TRY_NEXT_BLOCK_BACKOFF_COLD,
 } from "../../constants";
-import { fetchComposableOrders, fetchOrderStatusByUids, fetchOwnerOrderStatuses, upsertDiscreteOrders } from "../helpers/orderbookClient";
+import { fetchComposableOrders, fetchFlashLoanEnrichmentByUids, fetchOrderStatusByUids, fetchOwnerOrderStatuses, upsertDiscreteOrders } from "../helpers/orderbookClient";
 import { TimeoutError, withTimeout } from "../helpers/withTimeout";
 import {
   GET_TRADEABLE_ORDER_WITH_ERRORS_ABI,
@@ -1027,6 +1034,201 @@ ponder.on("CancellationWatcher:block", async ({ event, context }) => {
   }
 
   log("info", "CancellationWatcher:DONE", { block: String(currentBlock), chainId, due: dueGenerators.length, cancelled: cancelledCount, stillActive: stillActiveCount, errors: errorCount });
+});
+
+// ─── FlashLoanOrder enrichment (Backfiller + Enricher) ───────────────────────
+// flash_loan_order rows are recorded by the settlement handler with on-chain
+// data only — the adapter's getHookData() struct is wiped at settlement, so the
+// orderbook is the authoritative source for kind / receiver / intended amounts.
+// Enrichment runs via block handlers (never the historical path), like the
+// discrete-order OwnerBackfill + OrderStatusTracker split:
+//   FlashLoanOrderBackfiller — one-shot at go-live, bulk-drains the backlog.
+//   FlashLoanOrderEnricher   — every block, enriches new live orders + stragglers.
+// Both share the cache, so re-deploys/reindexes don't re-hit the orderbook.
+
+type PendingFlashLoanRow = {
+  orderUid: string;
+  adapter: Hex;
+  sellToken: Hex;
+  buyToken: Hex;
+  feeAmount: string;
+  txHash: Hex;
+  blockNumber: bigint;
+  blockTimestamp: bigint;
+  validTo: number;
+  owner: Hex | null;
+  type: "RepayWithCollateral" | "CollateralSwap" | "DebtSwap" | null;
+  executedSellAmount: string;
+  executedBuyAmount: string;
+  enrichmentAttempts: number;
+};
+
+/** Select pending (un-enriched, under the attempt cap) flash-loan orders, oldest-first. */
+async function selectPendingFlashLoanOrders(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  context: any,
+  chainId: number,
+  limit?: number,
+): Promise<PendingFlashLoanRow[]> {
+  const query = context.db.sql
+    .select({
+      orderUid: flashLoanOrder.orderUid,
+      adapter: flashLoanOrder.adapter,
+      sellToken: flashLoanOrder.sellToken,
+      buyToken: flashLoanOrder.buyToken,
+      feeAmount: flashLoanOrder.feeAmount,
+      txHash: flashLoanOrder.txHash,
+      blockNumber: flashLoanOrder.blockNumber,
+      blockTimestamp: flashLoanOrder.blockTimestamp,
+      validTo: flashLoanOrder.validTo,
+      owner: flashLoanOrder.owner,
+      type: flashLoanOrder.type,
+      executedSellAmount: flashLoanOrder.executedSellAmount,
+      executedBuyAmount: flashLoanOrder.executedBuyAmount,
+      enrichmentAttempts: flashLoanOrder.enrichmentAttempts,
+    })
+    .from(flashLoanOrder)
+    .where(
+      and(
+        eq(flashLoanOrder.chainId, chainId),
+        isNull(flashLoanOrder.enrichedAt),
+        lt(flashLoanOrder.enrichmentAttempts, MAX_FLASH_LOAN_ENRICHMENT_ATTEMPTS),
+      ),
+    )
+    .orderBy(asc(flashLoanOrder.blockNumber));
+  return (limit !== undefined ? await query.limit(limit) : await query) as PendingFlashLoanRow[];
+}
+
+/**
+ * Enrich one batch of pending rows from the orderbook (cache-first) and persist.
+ * Hits → one multi-row upsert writing only the orderbook fields + enrichedAt.
+ * Misses (not yet on the API) → bump enrichmentAttempts so they eventually stop
+ * being polled. On an orderbook fetch failure, leaves the batch pending (retried
+ * later). Shared by both the backfiller and the live enricher.
+ */
+async function enrichFlashLoanOrders(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  context: any,
+  chainId: number,
+  enrichedAtTs: bigint,
+  rows: PendingFlashLoanRow[],
+): Promise<{ enriched: number; missing: number }> {
+  if (rows.length === 0) return { enriched: 0, missing: 0 };
+
+  let enrichment: Awaited<ReturnType<typeof fetchFlashLoanEnrichmentByUids>>;
+  try {
+    enrichment = await fetchFlashLoanEnrichmentByUids(context, chainId, rows.map((o) => o.orderUid));
+  } catch (err) {
+    log("warn", "FlashLoanEnrich:fetch_failed", { chainId, uids: rows.length, err: err instanceof Error ? err.message : String(err) });
+    return { enriched: 0, missing: 0 }; // leave pending — retried on a later block / run
+  }
+
+  const enrichedRows: (typeof flashLoanOrder.$inferInsert)[] = [];
+  const missingUids: string[] = [];
+
+  for (const order of rows) {
+    const info = enrichment.get(order.orderUid);
+    if (!info) {
+      missingUids.push(order.orderUid);
+      continue;
+    }
+    enrichedRows.push({
+      orderUid: order.orderUid,
+      chainId,
+      adapter: order.adapter,
+      sellToken: order.sellToken,
+      buyToken: order.buyToken,
+      executedSellAmount: info.executedSellAmount,
+      executedBuyAmount: info.executedBuyAmount,
+      feeAmount: order.feeAmount,
+      txHash: order.txHash,
+      blockNumber: order.blockNumber,
+      blockTimestamp: order.blockTimestamp,
+      validTo: order.validTo,
+      owner: order.owner,
+      receiver: (info.receiver as Hex | null) ?? null,
+      kind: info.kind,
+      sellAmountIntended: info.sellAmount,
+      buyAmountIntended: info.buyAmount,
+      source: "aave",
+      type: order.type,
+      enrichedAt: enrichedAtTs,
+    });
+  }
+
+  if (enrichedRows.length > 0) {
+    await context.db.sql
+      .insert(flashLoanOrder)
+      .values(enrichedRows)
+      .onConflictDoUpdate({
+        target: [flashLoanOrder.chainId, flashLoanOrder.orderUid],
+        set: {
+          receiver: sql`excluded.receiver`,
+          kind: sql`excluded.kind`,
+          sellAmountIntended: sql`excluded.sell_amount_intended`,
+          buyAmountIntended: sql`excluded.buy_amount_intended`,
+          executedSellAmount: sql`excluded.executed_sell_amount`,
+          executedBuyAmount: sql`excluded.executed_buy_amount`,
+          enrichedAt: sql`excluded.enriched_at`,
+        },
+      });
+  }
+
+  if (missingUids.length > 0) {
+    await context.db.sql
+      .update(flashLoanOrder)
+      .set({ enrichmentAttempts: sql`${flashLoanOrder.enrichmentAttempts} + 1` })
+      .where(
+        and(
+          eq(flashLoanOrder.chainId, chainId),
+          inArray(flashLoanOrder.orderUid, missingUids),
+        ),
+      );
+  }
+
+  return { enriched: enrichedRows.length, missing: missingUids.length };
+}
+
+// FlashLoanOrderBackfiller — fires once at go-live (startBlock=endBlock="latest"),
+// mirroring OwnerBackfill. Bulk-drains the historical backlog the settlement
+// handler recorded during backfill, in bounded sequential slices to cap orderbook
+// concurrency. The whole drain happens in this one firing, so the incomplete-data
+// window after promotion is one firing, not hours of every-block draining.
+ponder.on("FlashLoanOrderBackfiller:block", async ({ event, context }) => {
+  const chainId = context.chain.id as SupportedChainId;
+
+  const pending = await selectPendingFlashLoanOrders(context, chainId);
+  log("info", "FlashLoanOrderBackfiller:START", { block: String(event.block.number), chainId, pending: pending.length });
+  if (pending.length === 0) return;
+
+  let enriched = 0;
+  let missing = 0;
+  for (let i = 0; i < pending.length; i += FLASH_LOAN_BACKFILL_SLICE_SIZE) {
+    const slice = pending.slice(i, i + FLASH_LOAN_BACKFILL_SLICE_SIZE);
+    const r = await enrichFlashLoanOrders(context, chainId, event.block.timestamp, slice);
+    enriched += r.enriched;
+    missing += r.missing;
+  }
+
+  log("info", "FlashLoanOrderBackfiller:DONE", { block: String(event.block.number), chainId, pending: pending.length, enriched, missing });
+});
+
+// FlashLoanOrderEnricher — every block. Enriches orders that settle during live
+// sync, plus any stragglers the backfiller left (timeouts / not-yet-on-API).
+// Capped per block (MAX_FLASH_LOAN_ORDERS_PER_BLOCK_<chainId>), oldest-first.
+ponder.on("FlashLoanOrderEnricher:block", async ({ event, context }) => {
+  const chainId = context.chain.id as SupportedChainId;
+
+  const rawCap = Number(process.env[`MAX_FLASH_LOAN_ORDERS_PER_BLOCK_${chainId}`]);
+  const maxPerBlock =
+    Number.isFinite(rawCap) && rawCap > 0 ? rawCap : DEFAULT_MAX_FLASH_LOAN_ORDERS_PER_BLOCK;
+
+  const pending = await selectPendingFlashLoanOrders(context, chainId, maxPerBlock);
+  if (pending.length === 0) return;
+
+  const { enriched, missing } = await enrichFlashLoanOrders(context, chainId, event.block.timestamp, pending);
+
+  log("info", "FlashLoanOrderEnricher:DONE", { block: String(event.block.number), chainId, pending: pending.length, enriched, missing });
 });
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────

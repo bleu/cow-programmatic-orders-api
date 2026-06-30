@@ -136,8 +136,6 @@ export const ordersByOwnerHandler: RouteHandler<
         kind: schema.flashLoanOrder.kind,
         sellAmountIntended: schema.flashLoanOrder.sellAmountIntended,
         buyAmountIntended: schema.flashLoanOrder.buyAmountIntended,
-        flashLoanAmount: schema.flashLoanOrder.flashLoanAmount,
-        flashLoanFeeAmount: schema.flashLoanOrder.flashLoanFeeAmount,
         source: schema.flashLoanOrder.source,
         type: schema.flashLoanOrder.type,
         txHash: schema.flashLoanOrder.txHash,

@@ -26,8 +26,7 @@ vi.mock("ponder:schema", () => {
     executedSellAmount: "executedSellAmount", executedBuyAmount: "executedBuyAmount",
     feeAmount: "feeAmount", validTo: "validTo", owner: "owner",
     receiver: "receiver", kind: "kind", sellAmountIntended: "sellAmountIntended",
-    buyAmountIntended: "buyAmountIntended", flashLoanAmount: "flashLoanAmount",
-    flashLoanFeeAmount: "flashLoanFeeAmount", source: "source", type: "type",
+    buyAmountIntended: "buyAmountIntended", source: "source", type: "type",
     txHash: "txHash", blockNumber: "blockNumber", blockTimestamp: "blockTimestamp",
   };
   return {
@@ -125,8 +124,6 @@ const FLASH_LOAN_ORDER = {
   kind: "sell",
   sellAmountIntended: "5000000000000000000",
   buyAmountIntended: "4800000000000000000",
-  flashLoanAmount: "5000000000000000000",
-  flashLoanFeeAmount: "2500000000000000",
   source: "aave",
   type: "RepayWithCollateral",
   txHash: "0x" + "ff".repeat(32),
