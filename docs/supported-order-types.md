@@ -347,6 +347,41 @@ Non-deterministic (`DETERMINISTIC_ORDER_TYPE.ERC4626CowSwapFeeBurner = false`). 
 
 ---
 
+## Aave flash-loan orders
+
+Aave flash-loan orders are **not** ComposableCoW conditional orders. They are standalone CoW orders settled through `GPv2Settlement` by a per-order Aave V3 flash-loan adapter, with no generator or `staticInput`. They live in their own table, **`flashLoanOrder`** (PK `chainId + orderUid`).
+
+Executed-only: a row exists iff the order settled (recorded from the on-chain `Trade` event, never polled), so there is no `status` column. A partial fill is derivable by comparing the intended amounts (`sellAmountIntended` / `buyAmountIntended`) against the executed amounts. Each adapter is a fresh CREATE2 deployment per order, so adapter ↔ order is 1:1 and order creation happens in the same handler branch that writes the `ownerMapping`.
+
+### Field sources
+
+| Source | Fields |
+|---|---|
+| `Trade` event | `orderUid`, `chainId`, `adapter`, `sellToken`, `buyToken`, `executedSellAmount`, `executedBuyAmount`, `feeAmount`, `txHash`, `blockNumber`, `blockTimestamp` |
+| decoded from `orderUid` | `validTo` (trailing `uint32`) |
+| `getHookData()` (nullable) | `owner` (resolved EOA), `receiver`, `kind` (`sell`/`buy`), `sellAmountIntended`, `buyAmountIntended`, `flashLoanAmount`, `flashLoanFeeAmount` |
+| derived | `source` = `"aave"`; `type` ∈ {`RepayWithCollateral`, `CollateralSwap`, `DebtSwap`}, nullable |
+
+### Type detection (EIP-1167, no extra RPC)
+
+Adapters are EIP-1167 minimal proxies, so the `getCode` result already fetched yields the implementation address (bytes `[10:30]`), which maps to `type`:
+
+| Implementation | `type` |
+|---|---|
+| `0xac27f3f86e78b14721d07c4f9ce999285f9aaa06` | `RepayWithCollateral` |
+| `0x029d584e847373b6373b01dfad1a0c9bfb916382` | `CollateralSwap` |
+| `0x73e7af13ef172f13d8fefebfd90c7a6530096344` | `DebtSwap` |
+
+`type` is left `null` when the bytecode is not a recognised clone.
+
+### Graceful degradation
+
+The handler calls `getHookData()` first: on success its `owner` resolves the `ownerMapping` and its fields enrich the order. On failure it falls back to `owner()` for the mapping and writes a `Trade`-only order with the `getHookData` fields left `null`. The order row is always created; the insert is idempotent (`onConflictDoNothing`). A degraded order (`owner` null) is absent from `/api/orders/by-owner/{owner}` but still queryable by `adapter` or `orderUid` via GraphQL.
+
+### Exposure
+
+Auto-exposed as the `flashLoanOrders` GraphQL field, and folded into `GET /api/orders/by-owner/{owner}` as a separate `flashLoanOrders` array (the existing `orders` array is unchanged). See [api-reference.md](./api-reference.md#get-apiordersby-ownerowner) for REST filter semantics.
+
 ## Decode failures
 
 When `staticInput` cannot be decoded for a known order type, the indexer stores `decodedParams: null` and sets `decodeError` to `"invalid_static_input"`. This happens when the on-chain data doesn't match the expected ABI layout -- corrupted calldata, a different handler version, or a handler address collision with a non-standard contract.

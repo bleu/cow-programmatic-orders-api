@@ -20,11 +20,22 @@ vi.mock("ponder:schema", () => {
     validTo: "validTo", creationDate: "creationDate",
     executedSellAmount: "executedSellAmount", executedBuyAmount: "executedBuyAmount",
   };
+  const flashLoanOrder = {
+    orderUid: "orderUid", chainId: "chainId", adapter: "adapter",
+    sellToken: "sellToken", buyToken: "buyToken",
+    executedSellAmount: "executedSellAmount", executedBuyAmount: "executedBuyAmount",
+    feeAmount: "feeAmount", validTo: "validTo", owner: "owner",
+    receiver: "receiver", kind: "kind", sellAmountIntended: "sellAmountIntended",
+    buyAmountIntended: "buyAmountIntended", flashLoanAmount: "flashLoanAmount",
+    flashLoanFeeAmount: "flashLoanFeeAmount", source: "source", type: "type",
+    txHash: "txHash", blockNumber: "blockNumber", blockTimestamp: "blockTimestamp",
+  };
   return {
-    default: { ownerMapping, conditionalOrderGenerator, discreteOrder },
+    default: { ownerMapping, conditionalOrderGenerator, discreteOrder, flashLoanOrder },
     ownerMapping,
     conditionalOrderGenerator,
     discreteOrder,
+    flashLoanOrder,
   };
 });
 vi.mock("ponder", () => ({
@@ -99,6 +110,30 @@ const ORDER = {
   generatorId: EVENT_ID,
 };
 
+const FLASH_LOAN_ORDER = {
+  orderUid: "0x" + "ee".repeat(56),
+  chainId: CHAIN_ID,
+  adapter: "0x0ece00000000000000000000000000000000aaaa",
+  sellToken: "0x1111111111111111111111111111111111111111",
+  buyToken: "0x2222222222222222222222222222222222222222",
+  executedSellAmount: "5000000000000000000",
+  executedBuyAmount: "4900000000000000000",
+  feeAmount: "1000000000000000",
+  validTo: 1893456000,
+  owner: OWNER,
+  receiver: OWNER,
+  kind: "sell",
+  sellAmountIntended: "5000000000000000000",
+  buyAmountIntended: "4800000000000000000",
+  flashLoanAmount: "5000000000000000000",
+  flashLoanFeeAmount: "2500000000000000",
+  source: "aave",
+  type: "RepayWithCollateral",
+  txHash: "0x" + "ff".repeat(32),
+  blockNumber: BigInt("12345678"),
+  blockTimestamp: BigInt("1700000000"),
+};
+
 beforeEach(() => {
   vi.mocked(db.select).mockReset();
 });
@@ -107,7 +142,8 @@ describe("ordersByOwnerHandler", () => {
   it("returns empty orders array when no generators are found", async () => {
     vi.mocked(db.select)
       .mockReturnValueOnce(makeSelectChain([]) as never) // ownerMapping → no proxies
-      .mockReturnValueOnce(makeSelectChain([]) as never); // generators → none
+      .mockReturnValueOnce(makeSelectChain([]) as never) // generators → none
+      .mockReturnValueOnce(makeSelectChain([]) as never); // flashLoanOrder
 
     const ctx = makeContext();
     await ordersByOwnerHandler(ctx as never, vi.fn() as never);
@@ -119,7 +155,8 @@ describe("ordersByOwnerHandler", () => {
     vi.mocked(db.select)
       .mockReturnValueOnce(makeSelectChain([]) as never)
       .mockReturnValueOnce(makeSelectChain([GENERATOR]) as never)
-      .mockReturnValueOnce(makeSelectChain([]) as never);
+      .mockReturnValueOnce(makeSelectChain([]) as never)
+      .mockReturnValueOnce(makeSelectChain([]) as never); // flashLoanOrder
 
     const ctx = makeContext();
     await ordersByOwnerHandler(ctx as never, vi.fn() as never);
@@ -131,7 +168,8 @@ describe("ordersByOwnerHandler", () => {
     vi.mocked(db.select)
       .mockReturnValueOnce(makeSelectChain([]) as never)
       .mockReturnValueOnce(makeSelectChain([GENERATOR]) as never)
-      .mockReturnValueOnce(makeSelectChain([ORDER]) as never);
+      .mockReturnValueOnce(makeSelectChain([ORDER]) as never)
+      .mockReturnValueOnce(makeSelectChain([]) as never); // flashLoanOrder
 
     const ctx = makeContext();
     await ordersByOwnerHandler(ctx as never, vi.fn() as never);
@@ -151,7 +189,8 @@ describe("ordersByOwnerHandler", () => {
     vi.mocked(db.select)
       .mockReturnValueOnce(makeSelectChain([]) as never)
       .mockReturnValueOnce(makeSelectChain([GENERATOR]) as never)
-      .mockReturnValueOnce(makeSelectChain([ORDER]) as never);
+      .mockReturnValueOnce(makeSelectChain([ORDER]) as never)
+      .mockReturnValueOnce(makeSelectChain([]) as never); // flashLoanOrder
 
     const ctx = makeContext();
     await ordersByOwnerHandler(ctx as never, vi.fn() as never);
@@ -164,12 +203,87 @@ describe("ordersByOwnerHandler", () => {
     vi.mocked(db.select)
       .mockReturnValueOnce(makeSelectChain([{ address: PROXY }]) as never)
       .mockReturnValueOnce(makeSelectChain([GENERATOR]) as never)
-      .mockReturnValueOnce(makeSelectChain([ORDER]) as never);
+      .mockReturnValueOnce(makeSelectChain([ORDER]) as never)
+      .mockReturnValueOnce(makeSelectChain([]) as never); // flashLoanOrder
 
     const ctx = makeContext();
     await ordersByOwnerHandler(ctx as never, vi.fn() as never);
     const result = ctx._responses[0]!.body as { orders: unknown[] };
     expect(result.orders).toHaveLength(1);
+  });
+
+  it("returns flash-loan orders in a separate flashLoanOrders array, even with no generators", async () => {
+    vi.mocked(db.select)
+      .mockReturnValueOnce(makeSelectChain([]) as never) // ownerMapping
+      .mockReturnValueOnce(makeSelectChain([]) as never) // generators → none
+      .mockReturnValueOnce(makeSelectChain([FLASH_LOAN_ORDER]) as never); // flashLoanOrder
+
+    const ctx = makeContext();
+    await ordersByOwnerHandler(ctx as never, vi.fn() as never);
+    const result = ctx._responses[0]!.body as {
+      orders: unknown[];
+      flashLoanOrders: Array<Record<string, unknown>>;
+    };
+
+    expect(result.orders).toEqual([]);
+    expect(result.flashLoanOrders).toHaveLength(1);
+    const fl = result.flashLoanOrders[0]!;
+    expect(fl["orderUid"]).toBe(FLASH_LOAN_ORDER.orderUid);
+    expect(fl["type"]).toBe("RepayWithCollateral");
+    expect(fl["source"]).toBe("aave");
+    expect(fl["kind"]).toBe("sell");
+    // bigint columns serialise to decimal strings
+    expect(fl["blockTimestamp"]).toBe("1700000000");
+    expect(fl["blockNumber"]).toBe("12345678");
+  });
+
+  it("excludes flash-loan orders when ownerAddressType is cowshed_proxy", async () => {
+    // FL query must be skipped entirely — only ownerMapping + generators run.
+    vi.mocked(db.select)
+      .mockReturnValueOnce(makeSelectChain([]) as never) // ownerMapping
+      .mockReturnValueOnce(makeSelectChain([]) as never); // generators
+
+    const ctx = makeContext({ ownerAddressType: "cowshed_proxy" });
+    await ordersByOwnerHandler(ctx as never, vi.fn() as never);
+    const result = ctx._responses[0]!.body as { flashLoanOrders: unknown[] };
+    expect(result.flashLoanOrders).toEqual([]);
+    expect(db.select).toHaveBeenCalledTimes(2);
+  });
+
+  it("includes flash-loan orders when ownerAddressType is flash_loan_helper", async () => {
+    vi.mocked(db.select)
+      .mockReturnValueOnce(makeSelectChain([]) as never) // ownerMapping
+      .mockReturnValueOnce(makeSelectChain([]) as never) // generators
+      .mockReturnValueOnce(makeSelectChain([FLASH_LOAN_ORDER]) as never); // flashLoanOrder
+
+    const ctx = makeContext({ ownerAddressType: "flash_loan_helper" });
+    await ordersByOwnerHandler(ctx as never, vi.fn() as never);
+    const result = ctx._responses[0]!.body as { flashLoanOrders: unknown[] };
+    expect(result.flashLoanOrders).toHaveLength(1);
+  });
+
+  it("excludes flash-loan orders when status filter is not 'fulfilled'", async () => {
+    vi.mocked(db.select)
+      .mockReturnValueOnce(makeSelectChain([]) as never) // ownerMapping
+      .mockReturnValueOnce(makeSelectChain([]) as never); // generators
+
+    const ctx = makeContext({ status: "expired" });
+    await ordersByOwnerHandler(ctx as never, vi.fn() as never);
+    const result = ctx._responses[0]!.body as { flashLoanOrders: unknown[] };
+    expect(result.flashLoanOrders).toEqual([]);
+    expect(db.select).toHaveBeenCalledTimes(2);
+  });
+
+  it("includes flash-loan orders when status filter is 'fulfilled'", async () => {
+    vi.mocked(db.select)
+      .mockReturnValueOnce(makeSelectChain([]) as never) // ownerMapping
+      .mockReturnValueOnce(makeSelectChain([]) as never) // generators
+      .mockReturnValueOnce(makeSelectChain([FLASH_LOAN_ORDER]) as never); // flashLoanOrder
+
+    const ctx = makeContext({ status: "fulfilled" });
+    await ordersByOwnerHandler(ctx as never, vi.fn() as never);
+    const result = ctx._responses[0]!.body as { flashLoanOrders: unknown[] };
+    expect(result.flashLoanOrders).toHaveLength(1);
   });
 });
 
@@ -244,7 +358,10 @@ describe("OrdersByOwnerResponse schema", () => {
       generator: validGenerator,
     };
 
-    const result = OrdersByOwnerResponse.safeParse({ orders: [orderItem] });
+    const result = OrdersByOwnerResponse.safeParse({
+      orders: [orderItem],
+      flashLoanOrders: [],
+    });
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.orders).toHaveLength(1);
@@ -253,7 +370,10 @@ describe("OrdersByOwnerResponse schema", () => {
   });
 
   it("parses an empty orders array", () => {
-    const result = OrdersByOwnerResponse.safeParse({ orders: [] });
+    const result = OrdersByOwnerResponse.safeParse({
+      orders: [],
+      flashLoanOrders: [],
+    });
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.orders).toHaveLength(0);

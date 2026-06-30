@@ -41,6 +41,24 @@ export const discreteOrderStatusEnum = onchainEnum("discrete_order_status", [
   "cancelled",
 ]);
 
+// Integration an order originated from. Currently always "aave" (Aave V3).
+export const flashLoanOrderSourceEnum = onchainEnum("flash_loan_order_source", [
+  "aave",
+]);
+
+// Adapter operation, derived from the EIP-1167 implementation address. Nullable.
+export const flashLoanOrderTypeEnum = onchainEnum("flash_loan_order_type", [
+  "RepayWithCollateral",
+  "CollateralSwap",
+  "DebtSwap",
+]);
+
+// CoW order kind from getHookData(). Nullable.
+export const flashLoanOrderKindEnum = onchainEnum("flash_loan_order_kind", [
+  "sell",
+  "buy",
+]);
+
 // ── Tables ───────────────────────────────────────────────────────────────────
 
 export const transaction = onchainTable(
@@ -174,5 +192,44 @@ export const ownerMapping = onchainTable(
   (table) => ({
     pk: primaryKey({ columns: [table.chainId, table.address] }),
     ownerIdx: index().on(table.owner),
+  })
+);
+
+// Standalone CoW orders settled through GPv2Settlement by an Aave V3 flash-loan
+// adapter (not ComposableCoW conditional orders). Executed-only: a row exists
+// iff the order settled. adapter <-> order is 1:1 (fresh CREATE2 per order).
+export const flashLoanOrder = onchainTable(
+  "flash_loan_order",
+  (t) => ({
+    // ── From the Trade event (always present) ──
+    orderUid: t.text().notNull(),                 // PK part
+    chainId: t.integer().notNull(),               // PK part
+    adapter: t.hex().notNull(),                   // the per-order Aave adapter (Trade event owner topic)
+    sellToken: t.hex().notNull(),
+    buyToken: t.hex().notNull(),
+    executedSellAmount: t.text().notNull(),       // uint256 as decimal string
+    executedBuyAmount: t.text().notNull(),
+    feeAmount: t.text().notNull(),
+    txHash: t.hex().notNull(),                    // FK -> transaction.hash
+    blockNumber: t.bigint().notNull(),
+    blockTimestamp: t.bigint().notNull(),
+    // ── Decoded from orderUid (always present, authoritative over getHookData) ──
+    validTo: t.integer().notNull(),               // trailing uint32 of the order UID
+    // ── From getHookData() (nullable enrichment; null on graceful degradation) ──
+    owner: t.hex(),                               // resolved EOA
+    receiver: t.hex(),
+    kind: flashLoanOrderKindEnum("kind"),
+    sellAmountIntended: t.text(),
+    buyAmountIntended: t.text(),
+    flashLoanAmount: t.text(),
+    flashLoanFeeAmount: t.text(),
+    // ── Derived ──
+    source: flashLoanOrderSourceEnum("source").notNull().default("aave"),
+    type: flashLoanOrderTypeEnum("type"),         // null when undetectable
+  }),
+  (table) => ({
+    pk: primaryKey({ columns: [table.chainId, table.orderUid] }),
+    ownerIdx: index().on(table.owner),
+    adapterIdx: index().on(table.adapter),
   })
 );

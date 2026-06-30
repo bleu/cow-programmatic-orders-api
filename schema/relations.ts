@@ -1,8 +1,27 @@
 import { relations } from "ponder";
-import { candidateDiscreteOrder, conditionalOrderGenerator, discreteOrder, transaction } from "./tables";
+import {
+  candidateDiscreteOrder,
+  conditionalOrderGenerator,
+  discreteOrder,
+  flashLoanOrder,
+  ownerMapping,
+  transaction,
+} from "./tables";
 
 export const transactionRelations = relations(transaction, ({ many }) => ({
   conditionalOrderGenerators: many(conditionalOrderGenerator),
+  flashLoanOrders: many(flashLoanOrder),
+}));
+
+export const flashLoanOrderRelations = relations(flashLoanOrder, ({ one }) => ({
+  transaction: one(transaction, {
+    fields: [flashLoanOrder.chainId, flashLoanOrder.txHash],
+    references: [transaction.chainId, transaction.hash],
+  }),
+  ownerMapping: one(ownerMapping, {
+    fields: [flashLoanOrder.chainId, flashLoanOrder.adapter],
+    references: [ownerMapping.chainId, ownerMapping.address],
+  }),
 }));
 
 export const conditionalOrderGeneratorRelations = relations(

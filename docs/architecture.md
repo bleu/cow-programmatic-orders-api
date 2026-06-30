@@ -6,7 +6,7 @@ This document covers how the indexer works, from on-chain events to the GraphQL 
 
 The system is a Ponder 0.16.x indexer that watches the ComposableCoW contract on all active chains (see `ponder.config.ts`). When a user creates a programmatic order (TWAP, Stop Loss, etc.), the contract emits a `ConditionalOrderCreated` event. The indexer picks that up, decodes the order parameters, resolves the actual owner (which may be behind a proxy), and writes the result to Postgres. A Hono HTTP server exposes the data through GraphQL and a SQL passthrough endpoint.
 
-Ponder registers handlers for three independent on-chain event streams: `ComposableCow` (conditional order creation), `CoWShedFactory` (proxy wallet deployment), and `GPv2Settlement` (Aave adapter detection via `Settlement` events — `Trade` logs in the receipt identify the adapter address). During live sync, additional block handlers in `blockHandler.ts` poll contract state and the CoW orderbook API. See `blockHandler.ts` for the current handler list and responsibilities. `settlement.ts` detects Aave flash loan adapters via a queue-based approach: the `GPv2Settlement:Settlement` event handler enqueues tx hashes, and `SettlementResolver:block` drains the queue and does all RPC work so errors never crash the event handler.
+Ponder registers handlers for three independent on-chain event streams: `ComposableCow` (conditional order creation), `CoWShedFactory` (proxy wallet deployment), and `GPv2Settlement` (Aave adapter detection via `Settlement` events — `Trade` logs in the receipt identify the adapter address). During live sync, additional block handlers in `blockHandler.ts` poll contract state and the CoW orderbook API. See `blockHandler.ts` for the current handler list and responsibilities. `settlement.ts` detects Aave flash loan adapters and records the flash-loan orders they settle: the `GPv2Settlement:Settlement` event handler does all RPC work inline (each call wrapped in `withTimeout` with its own try/catch, so errors never crash the handler), writing both an `ownerMapping` row and a `flashLoanOrder` row per confirmed adapter.
 
 ## Contracts and Chains
 
@@ -125,6 +125,15 @@ PK: `(chainId, address)`.
 
 The `resolutionDepth` column records how many hops were needed to reach the EOA. For CoWShed proxies it's 0 (the `COWShedBuilt` event directly provides the user). For Aave adapters it's 1 (call `owner()` on the adapter to get the EOA).
 
+### flash_loan_order
+
+Standalone CoW orders settled by an Aave V3 flash-loan adapter — **not** ComposableCoW conditional orders (no generator, no `staticInput`). Recorded executed-only from the on-chain `Trade` event at settlement; there is **no `status` column** (presence means executed). Each adapter is a fresh CREATE2 deployment per order, so adapter ↔ order is 1:1.
+
+Columns: `orderUid`, `chainId`, `adapter`, `sellToken`, `buyToken`, `executedSellAmount`, `executedBuyAmount`, `feeAmount`, `txHash`, `blockNumber`, `blockTimestamp` (from the `Trade` event); `validTo` (decoded from the order UID); `owner`, `receiver`, `kind`, `sellAmountIntended`, `buyAmountIntended`, `flashLoanAmount`, `flashLoanFeeAmount` (nullable, from `getHookData()`); `source` (`"aave"`); `type` (nullable: `RepayWithCollateral` / `CollateralSwap` / `DebtSwap`).
+PK: `(chainId, orderUid)`. Indexes on `owner` and `adapter`. Relations: `transaction`, `ownerMapping` (via `adapter`).
+
+See [supported-order-types.md](./supported-order-types.md#aave-flash-loan-orders) for the full flow (type detection, graceful `getHookData` degradation).
+
 ## Handlers in Detail
 
 ### composableCow.ts -- ConditionalOrderCreated
@@ -145,28 +154,25 @@ This is the primary event handler. When a `ConditionalOrderCreated` fires:
 
 When a CoWShed proxy wallet is deployed, this handler stores the mapping from the proxy address (`shed`) to the deploying user address in `ownerMapping`. This mapping is then available for the composableCow handler to resolve owners.
 
-### settlement.ts -- Flash Loan Adapter Detection
+### settlement.ts -- Flash Loan Adapter Detection + Order Recording
 
-This file detects Aave V3 flash loan adapter contracts using a queue-based two-stage approach. The GPv2Settlement contract is filtered (in `ponder.config.ts`) to only index settlements from the FlashLoanRouter solver, so the event volume is very low.
+This file detects Aave V3 flash loan adapter contracts and records the flash-loan orders they settle. The GPv2Settlement contract is filtered (in `ponder.config.ts`) to only index settlements from the FlashLoanRouter solver, so the event volume is very low. All RPC work runs **inline** in the `GPv2Settlement:Settlement` event handler, each call wrapped in `withTimeout(...)` with its own try/catch so a failed fetch skips the settlement without crashing the indexer.
 
-**Stage 1 — `GPv2Settlement:Settlement` event handler (enqueue only):**
+When a Settlement event fires:
 
-When a Settlement event fires, the handler writes the transaction hash into the `settlementQueue` table and returns immediately. No RPC calls are made here — errors in RPC never crash the event handler, keeping the indexer stable.
-
-**Stage 2 — `SettlementResolver:block` block handler (drain and resolve):**
-
-Every block, this handler drains up to `MAX_SETTLEMENTS_PER_BLOCK` rows from `settlementQueue` for the current chain. For each queued transaction:
-
-1. Fetch the full transaction receipt (with timeout). On error, log a warning and delete the queue row (skip it).
-2. Iterate over all logs in the receipt. Keep only Trade logs emitted by the GPv2Settlement contract.
-3. For each trade, extract the `owner` address from the indexed topic.
-4. Skip if already in `ownerMapping` (adapter seen in a prior settlement).
+1. Fetch the full transaction receipt (with timeout). On error, log a warning and return.
+2. Iterate the receipt logs; keep only `Trade` logs emitted by the GPv2Settlement contract.
+3. Extract the adapter address from the indexed `owner` topic.
+4. Skip if already in `ownerMapping` (adapter seen in a prior settlement — safe because adapter ↔ order is 1:1, so no order is ever dropped).
 5. Call `getCode` on the address (with timeout). Skip if EOA (no bytecode).
 6. Call `FACTORY()` via raw `eth_call` (not `readContract`, which logs a WARN on every revert). If the returned address doesn't match the known AaveV3AdapterFactory address, skip.
-7. Call `owner()` on the adapter to retrieve the underlying EOA.
-8. Write a row to `ownerMapping` (`address` -> `owner`, `addressType = FlashLoanHelper`).
-9. Update any `conditionalOrderGenerator` rows owned by the adapter address to set `ownerAddressType = FlashLoanHelper`.
-10. Delete the queue row.
+
+Once the adapter is confirmed, this branch records the **order** as well as the mapping:
+
+7. Decode the non-indexed `Trade` log data (tokens, executed amounts, fee, `orderUid`) that step 3 discarded, and decode `validTo` from the trailing `uint32` of the `orderUid`.
+8. Derive `type` from the adapter's EIP-1167 implementation address (extracted from the step-5 `getCode` bytecode — no extra RPC).
+9. **Graceful degradation:** call `getHookData()` first — on success its `owner` resolves the mapping AND its fields enrich the order. On failure, fall back to `owner()` for the mapping and leave the `getHookData`-sourced order fields null.
+10. Insert `transaction` and `flashLoanOrder` (always, `onConflictDoNothing` on `chainId + orderUid`). Insert `ownerMapping` (`addressType = FlashLoanHelper`, `resolutionDepth = 1`) whenever the EOA resolved — owner-mapping reliability does not regress.
 
 The raw `eth_call` for `FACTORY()` avoids Ponder's built-in WARN logs on reverts — most addresses are not Aave adapters, so reverts are the common case and would flood the logs if `readContract` were used.
 
