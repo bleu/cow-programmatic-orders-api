@@ -9,28 +9,35 @@ export const GPV2_SETTLEMENT_ADDRESS =
   "0x9008D19f58AAbD9eD0D60971565AA8510560ab41" as const;
 
 /**
- * Orderbook polling interval in blocks.
- * ~20 blocks ≈ 4 min on mainnet (12s/block), ~2 min on Gnosis (5s/block).
- * Used in ponder.config.ts for block handler intervals and in constants.ts for RECHECK_INTERVAL.
+ * Per-chain orderbook recheck cadence, in blocks, keyed by chain ID.
+ * Derived from each chain's orderbookPollInterval (seconds) and blockTime:
+ *   blocks = max(1, round(orderbookPollInterval / blockTime)).
+ * Partial: lookups fall back to DEFAULT_RECHECK_INTERVAL_BLOCKS (src/constants.ts).
  */
-export const ORDERBOOK_POLL_INTERVAL = 20;
+export const RECHECK_INTERVAL_BLOCKS_BY_CHAIN_ID: Partial<Record<SupportedChainId, bigint>> =
+  Object.fromEntries(
+    ALL_DEFINED_CHAINS.map((c) => [
+      c.chainId,
+      BigInt(Math.max(1, Math.round(c.orderbookPollInterval / c.blockTime))),
+    ]),
+  );
 
 /**
  * Human-readable chain names keyed by chain ID.
  * Derived from ACTIVE_CHAINS — used for API schema descriptions and logging.
+ * Partial: only the active chains are present, so lookups are `string | undefined`.
  */
-export const CHAIN_NAMES: Record<SupportedChainId, string> = Object.fromEntries(
-  ACTIVE_CHAINS.map((c) => [c.chainId, c.name]),
-) as Record<SupportedChainId, string>;
+export const CHAIN_NAMES: Partial<Record<SupportedChainId, string>> =
+  Object.fromEntries(ACTIVE_CHAINS.map((c) => [c.chainId, c.name]));
 
 /**
  * ComposableCoW address keyed by numeric chain ID.
  * Derived from ACTIVE_CHAINS — update chain files to change addresses.
+ * Partial: only the active chains are present, so lookups are `0x… | undefined`.
  */
-export const COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID: Record<SupportedChainId, `0x${string}`> =
-  Object.fromEntries(
-    ACTIVE_CHAINS.map((c) => [c.chainId, c.composableCow.address]),
-  ) as Record<SupportedChainId, `0x${string}`>;
+export const COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID: Partial<
+  Record<SupportedChainId, `0x${string}`>
+> = Object.fromEntries(ACTIVE_CHAINS.map((c) => [c.chainId, c.composableCow.address]));
 
 /**
  * Known ComposableCoW order handler addresses — derived from the ALL_HANDLER_ADDRESSES
@@ -55,15 +62,16 @@ export const ORDERBOOK_API_URLS: Record<number, string> = Object.fromEntries(
 );
 
 /**
- * AaveV3AdapterFactory addresses keyed by chain name.
- * Derived from ACTIVE_CHAINS — only chains with a non-null aaveV3AdapterFactory are included.
+ * Aave V3 adapter factory addresses keyed by chain name.
+ * Derived from ACTIVE_CHAINS — only chains with Aave V3 flash-loan infra are included.
  * Used by settlement.ts to resolve per-chain factory addresses at runtime.
+ * (Aave V3 is the only flash-loan provider wired today — see ChainConfig.flashLoan.)
  */
 export const AAVE_V3_ADAPTER_FACTORY_ADDRESSES: Record<string, `0x${string}`> =
   Object.fromEntries(
     ACTIVE_CHAINS
-      .filter((c) => c.aaveV3AdapterFactory !== null)
-      .map((c) => [c.name, c.aaveV3AdapterFactory!]),
+      .filter((c) => c.flashLoan !== null)
+      .map((c) => [c.name, c.flashLoan!.aaveV3.adapterFactory]),
   );
 
 /**

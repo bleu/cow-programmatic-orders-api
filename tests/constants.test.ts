@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   SIGNING_SCHEME_EIP1271,
-  RECHECK_INTERVAL,
   TRY_NEXT_BLOCK_WARMUP_THRESHOLD,
   TRY_NEXT_BLOCK_COOLDOWN_THRESHOLD,
   TRY_NEXT_BLOCK_BACKOFF_WARMUP,
@@ -39,17 +38,6 @@ describe("SIGNING_SCHEME_EIP1271", () => {
 
   it('is not "erc1271" — the API uses eip1271 spelling', () => {
     expect(SIGNING_SCHEME_EIP1271).not.toBe("erc1271");
-  });
-});
-
-describe("RECHECK_INTERVAL", () => {
-  it("is a bigint", () => {
-    expect(typeof RECHECK_INTERVAL).toBe("bigint");
-  });
-
-  it("equals BigInt(ORDERBOOK_POLL_INTERVAL) which is 20", () => {
-    // ORDERBOOK_POLL_INTERVAL = 20 (from data.ts)
-    expect(RECHECK_INTERVAL).toBe(20n);
   });
 });
 

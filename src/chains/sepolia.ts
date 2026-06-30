@@ -20,8 +20,8 @@ export const sepolia: ChainConfig = {
     address: "0x312f92fe5f1710408b20d52a374fa29e099cfa86", // CREATE2 — same across chains
     startBlock: 8784028, // verified: tx 0x4d42972f24fa0846523513e7733b1d2238d0a709c3e4a2cd415cc64885bd1762
   },
-  gpv2Settlement: null, // TODO: enable once AaveV3AdapterFactory is confirmed on Sepolia
-  flashLoanRouter: null, // TODO: confirm via ROUTER() on Sepolia AaveV3AdapterFactory
-  aaveV3AdapterFactory: null, // TODO: verify on Sepolia
+  gpv2Settlement: null, // TODO: enable once flash-loan infra is confirmed on Sepolia
+  flashLoan: null, // TODO: set { aaveV3: { router, adapterFactory } } once flash-loan infra is confirmed on Sepolia
   orderbookApiPath: "sepolia",
+  orderbookPollInterval: 20 * blockTime,
 };

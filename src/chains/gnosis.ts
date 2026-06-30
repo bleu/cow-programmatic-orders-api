@@ -27,7 +27,12 @@ export const gnosis: ChainConfig = {
     address: "0x9008D19f58AAbD9eD0D60971565AA8510560ab41",
     startBlock: 43177077, // AaveV3AdapterFactory deployment block on Gnosis
   },
-  flashLoanRouter: "0x9da8B48441583a2b93e2eF8213aAD0EC0b392C69", // confirmed via ROUTER() on Gnosis AaveV3AdapterFactory
-  aaveV3AdapterFactory: "0xdeCc46a4b09162f5369c5c80383aaa9159bcf192", // verified on Gnosisscan
+  flashLoan: {
+    aaveV3: {
+      router: "0x9da8B48441583a2b93e2eF8213aAD0EC0b392C69", // confirmed via ROUTER() on Gnosis AaveV3AdapterFactory
+      adapterFactory: "0xdeCc46a4b09162f5369c5c80383aaa9159bcf192", // verified on Gnosisscan
+    },
+  },
   orderbookApiPath: "xdai",
+  orderbookPollInterval: 100, // ~20 blocks at 5s/block (prior global cadence)
 };

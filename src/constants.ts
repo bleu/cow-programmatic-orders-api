@@ -3,14 +3,14 @@
  * Chain-specific config (addresses, block times, poll intervals) lives in src/data.ts.
  */
 
-import { ORDERBOOK_POLL_INTERVAL } from "./data";
-
 /**
- * After a successful getTradeableOrderWithSignature call, schedule the next check
- * this many blocks later. Mirrors ORDERBOOK_POLL_INTERVAL as a bigint for use in
- * block handler arithmetic.
+ * Fallback orderbook recheck cadence, in blocks. After a successful
+ * getTradeableOrderWithSignature call, schedule the next check this many blocks
+ * later when the chain has no entry in RECHECK_INTERVAL_BLOCKS_BY_CHAIN_ID
+ * (src/data.ts). Mirrors the former global default of 20 blocks; the per-chain
+ * cadence is derived from ChainConfig.orderbookPollInterval (seconds) — F17.
  */
-export const RECHECK_INTERVAL = BigInt(ORDERBOOK_POLL_INTERVAL);
+export const DEFAULT_RECHECK_INTERVAL_BLOCKS = 20n;
 
 /**
  * The signingScheme value returned by the CoW Orderbook API for EIP-1271 signed orders.
@@ -72,8 +72,8 @@ export const ORDERBOOK_HTTP_TIMEOUT_MS = 10_000;
  * so the retry loop must stay short — we cannot honor a large `Retry-After` by
  * sleeping (Postgres would terminate the connection). The loop adds at most
  * ORDERBOOK_RETRY_BUDGET_MS of wall-clock; if a `Retry-After` (or backoff) would
- * exceed the budget, we fail fast and let the next poll (~ORDERBOOK_POLL_INTERVAL
- * blocks later) retry naturally — but the failure is logged as a rate-limit/
+ * exceed the budget, we fail fast and let the next poll (the per-chain recheck
+ * cadence, ~20 blocks, later) retry naturally — but the failure is logged as a rate-limit/
  * server error, not as "order not on API yet".
  */
 export const ORDERBOOK_MAX_RETRIES = 2; // ≤ 3 attempts total

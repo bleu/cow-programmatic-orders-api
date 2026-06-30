@@ -20,6 +20,7 @@ import { and, asc, eq, gt, inArray, isNull, lte, ne, or, sql } from "ponder";
 import type { Hex } from "viem";
 import {
   COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID,
+  RECHECK_INTERVAL_BLOCKS_BY_CHAIN_ID,
   type SupportedChainId,
 } from "../../data";
 import {
@@ -28,9 +29,9 @@ import {
   BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
   DEFAULT_MAX_DISCRETE_ORDERS_PER_BLOCK,
   DEFAULT_MAX_GENERATORS_PER_BLOCK,
+  DEFAULT_RECHECK_INTERVAL_BLOCKS,
   DETERMINISTIC_CANCEL_SWEEP_INTERVAL,
   ORDERBOOK_HTTP_TIMEOUT_MS,
-  RECHECK_INTERVAL,
   TRY_NEXT_BLOCK_WARMUP_THRESHOLD,
   TRY_NEXT_BLOCK_COOLDOWN_THRESHOLD,
   TRY_NEXT_BLOCK_BACKOFF_WARMUP,
@@ -79,6 +80,10 @@ ponder.on("OrderDiscoveryPoller:block", async ({ event, context }) => {
   const chainId = context.chain.id as SupportedChainId;
   const composableCowAddress = COMPOSABLE_COW_ADDRESS_BY_CHAIN_ID[chainId];
   if (!composableCowAddress) return;
+
+  // Per-chain recheck cadence (derived from ChainConfig.orderbookPollInterval); F17.
+  const recheckInterval =
+    RECHECK_INTERVAL_BLOCKS_BY_CHAIN_ID[chainId] ?? DEFAULT_RECHECK_INTERVAL_BLOCKS;
 
   const currentBlock = event.block.number;
   const currentTimestamp = event.block.timestamp;
@@ -201,7 +206,7 @@ ponder.on("OrderDiscoveryPoller:block", async ({ event, context }) => {
       const isSingleShot = SINGLE_SHOT_NON_DETERMINISTIC.includes(order.orderType);
       successPromises.push(
         updateGeneratorPollState(context, chainId, order.generatorId, currentBlock, {
-          nextCheckBlock: currentBlock + RECHECK_INTERVAL,
+          nextCheckBlock: currentBlock + recheckInterval,
           lastPollResult: "success",
           nextCheckTimestamp: null,
           allCandidatesKnown: isSingleShot ? true : undefined,

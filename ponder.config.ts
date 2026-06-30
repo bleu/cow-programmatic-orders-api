@@ -25,7 +25,7 @@ const chains = Object.fromEntries(
 
 const cowShedChains = ACTIVE_CHAINS.filter((c) => c.cowShedFactory !== null);
 const settlementChains = ACTIVE_CHAINS.filter(
-  (c) => c.gpv2Settlement !== null && c.flashLoanRouter !== null,
+  (c) => c.gpv2Settlement !== null && c.flashLoan !== null,
 );
 
 export default createConfig({
@@ -68,7 +68,9 @@ export default createConfig({
             startBlock: c.gpv2Settlement!.startBlock,
             filter: {
               event: "Settlement" as const,
-              args: { solver: c.flashLoanRouter! },
+              // Aave V3 is the only flash-loan provider wired today; add other
+              // providers' routers here (as an array) when they're supported.
+              args: { solver: c.flashLoan!.aaveV3.router },
             },
           },
         ]),

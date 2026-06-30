@@ -17,8 +17,8 @@ export const ink: ChainConfig = {
     address: "0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74",
   },
   cowShedFactory: null, // TODO: confirm CoWShedFactory address on Ink
-  gpv2Settlement: null, // TODO: enable once AaveV3AdapterFactory is confirmed on Ink
-  flashLoanRouter: null, // TODO: confirm via ROUTER() on Ink AaveV3AdapterFactory
-  aaveV3AdapterFactory: null, // TODO: verify on explorer.inkonchain.com
+  gpv2Settlement: null, // TODO: enable once flash-loan infra is confirmed on Ink
+  flashLoan: null, // TODO: set { aaveV3: { router, adapterFactory } } once flash-loan infra is confirmed on Ink
   orderbookApiPath: "ink", // TODO: verify CoW Protocol orderbook URL for Ink
+  orderbookPollInterval: 20 * blockTime,
 };
