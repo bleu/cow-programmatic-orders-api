@@ -15,6 +15,8 @@ All config goes in a `.env` file (production) or `.env.local` (local dev). Start
 
 The indexer is RPC-heavy during initial sync. Rate-limited endpoints will work but sync takes considerably longer. Use an endpoint with generous throughput for production.
 
+**A dedicated/paid Gnosis RPC is required for production.** Beyond backfill, the live block handlers run a sustained per-block workload — multicalls over every active generator each block, plus orderbook polling — that saturates a rate-limited endpoint. The public `https://rpc.gnosischain.com` is **insufficient for production**: its rate limit (observed ~7.85 req/s) throttles the per-block multicalls and stalls the indexer, freezing the indexing head for tens of seconds at a time. Switching to a dedicated Gnosis RPC resolved this and kept the indexer at the chain tip. Mainnet has the same characteristic at higher volume — size the RPC for the per-block load, not just for occasional queries.
+
 > **Adding a new chain:** when a chain is added to `ACTIVE_CHAINS` in `src/chains/index.ts`, its RPC URL env var (defined as `rpcEnvVar` in the chain config file) must be added here and to the `ponder` service environment in `docker-compose.yml` under the `deploy` profile.
 
 ### Database
