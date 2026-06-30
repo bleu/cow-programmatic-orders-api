@@ -635,7 +635,10 @@ async function filterAndProcess(
 }
 
 // ─── Per-UID cache helpers ──────────────────────────────────────────────────
-// cow_cache.order_uid_cache is created by setup.ts. Table defined here for typed queries.
+// cow_cache.order_uid_cache is created by setup.ts. One per-UID cache of terminal
+// order data, shared by the discrete path (status + executed amounts) and the
+// flash-loan path (kind/receiver/intended + executed amounts). The flash-loan
+// columns are nullable; the two UID populations are disjoint.
 const cowCacheSchema = pgSchema("cow_cache");
 const orderUidCache = cowCacheSchema.table("order_uid_cache", {
   chainId: integer("chain_id").notNull(),
@@ -644,20 +647,10 @@ const orderUidCache = cowCacheSchema.table("order_uid_cache", {
   fetchedAt: integer("fetched_at").notNull(),
   executedSellAmount: text("executed_sell_amount"),
   executedBuyAmount: text("executed_buy_amount"),
-});
-
-// cow_cache.flash_loan_order_cache is created by setup.ts. Holds the orderbook
-// enrichment for settled flash-loan orders (always terminal → never stale).
-const flashLoanOrderCache = cowCacheSchema.table("flash_loan_order_cache", {
-  chainId: integer("chain_id").notNull(),
-  orderUid: text("order_uid").notNull(),
-  receiver: text("receiver"),
   kind: text("kind"),
-  sellAmount: text("sell_amount").notNull(),
-  buyAmount: text("buy_amount").notNull(),
-  executedSellAmount: text("executed_sell_amount").notNull(),
-  executedBuyAmount: text("executed_buy_amount").notNull(),
-  fetchedAt: integer("fetched_at").notNull(),
+  receiver: text("receiver"),
+  sellAmount: text("sell_amount"),
+  buyAmount: text("buy_amount"),
 });
 
 /** Read cached flash-loan enrichment for a list of UIDs. */
@@ -676,29 +669,32 @@ async function getCachedFlashLoanEnrichment(
       const batch = uids.slice(i, i + batchSize);
       const rows = await context.db.sql
         .select({
-          orderUid: flashLoanOrderCache.orderUid,
-          receiver: flashLoanOrderCache.receiver,
-          kind: flashLoanOrderCache.kind,
-          sellAmount: flashLoanOrderCache.sellAmount,
-          buyAmount: flashLoanOrderCache.buyAmount,
-          executedSellAmount: flashLoanOrderCache.executedSellAmount,
-          executedBuyAmount: flashLoanOrderCache.executedBuyAmount,
+          orderUid: orderUidCache.orderUid,
+          receiver: orderUidCache.receiver,
+          kind: orderUidCache.kind,
+          sellAmount: orderUidCache.sellAmount,
+          buyAmount: orderUidCache.buyAmount,
+          executedSellAmount: orderUidCache.executedSellAmount,
+          executedBuyAmount: orderUidCache.executedBuyAmount,
         })
-        .from(flashLoanOrderCache)
+        .from(orderUidCache)
         .where(
           and(
-            eq(flashLoanOrderCache.chainId, chainId),
-            inArray(flashLoanOrderCache.orderUid, batch),
+            eq(orderUidCache.chainId, chainId),
+            inArray(orderUidCache.orderUid, batch),
           ),
         );
       for (const row of rows) {
+        // Skip discrete rows that lack enrichment (kind/amounts null). In practice
+        // the UID sets are disjoint, so this only guards against accidental overlap.
+        if (row.kind == null || row.sellAmount == null || row.buyAmount == null) continue;
         result.set(row.orderUid, {
           receiver: row.receiver,
           kind: row.kind as "sell" | "buy",
           sellAmount: row.sellAmount,
           buyAmount: row.buyAmount,
-          executedSellAmount: row.executedSellAmount,
-          executedBuyAmount: row.executedBuyAmount,
+          executedSellAmount: row.executedSellAmount ?? "0",
+          executedBuyAmount: row.executedBuyAmount ?? "0",
         });
       }
     }
@@ -709,7 +705,11 @@ async function getCachedFlashLoanEnrichment(
   return result;
 }
 
-/** Persist flash-loan enrichment (terminal, so cached indefinitely). */
+/**
+ * Persist flash-loan enrichment into the shared cache (terminal, so cached
+ * indefinitely). status is set to "fulfilled" to satisfy the shared NOT NULL
+ * column — flash-loan orders are settled by definition.
+ */
 async function cacheFlashLoanEnrichment(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   context: any,
@@ -720,11 +720,12 @@ async function cacheFlashLoanEnrichment(
   const now = Math.floor(Date.now() / 1000);
   try {
     await context.db.sql
-      .insert(flashLoanOrderCache)
+      .insert(orderUidCache)
       .values(
         entries.map(({ uid, enrichment }) => ({
           chainId,
           orderUid: uid,
+          status: "fulfilled",
           receiver: enrichment.receiver,
           kind: enrichment.kind,
           sellAmount: enrichment.sellAmount,
