@@ -21,7 +21,7 @@ export const sepolia: ChainConfig = {
     startBlock: 8784028, // verified: tx 0x4d42972f24fa0846523513e7733b1d2238d0a709c3e4a2cd415cc64885bd1762
   },
   gpv2Settlement: null, // TODO: enable once flash-loan infra is confirmed on Sepolia
-  flashLoan: null, // TODO: confirm router + adapter factory on Sepolia
+  flashLoan: null, // TODO: set { aaveV3: { router, adapterFactory } } once flash-loan infra is confirmed on Sepolia
   orderbookApiPath: "sepolia",
   orderbookPollInterval: 20 * blockTime,
 };

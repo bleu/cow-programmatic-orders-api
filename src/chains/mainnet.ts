@@ -25,8 +25,10 @@ export const mainnet: ChainConfig = {
     startBlock: 23812751, // AaveV3AdapterFactory deployment block (Nov 16, 2025)
   },
   flashLoan: {
-    router: "0x9da8B48441583a2b93e2eF8213aAD0EC0b392C69",
-    adapterFactory: "0xdeCc46a4b09162f5369c5c80383aaa9159bcf192",
+    aaveV3: {
+      router: "0x9da8B48441583a2b93e2eF8213aAD0EC0b392C69",
+      adapterFactory: "0xdeCc46a4b09162f5369c5c80383aaa9159bcf192",
+    },
   },
   orderbookApiPath: "mainnet",
   orderbookPollInterval: 240, // ~20 blocks at 12s/block (prior global cadence)

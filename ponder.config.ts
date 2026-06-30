@@ -68,7 +68,9 @@ export default createConfig({
             startBlock: c.gpv2Settlement!.startBlock,
             filter: {
               event: "Settlement" as const,
-              args: { solver: c.flashLoan!.router },
+              // Aave V3 is the only flash-loan provider wired today; add other
+              // providers' routers here (as an array) when they're supported.
+              args: { solver: c.flashLoan!.aaveV3.router },
             },
           },
         ]),

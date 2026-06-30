@@ -21,7 +21,7 @@ export const lens: ChainConfig = {
     startBlock: 3519249, // verified: tx 0x53df62bc122ecb5bfa9770776bb54b3a81e5f7238e4b02c52ac7000eb36c86bd
   },
   gpv2Settlement: null, // TODO: enable once flash-loan infra is confirmed on Lens
-  flashLoan: null, // TODO: confirm router + adapter factory on Lens
+  flashLoan: null, // TODO: set { aaveV3: { router, adapterFactory } } once flash-loan infra is confirmed on Lens
   orderbookApiPath: "lens", // NOTE: api.cow.fi/lens returns 404 — orderbook not live for Lens yet
   orderbookPollInterval: 20 * blockTime,
 };

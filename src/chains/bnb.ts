@@ -25,8 +25,10 @@ export const bnb: ChainConfig = {
     startBlock: 68412820, // AaveV3AdapterFactory deployment block on BNB
   },
   flashLoan: {
-    router: "0x9da8B48441583a2b93e2eF8213aAD0EC0b392C69", // verified: ROUTER() on BNB AaveV3AdapterFactory
-    adapterFactory: "0xdeCC46a4b09162F5369c5C80383AAa9159bCf192", // CREATE2 — same across chains
+    aaveV3: {
+      router: "0x9da8B48441583a2b93e2eF8213aAD0EC0b392C69", // verified: ROUTER() on BNB AaveV3AdapterFactory
+      adapterFactory: "0xdeCC46a4b09162F5369c5C80383AAa9159bCf192", // CREATE2 — same across chains
+    },
   },
   orderbookApiPath: "bnb", // TODO: verify CoW Protocol orderbook URL for BNB
   orderbookPollInterval: 60, // ~20 blocks at 3s/block (prior global cadence)

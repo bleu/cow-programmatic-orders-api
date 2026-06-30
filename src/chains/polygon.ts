@@ -25,8 +25,10 @@ export const polygon: ChainConfig = {
     startBlock: 79103055, // AaveV3AdapterFactory deployment block on Polygon
   },
   flashLoan: {
-    router: "0x9da8B48441583a2b93e2eF8213aAD0EC0b392C69", // verified: ROUTER() on Polygon AaveV3AdapterFactory
-    adapterFactory: "0xdeCC46a4b09162F5369c5C80383AAa9159bCf192", // CREATE2 — same across chains
+    aaveV3: {
+      router: "0x9da8B48441583a2b93e2eF8213aAD0EC0b392C69", // verified: ROUTER() on Polygon AaveV3AdapterFactory
+      adapterFactory: "0xdeCC46a4b09162F5369c5C80383AAa9159bCf192", // CREATE2 — same across chains
+    },
   },
   orderbookApiPath: "polygon", // TODO: verify CoW Protocol orderbook URL for Polygon
   orderbookPollInterval: 40, // ~20 blocks at 2s/block (prior global cadence)

@@ -10,6 +10,19 @@ import { SupportedChainId } from "@cowprotocol/cow-sdk";
  *      (src/chains/index.ts) — a full ChainConfig, or `null` to skip.
  *   3. Adding it to ACTIVE_CHAINS to actually index it.
  */
+
+/**
+ * One flash-loan provider's on-chain infrastructure on a given chain.
+ *  - `router`: the provider's FlashLoanRouter — settles flash-loan orders; used
+ *    to filter GPv2Settlement:Settlement events by solver.
+ *  - `adapterFactory`: the provider's adapter factory — used for view calls to
+ *    detect flash-loan adapter accounts (not a Ponder-indexed contract).
+ */
+export interface FlashLoanProvider {
+  router: `0x${string}`;
+  adapterFactory: `0x${string}`;
+}
+
 export interface ChainConfig {
   /** Ponder chain key (e.g. "mainnet", "gnosis"). Must match ponder chain names. */
   name: string;
@@ -42,13 +55,14 @@ export interface ChainConfig {
 
   /**
    * Flash-loan infrastructure for this chain — null if none is deployed.
-   *  - `router`: FlashLoanRouter address — used to filter GPv2Settlement:Settlement events.
-   *  - `adapterFactory`: flash-loan adapter factory — used for view calls (not indexed).
    *
-   * Grouped (rather than two independent nullable fields) so the router and factory
-   * cannot drift out of sync — a chain has flash-loan infra or it doesn't.
+   * Keyed by provider so other flash-loan kinds (each with its own router and
+   * adapter factory) can be added as new keys without disturbing existing ones.
+   * The addresses today are Aave-V3-specific, and the settlement indexer
+   * currently only detects the `aaveV3` provider — add a key here (and wire it
+   * in src/data.ts / settlement handler) when another provider is supported.
    */
-  flashLoan: { router: `0x${string}`; adapterFactory: `0x${string}` } | null;
+  flashLoan: { aaveV3: FlashLoanProvider } | null;
 
   /**
    * CoW Protocol Orderbook API path for this chain (the part after https://api.cow.fi/).

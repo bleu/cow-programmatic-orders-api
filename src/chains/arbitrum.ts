@@ -25,8 +25,10 @@ export const arbitrum: ChainConfig = {
     startBlock: 400913741, // AaveV3AdapterFactory deployment block on Arbitrum
   },
   flashLoan: {
-    router: "0x9da8B48441583a2b93e2eF8213aAD0EC0b392C69", // verified: ROUTER() on Arbitrum AaveV3AdapterFactory
-    adapterFactory: "0xdeCC46a4b09162F5369c5C80383AAa9159bCf192", // CREATE2 — same across chains
+    aaveV3: {
+      router: "0x9da8B48441583a2b93e2eF8213aAD0EC0b392C69", // verified: ROUTER() on Arbitrum AaveV3AdapterFactory
+      adapterFactory: "0xdeCC46a4b09162F5369c5C80383AAa9159bCf192", // CREATE2 — same across chains
+    },
   },
   orderbookApiPath: "arbitrum_one",
   orderbookPollInterval: 20, // ~20 blocks at 1s/block (prior global cadence)

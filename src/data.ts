@@ -62,15 +62,16 @@ export const ORDERBOOK_API_URLS: Record<number, string> = Object.fromEntries(
 );
 
 /**
- * Flash-loan adapter factory addresses keyed by chain name.
- * Derived from ACTIVE_CHAINS — only chains with flash-loan infra are included.
+ * Aave V3 adapter factory addresses keyed by chain name.
+ * Derived from ACTIVE_CHAINS — only chains with Aave V3 flash-loan infra are included.
  * Used by settlement.ts to resolve per-chain factory addresses at runtime.
+ * (Aave V3 is the only flash-loan provider wired today — see ChainConfig.flashLoan.)
  */
 export const AAVE_V3_ADAPTER_FACTORY_ADDRESSES: Record<string, `0x${string}`> =
   Object.fromEntries(
     ACTIVE_CHAINS
       .filter((c) => c.flashLoan !== null)
-      .map((c) => [c.name, c.flashLoan!.adapterFactory]),
+      .map((c) => [c.name, c.flashLoan!.aaveV3.adapterFactory]),
   );
 
 /**
