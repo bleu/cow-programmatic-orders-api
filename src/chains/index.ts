@@ -9,36 +9,30 @@ import { polygon } from "./polygon";
 import { plasma } from "./plasma";
 import { avalanche } from "./avalanche";
 import { linea } from "./linea";
+import { ink } from "./ink";
+import { lens } from "./lens";
+import { sepolia } from "./sepolia";
 
 /**
  * CHAIN_CONFIGS — the chain registry, keyed by SupportedChainId.
  *
  * `satisfies Record<SupportedChainId, ChainConfig | null>` makes coverage
  * exhaustive: when cow-sdk adds a member to SupportedChainId, `pnpm typecheck`
- * FAILS ("Property … is missing") until a developer adds an entry here that is
- * either a full ChainConfig or `null`.
- *
- * `null` = explicitly skipped. A chain is skipped when it lacks the flash-loan
- * infra (router + AaveV3AdapterFactory) and/or GPv2Settlement deployment that a
- * full ChainConfig now requires (see the constraint note in types.ts). Today
- * that is sepolia, ink, and lens; their verified ComposableCoW/CoWShed
- * deployment data lives in git history and can be restored if they ever gain the
- * infra (or if `flashLoan`/`gpv2Settlement` are reverted to nullable per the
- * note in types.ts).
+ * fails until an entry is added here — a full ChainConfig, or `null` to skip.
  */
 export const CHAIN_CONFIGS = {
   [SupportedChainId.MAINNET]: mainnet,
   [SupportedChainId.BNB]: bnb,
   [SupportedChainId.GNOSIS_CHAIN]: gnosis,
   [SupportedChainId.POLYGON]: polygon,
-  [SupportedChainId.LENS]: null, // no AaveV3AdapterFactory / flash-loan infra; orderbook not live (api.cow.fi/lens 404s)
+  [SupportedChainId.LENS]: lens,
   [SupportedChainId.BASE]: base,
   [SupportedChainId.PLASMA]: plasma,
   [SupportedChainId.ARBITRUM_ONE]: arbitrum,
   [SupportedChainId.AVALANCHE]: avalanche,
-  [SupportedChainId.INK]: null, // no CoWShedFactory and no AaveV3AdapterFactory / flash-loan infra confirmed
+  [SupportedChainId.INK]: ink,
   [SupportedChainId.LINEA]: linea,
-  [SupportedChainId.SEPOLIA]: null, // no AaveV3AdapterFactory / flash-loan infra
+  [SupportedChainId.SEPOLIA]: sepolia,
 } satisfies Record<SupportedChainId, ChainConfig | null>;
 
 /**

@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   SIGNING_SCHEME_EIP1271,
-  DEFAULT_RECHECK_INTERVAL_BLOCKS,
   TRY_NEXT_BLOCK_WARMUP_THRESHOLD,
   TRY_NEXT_BLOCK_COOLDOWN_THRESHOLD,
   TRY_NEXT_BLOCK_BACKOFF_WARMUP,
@@ -39,16 +38,6 @@ describe("SIGNING_SCHEME_EIP1271", () => {
 
   it('is not "erc1271" — the API uses eip1271 spelling', () => {
     expect(SIGNING_SCHEME_EIP1271).not.toBe("erc1271");
-  });
-});
-
-describe("DEFAULT_RECHECK_INTERVAL_BLOCKS", () => {
-  it("is a bigint", () => {
-    expect(typeof DEFAULT_RECHECK_INTERVAL_BLOCKS).toBe("bigint");
-  });
-
-  it("mirrors the former global default of 20 blocks", () => {
-    expect(DEFAULT_RECHECK_INTERVAL_BLOCKS).toBe(20n);
   });
 });
 

@@ -10,15 +10,9 @@ export const GPV2_SETTLEMENT_ADDRESS =
 
 /**
  * Per-chain orderbook recheck cadence, in blocks, keyed by chain ID.
- *
- * Replaces the former global ORDERBOOK_POLL_INTERVAL (a single block count
- * shared across all chains — grant review F17). Derived from each chain's
- * ChainConfig.orderbookPollInterval (seconds) and blockTime:
+ * Derived from each chain's orderbookPollInterval (seconds) and blockTime:
  *   blocks = max(1, round(orderbookPollInterval / blockTime)).
- *
- * Derived from ALL_DEFINED_CHAINS so inactive-but-defined chains are covered too.
- * Partial: lookups are `bigint | undefined`; consumers fall back to
- * DEFAULT_RECHECK_INTERVAL_BLOCKS (src/constants.ts).
+ * Partial: lookups fall back to DEFAULT_RECHECK_INTERVAL_BLOCKS (src/constants.ts).
  */
 export const RECHECK_INTERVAL_BLOCKS_BY_CHAIN_ID: Partial<Record<SupportedChainId, bigint>> =
   Object.fromEntries(
@@ -68,23 +62,25 @@ export const ORDERBOOK_API_URLS: Record<number, string> = Object.fromEntries(
 );
 
 /**
- * AaveV3AdapterFactory addresses keyed by chain name.
- * Derived from ACTIVE_CHAINS — every active chain has flash-loan infra
- * (flashLoan is non-null on a ChainConfig), so no filter is needed.
+ * Flash-loan adapter factory addresses keyed by chain name.
+ * Derived from ACTIVE_CHAINS — only chains with flash-loan infra are included.
  * Used by settlement.ts to resolve per-chain factory addresses at runtime.
  */
 export const AAVE_V3_ADAPTER_FACTORY_ADDRESSES: Record<string, `0x${string}`> =
   Object.fromEntries(
-    ACTIVE_CHAINS.map((c) => [c.name, c.flashLoan.adapterFactory]),
+    ACTIVE_CHAINS
+      .filter((c) => c.flashLoan !== null)
+      .map((c) => [c.name, c.flashLoan!.adapterFactory]),
   );
 
 /**
  * GPv2Settlement deployment info keyed by chain name.
- * Derived from ACTIVE_CHAINS — gpv2Settlement is non-null on a ChainConfig,
- * so no filter is needed.
+ * Derived from ACTIVE_CHAINS — only chains with a non-null gpv2Settlement are included.
  * Used by settlement.ts to resolve the settlement contract address per chain.
  */
 export const GPV2_SETTLEMENT_DEPLOYMENTS: Record<string, { address: `0x${string}`; startBlock: number }> =
   Object.fromEntries(
-    ACTIVE_CHAINS.map((c) => [c.name, c.gpv2Settlement]),
+    ACTIVE_CHAINS
+      .filter((c) => c.gpv2Settlement !== null)
+      .map((c) => [c.name, c.gpv2Settlement!]),
   );

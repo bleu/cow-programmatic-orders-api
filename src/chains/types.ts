@@ -6,17 +6,9 @@ import { SupportedChainId } from "@cowprotocol/cow-sdk";
  *
  * Add a new chain by:
  *   1. Creating src/chains/<name>.ts implementing this interface.
- *   2. Registering it under its SupportedChainId key in the CHAIN_CONFIGS
- *      registry in src/chains/index.ts (a full ChainConfig, or `null` to skip).
- *   3. Adding it to ACTIVE_CHAINS in src/chains/index.ts to actually index it.
- *
- * Flash-loan-required constraint: `flashLoan` and `gpv2Settlement` are non-null,
- * so any chain configured as a full ChainConfig MUST have flash-loan infra
- * (router + adapter factory) and a settlement deployment. A chain lacking that
- * infra (today: sepolia, ink, lens) cannot be a ChainConfig — it must be a `null`
- * entry in CHAIN_CONFIGS. If a future need arises to index an orders-only chain
- * WITHOUT flash-loan infra, revert `flashLoan` (and `gpv2Settlement`) to `| null`
- * and re-add the per-chain settlement gate in ponder.config.ts.
+ *   2. Registering it under its SupportedChainId key in CHAIN_CONFIGS
+ *      (src/chains/index.ts) — a full ChainConfig, or `null` to skip.
+ *   3. Adding it to ACTIVE_CHAINS to actually index it.
  */
 export interface ChainConfig {
   /** Ponder chain key (e.g. "mainnet", "gnosis"). Must match ponder chain names. */
@@ -25,10 +17,7 @@ export interface ChainConfig {
   chainId: SupportedChainId;
   /** Environment variable name holding the RPC URL for this chain. */
   rpcEnvVar: string;
-  /**
-   * Environment variable name holding the WebSocket RPC URL for this chain.
-   * Optional; enables Ponder realtime WS subscriptions, falls back to HTTP polling when unset.
-   */
+  /** Optional WS RPC URL env var — enables Ponder realtime subscriptions; HTTP polling when unset. */
   wsRpcEnvVar?: string;
   /** Approximate block time in seconds — used to estimate block numbers from epoch timestamps. */
   blockTime: number;
@@ -48,22 +37,18 @@ export interface ChainConfig {
     startBlock: number;
   } | null;
 
-  /**
-   * GPv2Settlement deployment. Always indexed on a configured chain
-   * (chains without it are `null` in CHAIN_CONFIGS — see the constraint note above).
-   */
-  gpv2Settlement: { address: `0x${string}`; startBlock: number };
+  /** GPv2Settlement deployment — null if not indexed on this chain. */
+  gpv2Settlement: { address: `0x${string}`; startBlock: number } | null;
 
   /**
-   * Flash-loan infrastructure for this chain. Always present on a configured chain.
+   * Flash-loan infrastructure for this chain — null if none is deployed.
    *  - `router`: FlashLoanRouter address — used to filter GPv2Settlement:Settlement events.
-   *  - `adapterFactory`: AaveV3AdapterFactory address — used for view calls
-   *    (not a Ponder-indexed contract).
+   *  - `adapterFactory`: flash-loan adapter factory — used for view calls (not indexed).
    *
    * Grouped (rather than two independent nullable fields) so the router and factory
    * cannot drift out of sync — a chain has flash-loan infra or it doesn't.
    */
-  flashLoan: { router: `0x${string}`; adapterFactory: `0x${string}` };
+  flashLoan: { router: `0x${string}`; adapterFactory: `0x${string}` } | null;
 
   /**
    * CoW Protocol Orderbook API path for this chain (the part after https://api.cow.fi/).
@@ -73,15 +58,9 @@ export interface ChainConfig {
 
   /**
    * Orderbook recheck cadence for this chain, in **seconds** (wall-clock).
-   *
-   * Replaces the former global ORDERBOOK_POLL_INTERVAL (a single block count
-   * shared across all chains — a scaling smell flagged in grant review F17).
    * Converted to a per-chain block offset at runtime as
-   * `max(1, round(orderbookPollInterval / blockTime))` (see src/data.ts
-   * RECHECK_INTERVAL_BLOCKS_BY_CHAIN_ID).
-   *
-   * Defaults preserve the prior cadence (20 blocks): each chain sets
-   * `20 * blockTime` seconds. Tune per chain as the chain list grows.
+   * `max(1, round(orderbookPollInterval / blockTime))` (see src/data.ts).
+   * Defaults to `20 * blockTime` to preserve the prior 20-block cadence.
    */
   orderbookPollInterval: number;
 }
