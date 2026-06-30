@@ -16,7 +16,7 @@ Currently active chains, their start blocks, and contract addresses are defined 
 
 Stub configs exist for all 12 chains in cow-sdk's `ALL_SUPPORTED_CHAIN_IDS`; contract addresses for the remaining chains need verification before enabling.
 
-`ponder.config.ts` derives all config from `ACTIVE_CHAINS` in `src/chains/index.ts` and wires it into Ponder's `createConfig`. It never contains raw addresses or block numbers directly. It also registers the five live-only block handlers from `blockHandler.ts` (`OrderDiscoveryPoller`, `CandidateConfirmer`, `OrderStatusTracker`, `OwnerBackfill`, `CancellationWatcher`) — all run during live sync only (`startBlock: "latest"`).
+`ponder.config.ts` derives all config from `ACTIVE_CHAINS` in `src/chains/index.ts` and wires it into Ponder's `createConfig`. It never contains raw addresses or block numbers directly. It also registers the live-only block handlers from [`blockHandler.ts`](../src/application/handlers/blockHandler.ts) — all run during live sync only (`startBlock: "latest"`).
 
 
 Three contracts are indexed:
@@ -72,7 +72,7 @@ composableCow.ts handler        cowshed.ts handler             settlement.ts han
 
 ## Schema
 
-Five tables, defined in `schema/tables.ts`. All use composite primary keys with `chainId` as the first column, which is necessary for multi-chain support and prevents collisions between chains.
+The following tables, defined in `schema/tables.ts`. All use composite primary keys with `chainId` as the first column, which is necessary for multi-chain support and prevents collisions between chains.
 
 ### transaction
 
@@ -193,9 +193,9 @@ All block handlers run only during live sync (`startBlock: "latest"`) to avoid h
 All order types supported by the indexer have a dedicated decoder in `src/decoders/` (see that directory for the current list). Two categories exist based on how UIDs are discovered:
 
 - **Deterministic** (`allCandidatesKnown=true`): UIDs are precomputed at order creation time from the params alone, so all candidate UIDs are known immediately. Currently: TWAP, StopLoss, CirclesBackingOrder. Not polled by `OrderDiscoveryPoller`.
-- **Non-deterministic** (`allCandidatesKnown=false`): UIDs depend on runtime state and cannot be precomputed. Currently: PerpetualSwap, GoodAfterTime, TradeAboveThreshold, SwapOrderHandler, ERC4626CowSwapFeeBurner. Polled every block by `OrderDiscoveryPoller`.
+- **Non-deterministic** (`allCandidatesKnown=false`): UIDs depend on runtime state and cannot be precomputed, so they are polled every block by `OrderDiscoveryPoller`. The authoritative set is `NON_DETERMINISTIC_TYPES` in [`blockHandler.ts`](../src/application/handlers/blockHandler.ts) (plus the `Unknown` fallback).
 
-Core handler addresses are identical across all chains; some newer handlers (SwapOrderHandler, ERC4626CowSwapFeeBurner) are per-chain overlays. Both are tracked in `src/utils/order-types.ts`.
+The canonical list of decoded order types is `src/decoders/`; handler addresses (including per-chain overlays for newer handlers) are tracked in `src/utils/order-types.ts`.
 
 When a handler address isn't recognized, the order is stored with type `Unknown` and null decoded params.
 
@@ -236,4 +236,8 @@ See [api-reference.md](./api-reference.md) for the full endpoint list.
 ## Known Limitations
 
 - Cancellation detection has a small lag. For non-deterministic generators, `OrderDiscoveryPoller` catches `SingleOrderNotAuthed` on the next poll (every block). For deterministic generators, `CancellationWatcher` reads `singleOrders(owner, hash)` every `DETERMINISTIC_CANCEL_SWEEP_INTERVAL` blocks (default 100) — so on-chain removal is reflected with worst-case latency of ~100 blocks (~20 min mainnet, ~8 min Gnosis). There is no on-chain event for `remove()`, so shorter detection latency would require a higher-cadence sweep. Once the generator is marked `Cancelled`, `CandidateConfirmer` and `OrderStatusTracker` cascade the state to children on the next block; the `CandidateConfirmer` cascade does a preflight `/by_uids` query so that candidates already on the orderbook get their actual status rather than defaulting to `cancelled`; API-terminal statuses (`fulfilled` / `unfilled` / `expired`) still win for children already promoted to `discrete_order`.
+
+- **Orderbook `/by_uids` vs `/account` inconsistency (residual gap).** The CoW orderbook `POST /api/v1/orders/by_uids` endpoint drops UIDs whose orders have aged out of its active set, while `GET /api/v1/account/{owner}/orders` still returns them. The indexer polls `/by_uids` as its primary path and falls back to `/account/{owner}/orders` before deleting a stale candidate, but the fallback is bounded — `fetchOwnerOrderStatuses` caps pages at `maxPages` (default 3) in `orderbookClient.ts` — so an owner with very long order history may still have a residual gap, and the historical *backfill* precompute path does not use the fallback at all. The durable fix is upstream: CoW services should make `/by_uids` consistent with `/account/{owner}/orders` for terminal statuses. This is owned by the CoW services team and is worth flagging on the CoW forum.
+
+- **Hand-rolled orderbook client.** `orderbookClient.ts` is a hand-rolled transport rather than the cow-sdk `OrderBookApi`. The SDK client offers no per-call `AbortSignal`/timeout (its `backOff` defaults to `numOfAttempts: 10, maxDelay: Infinity`, i.e. effectively unbounded), no `by_uids` batch method, and no custom-fetch seam — all of which are required for bounded I/O inside a per-block DB transaction (the timeout discipline the block handlers depend on). The indexer reuses the SDK's request/response *types* and URL catalog but keeps its own transport so every orderbook call has a hard timeout and bounded retry.
 - Aave adapter owner resolution is reactive — `owner_mapping` is written when the adapter appears in settlement, which may be after the conditional order is created. The generator row keeps `resolvedOwner` equal to the adapter address when no mapping existed at insert time; that column is not backfilled when the mapping is inserted later. `ownerAddressType` on the generator IS backfilled when the mapping is inserted — after which GraphQL and REST filters on `ownerAddressType = "flash_loan_helper"` reflect the correct value. `resolvedOwner` is still not backfilled (set once at insert, unchanged thereafter).

@@ -1,6 +1,6 @@
 # Supported Order Types
 
-The indexer decodes eight programmatic order types from the ComposableCoW contract. Each order is created on-chain as a `ConditionalOrderCreated` event containing a handler address, a salt, and an opaque `staticInput` blob. The handler address determines the order type, and the `staticInput` is ABI-decoded into typed parameters stored in the `decodedParams` JSON field on `conditional_order_generator`.
+The indexer decodes the programmatic order types from the ComposableCoW contract for which it has a dedicated decoder in [`src/decoders/`](../src/decoders/) (the canonical list). Each order is created on-chain as a `ConditionalOrderCreated` event containing a handler address, a salt, and an opaque `staticInput` blob. The handler address determines the order type, and the `staticInput` is ABI-decoded into typed parameters stored in the `decodedParams` JSON field on `conditional_order_generator`.
 
 Most handler addresses are identical across all active chains (CREATE2 deployments — see `src/utils/order-types.ts` for chain-specific overrides). Arbitrum support is planned but handler mappings are not yet registered.
 
