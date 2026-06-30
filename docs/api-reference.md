@@ -30,6 +30,7 @@ High-level map of what's queryable:
 - **`candidateDiscreteOrder`** — unconfirmed discrete orders discovered by the block handler, awaiting confirmation against the orderbook API.
 - **`transaction`** — block and timestamp metadata for indexed transactions.
 - **`ownerMapping`** — proxy/adapter -> EOA mappings. Populated from CoWShed factory events and Aave flash loan adapter detection.
+- **`flashLoanOrder`** — standalone CoW orders settled by an Aave V3 flash-loan adapter (not ComposableCoW conditional orders). Executed-only, recorded from the on-chain `Trade` event at settlement. See [supported-order-types.md](./supported-order-types.md#aave-flash-loan-orders).
 
 For schema details (columns, indexes, relations), see [architecture.md](./architecture.md).
 
@@ -37,11 +38,30 @@ For schema details (columns, indexes, relations), see [architecture.md](./archit
 
 Custom endpoints mounted at `/api`, documented in Swagger UI at `/docs`:
 
-- `GET /api/orders/by-owner/{owner}` — discrete orders for a wallet, with automatic proxy resolution.
+- `GET /api/orders/by-owner/{owner}` — discrete orders for a wallet, with automatic proxy resolution. The response also carries a separate `flashLoanOrders` array (Aave flash-loan orders for the same owner) alongside the unchanged `orders` array — see below.
 - `GET /api/generator/{eventId}/execution-summary` — part-count breakdown by status for a generator.
 - `GET /api/sync-progress` — per-chain historical sync progress (total blocks, processed blocks, percentage, realtime mode flag).
 
 Open `/docs` for request/response shapes and to try them out.
+
+### `GET /api/orders/by-owner/{owner}`
+
+Returns two independent arrays for the wallet:
+
+- `orders` — discrete orders from ComposableCoW conditional-order generators, with proxy resolution (CoWShed, Aave adapters). **Unchanged** by the flash-loan addition.
+- `flashLoanOrders` — Aave flash-loan orders settled by an adapter on behalf of the owner. The `flashLoanOrder` table stores the resolved EOA in `owner`, so these are matched directly (no proxy join). Each entry is executed-only (no `status` — presence means executed; compare `*Intended` vs `executed*` amounts to detect partial fills).
+
+Query-parameter semantics for `flashLoanOrders`:
+
+| Param | Effect on `flashLoanOrders` |
+|---|---|
+| `chainId` | Restricts to that chain (same as for `orders`). |
+| `ownerAddressType=flash_loan_helper` | Included. |
+| `ownerAddressType=cowshed_proxy` | Excluded (empty array) — flash-loan orders are not cowshed orders. |
+| `ownerAddressType` unset | Included. |
+| `status=fulfilled` | Included (flash-loan orders are always executed). |
+| `status=`*(any other value)* | Excluded (empty array). |
+| `status` unset | Included. |
 
 ### `GET /api/sync-progress`
 
@@ -129,6 +149,8 @@ There is one principled exception to "everything as string": `discreteOrder.vali
 | `candidateDiscreteOrder.validTo` | number | yes | Same as `discreteOrder.validTo`. |
 | `candidateDiscreteOrder.creationDate` | string | no | Block timestamp at **OrderDiscoveryPoller** discovery. |
 | `candidateDiscreteOrder.possibleValidAfterTimestamp` | string | yes | TWAP only: `t0 + partIndex*t`. Earliest Unix-seconds time the part can be valid. |
+| `flashLoanOrder.validTo` | number | no | Unix seconds when the order expires. `uint32` decoded from the order UID. |
+| `flashLoanOrder.blockTimestamp` | string | no | Unix seconds of the settlement block. |
 
 ### Timestamp-like values inside `decodedParams`
 

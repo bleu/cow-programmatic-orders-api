@@ -347,6 +347,51 @@ Non-deterministic (`DETERMINISTIC_ORDER_TYPE.ERC4626CowSwapFeeBurner = false`). 
 
 ---
 
+## Aave flash-loan orders
+
+Aave flash-loan orders are **not** ComposableCoW conditional orders. They are standalone CoW orders settled through `GPv2Settlement` by a per-order Aave V3 flash-loan adapter, with no generator or `staticInput`. They live in their own table, **`flashLoanOrder`** (PK `chainId + orderUid`).
+
+Executed-only: a row exists iff the order settled (recorded from the on-chain `Trade` event, never polled), so there is no `status` column. A partial fill is derivable by comparing the intended amounts (`sellAmountIntended` / `buyAmountIntended`) against the executed amounts. Each adapter is a fresh CREATE2 deployment per order, so adapter ↔ order is 1:1 and order creation happens in the same handler branch that writes the `ownerMapping`.
+
+### Field sources
+
+| Source | Fields |
+|---|---|
+| `Trade` event | `orderUid`, `chainId`, `adapter`, `sellToken`, `buyToken`, `executedSellAmount`, `executedBuyAmount`, `feeAmount`, `txHash`, `blockNumber`, `blockTimestamp` |
+| decoded from `orderUid` | `validTo` (trailing `uint32`) |
+| adapter's `owner()` call | `owner` (resolved EOA) — durable on-chain state |
+| orderbook (filled later by enricher) | `receiver`, `kind` (`sell`/`buy`), `sellAmountIntended`, `buyAmountIntended`; refines `executedSellAmount` / `executedBuyAmount` |
+| derived | `source` = `"aave"`; `type` ∈ {`RepayWithCollateral`, `CollateralSwap`, `DebtSwap`}, nullable |
+
+> **Why not `getHookData()`?** The adapter exposes a `getHookData()` struct with all these fields, but it is **wiped in the settlement transaction** — reads after settlement (realtime indexing, reorg replay, any re-read) return zeros, and `kind` is never set even on a fresh read. So the order fields are sourced from the stable CoW orderbook instead; `flashLoanAmount` / `flashLoanFeeAmount` (Aave-specific, not on the orderbook) are not indexed.
+
+### Type detection (EIP-1167, no extra RPC)
+
+Adapters are EIP-1167 minimal proxies, so the `getCode` result already fetched yields the implementation address (bytes `[10:30]`), which maps to `type`:
+
+| Implementation | `type` |
+|---|---|
+| `0xac27f3f86e78b14721d07c4f9ce999285f9aaa06` | `RepayWithCollateral` |
+| `0x029d584e847373b6373b01dfad1a0c9bfb916382` | `CollateralSwap` |
+| `0x73e7af13ef172f13d8fefebfd90c7a6530096344` | `DebtSwap` |
+
+`type` is left `null` when the bytecode is not a recognised clone.
+
+### Recording and enrichment
+
+At settlement the handler records the order with only durable data — the `Trade` fields, `validTo` from the `orderUid`, `type` from the adapter bytecode, and the EOA from the adapter's `owner()` call (which also writes the `ownerMapping`). The orderbook fields (`receiver`, `kind`, intended amounts) start `null` and `enrichedAt` is `null`. The insert is idempotent (`onConflictDoNothing`).
+
+Two live-only block handlers then fill those fields from the CoW orderbook by `orderUid` (enrichment never runs in the historical path):
+
+- **`FlashLoanOrderBackfiller`** fires once at go-live (like `OwnerBackfill`) and bulk-drains the entire historical backlog in bounded slices — so the deploy's incomplete-data window after promotion is ~one firing, not hours.
+- **`FlashLoanOrderEnricher`** runs every block for orders that settle during live sync, plus any stragglers.
+
+Both are cache-first (`cow_cache.order_uid_cache`, the shared per-UID cache, which survives reindex), so a schema-hash change does not re-hit the orderbook for historical orders. UIDs not on the API yet are retried up to `MAX_FLASH_LOAN_ENRICHMENT_ATTEMPTS`; `enrichedAt` is set once enrichment succeeds. Until then a row is fully usable for its on-chain fields and queryable by `adapter`/`orderUid`/`owner`, just with the orderbook fields `null`.
+
+### Exposure
+
+Auto-exposed as the `flashLoanOrders` GraphQL field, and folded into `GET /api/orders/by-owner/{owner}` as a separate `flashLoanOrders` array (the existing `orders` array is unchanged). See [api-reference.md](./api-reference.md#get-apiordersby-ownerowner) for REST filter semantics.
+
 ## Decode failures
 
 When `staticInput` cannot be decoded for a known order type, the indexer stores `decodedParams: null` and sets `decodeError` to `"invalid_static_input"`. This happens when the on-chain data doesn't match the expected ABI layout -- corrupted calldata, a different handler version, or a handler address collision with a non-standard contract.

@@ -117,6 +117,27 @@ export default createConfig({
       ),
       interval: 1,
     },
+    // FlashLoanOrderBackfiller — one-time bulk enrichment of the historical
+    // flash_loan_order backlog. Fires once at go-live (like OwnerBackfill).
+    FlashLoanOrderBackfiller: {
+      chain: Object.fromEntries(
+        ACTIVE_CHAINS.map((c) => [
+          c.name,
+          { startBlock: "latest" as const, endBlock: "latest" as const },
+        ]),
+      ),
+      interval: 1,
+    },
+    // FlashLoanOrderEnricher — per-block enrichment of new live flash_loan_order rows.
+    FlashLoanOrderEnricher: {
+      chain: Object.fromEntries(
+        ACTIVE_CHAINS.map((c) => [
+          c.name,
+          { startBlock: "latest" as const, interval: c.blockTime < 8 ? 10 : 4 },
+        ]),
+      ),
+      interval: 1,
+    },
     // OwnerBackfill — one-time owner fetch for non-deterministic backfill orders.
     OwnerBackfill: {
       chain: Object.fromEntries(

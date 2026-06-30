@@ -43,6 +43,8 @@ import { log } from "./logger";
 interface OrderbookOrder {
   uid: string;
   status: "open" | "fulfilled" | "expired" | "cancelled" | "presignaturePending";
+  kind: "sell" | "buy";
+  receiver: string | null;
   sellAmount: string;
   buyAmount: string;
   feeAmount: string;
@@ -307,6 +309,85 @@ export async function fetchOwnerOrderStatuses(
   return result;
 }
 
+/** CoW-order fields used to enrich a flash-loan order, from the orderbook. */
+export interface FlashLoanEnrichment {
+  receiver: string | null;
+  kind: "sell" | "buy";
+  sellAmount: string;
+  buyAmount: string;
+  executedSellAmount: string;
+  executedBuyAmount: string;
+}
+
+/**
+ * Fetch CoW-order detail for flash-loan order UIDs, cache-first.
+ *
+ * Flash-loan adapters wipe their getHookData() struct in the settlement tx, so
+ * the orderbook is the authoritative source for kind / receiver / intended
+ * amounts. Flash-loan orders are always settled (terminal), so a fetched result
+ * never goes stale — it is cached in cow_cache.order_uid_cache (shared with the
+ * discrete path), which survives reindex, so a schema-hash change does not re-hit the orderbook for
+ * historical orders. UIDs absent from both cache and the API body (not yet
+ * indexed, or aged out) are omitted — the caller retries on a later block.
+ */
+export async function fetchFlashLoanEnrichmentByUids(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  context: any,
+  chainId: number,
+  uids: string[],
+): Promise<Map<string, FlashLoanEnrichment>> {
+  const result = new Map<string, FlashLoanEnrichment>();
+  if (uids.length === 0) return result;
+
+  const apiBaseUrl = ORDERBOOK_API_URLS[chainId];
+  if (!apiBaseUrl) return result;
+
+  // Cache first — served from cow_cache across reindexes.
+  const cached = await getCachedFlashLoanEnrichment(context, chainId, uids);
+  const toFetch: string[] = [];
+  for (const uid of uids) {
+    const hit = cached.get(uid);
+    if (hit) result.set(uid, hit);
+    else toFetch.push(uid);
+  }
+  if (toFetch.length === 0) return result;
+
+  let fetched: OrderbookOrder[];
+  try {
+    fetched = await withTimeout(
+      fetchOrdersByUids(apiBaseUrl, toFetch),
+      ORDERBOOK_HTTP_TIMEOUT_MS * 2,
+      "ob:flashLoanByUids",
+    );
+  } catch (err) {
+    if (err instanceof TimeoutError) {
+      log("warn", "ob:flashLoanByUidsTimeout", { chainId, toFetch: toFetch.length, after: ORDERBOOK_HTTP_TIMEOUT_MS * 2 });
+      return result; // cache-only — caller treats missing UIDs as "not on API yet"
+    }
+    throw err;
+  }
+
+  const newlyFetched: { uid: string; enrichment: FlashLoanEnrichment }[] = [];
+  for (const order of fetched) {
+    const enrichment: FlashLoanEnrichment = {
+      receiver: order.receiver ? order.receiver.toLowerCase() : null,
+      kind: order.kind,
+      sellAmount: order.sellAmount,
+      buyAmount: order.buyAmount,
+      executedSellAmount: order.executedSellAmount,
+      executedBuyAmount: order.executedBuyAmount,
+    };
+    result.set(order.uid, enrichment);
+    newlyFetched.push({ uid: order.uid, enrichment });
+  }
+
+  if (newlyFetched.length > 0) {
+    await cacheFlashLoanEnrichment(context, chainId, newlyFetched);
+  }
+
+  return result;
+}
+
 // ─── API calls ───────────────────────────────────────────────────────────────
 
 /**
@@ -554,7 +635,10 @@ async function filterAndProcess(
 }
 
 // ─── Per-UID cache helpers ──────────────────────────────────────────────────
-// cow_cache.order_uid_cache is created by setup.ts. Table defined here for typed queries.
+// cow_cache.order_uid_cache is created by setup.ts. One per-UID cache of terminal
+// order data, shared by the discrete path (status + executed amounts) and the
+// flash-loan path (kind/receiver/intended + executed amounts). The flash-loan
+// columns are nullable; the two UID populations are disjoint.
 const cowCacheSchema = pgSchema("cow_cache");
 const orderUidCache = cowCacheSchema.table("order_uid_cache", {
   chainId: integer("chain_id").notNull(),
@@ -563,7 +647,99 @@ const orderUidCache = cowCacheSchema.table("order_uid_cache", {
   fetchedAt: integer("fetched_at").notNull(),
   executedSellAmount: text("executed_sell_amount"),
   executedBuyAmount: text("executed_buy_amount"),
+  kind: text("kind"),
+  receiver: text("receiver"),
+  sellAmount: text("sell_amount"),
+  buyAmount: text("buy_amount"),
 });
+
+/** Read cached flash-loan enrichment for a list of UIDs. */
+async function getCachedFlashLoanEnrichment(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  context: any,
+  chainId: number,
+  uids: string[],
+): Promise<Map<string, FlashLoanEnrichment>> {
+  const result = new Map<string, FlashLoanEnrichment>();
+  if (uids.length === 0) return result;
+
+  try {
+    const batchSize = 500;
+    for (let i = 0; i < uids.length; i += batchSize) {
+      const batch = uids.slice(i, i + batchSize);
+      const rows = await context.db.sql
+        .select({
+          orderUid: orderUidCache.orderUid,
+          receiver: orderUidCache.receiver,
+          kind: orderUidCache.kind,
+          sellAmount: orderUidCache.sellAmount,
+          buyAmount: orderUidCache.buyAmount,
+          executedSellAmount: orderUidCache.executedSellAmount,
+          executedBuyAmount: orderUidCache.executedBuyAmount,
+        })
+        .from(orderUidCache)
+        .where(
+          and(
+            eq(orderUidCache.chainId, chainId),
+            inArray(orderUidCache.orderUid, batch),
+          ),
+        );
+      for (const row of rows) {
+        // Skip discrete rows that lack enrichment (kind/amounts null). In practice
+        // the UID sets are disjoint, so this only guards against accidental overlap.
+        if (row.kind == null || row.sellAmount == null || row.buyAmount == null) continue;
+        result.set(row.orderUid, {
+          receiver: row.receiver,
+          kind: row.kind as "sell" | "buy",
+          sellAmount: row.sellAmount,
+          buyAmount: row.buyAmount,
+          executedSellAmount: row.executedSellAmount ?? "0",
+          executedBuyAmount: row.executedBuyAmount ?? "0",
+        });
+      }
+    }
+  } catch {
+    // Cache miss on error — will re-fetch from API
+  }
+
+  return result;
+}
+
+/**
+ * Persist flash-loan enrichment into the shared cache (terminal, so cached
+ * indefinitely). status is set to "fulfilled" to satisfy the shared NOT NULL
+ * column — flash-loan orders are settled by definition.
+ */
+async function cacheFlashLoanEnrichment(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  context: any,
+  chainId: number,
+  entries: { uid: string; enrichment: FlashLoanEnrichment }[],
+): Promise<void> {
+  if (entries.length === 0) return;
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    await context.db.sql
+      .insert(orderUidCache)
+      .values(
+        entries.map(({ uid, enrichment }) => ({
+          chainId,
+          orderUid: uid,
+          status: "fulfilled",
+          receiver: enrichment.receiver,
+          kind: enrichment.kind,
+          sellAmount: enrichment.sellAmount,
+          buyAmount: enrichment.buyAmount,
+          executedSellAmount: enrichment.executedSellAmount,
+          executedBuyAmount: enrichment.executedBuyAmount,
+          fetchedAt: now,
+        })),
+      )
+      .onConflictDoNothing();
+  } catch (err) {
+    log("warn", "ob:flashLoanCacheWriteFailed", { chainId, entries: entries.length, err: String(err) });
+  }
+}
 
 /** Cached order data returned by getCachedUidStatuses. */
 interface CachedOrderData {

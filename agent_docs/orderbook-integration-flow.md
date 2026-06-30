@@ -30,7 +30,7 @@ The system has seven components. Each has a single responsibility.
 
 **Writes to**: `discreteOrder` (for UIDs found on API), `candidateDiscreteOrder` (for UIDs not yet on API). Updates `conditionalOrderGenerator.status` to `Completed` if all orders are terminal on API.
 
-### Component OrderDiscoveryPoller (`blockHandler.ts` — handler 1)
+### Component OrderDiscoveryPoller (`block/orderDiscoveryPoller.ts`)
 
 **Responsibility**: Polls `getTradeableOrderWithSignature` on the ComposableCoW contract for **non-deterministic** active generators only. Creates candidate discrete orders when the contract returns success. Manages generator scheduling state (nextCheckBlock, nextCheckTimestamp, status).
 
@@ -46,7 +46,7 @@ The system has seven components. Each has a single responsibility.
 
 **Writes to**: `candidateDiscreteOrder`, updates `conditionalOrderGenerator` scheduling fields.
 
-### Component CandidateConfirmer (`blockHandler.ts` — handler 2)
+### Component CandidateConfirmer (`block/candidateConfirmer.ts`)
 
 **Responsibility**: Checks if candidate discrete orders exist on the Orderbook API. When confirmed, promotes them to `discreteOrder` and deletes the candidate row.
 
@@ -60,7 +60,7 @@ The system has seven components. Each has a single responsibility.
 
 **Writes to**: `discreteOrder`. **Deletes from**: `candidateDiscreteOrder`.
 
-### Component OrderStatusTracker (`blockHandler.ts` — handler 3)
+### Component OrderStatusTracker (`block/orderStatusTracker.ts`)
 
 **Responsibility**: Polls the API for status updates on non-terminal discrete orders. Detects when open orders become fulfilled, expired, or cancelled.
 
@@ -72,7 +72,7 @@ The system has seven components. Each has a single responsibility.
 
 **Writes to**: `discreteOrder`, `cow_cache.order_uid_cache` (caches newly terminal).
 
-### Component OwnerBackfill (`blockHandler.ts` — handler 4)
+### Component OwnerBackfill (`block/ownerBackfill.ts`)
 
 **Responsibility**: One-time discovery of historical discrete orders for non-deterministic generators that were created during backfill. Runs once at the start of live sync (`startBlock = endBlock = "latest"`).
 
@@ -82,6 +82,18 @@ The system has seven components. Each has a single responsibility.
 
 **Writes to**: `discreteOrder`.
 
+### Component FlashLoanOrderBackfiller + FlashLoanOrderEnricher (`block/flashLoanOrderBackfiller.ts`, `block/flashLoanOrderEnricher.ts`)
+
+**Responsibility**: Enrich `flashLoanOrder` rows (recorded by the settlement handler with on-chain data only) with the CoW-order fields the orderbook holds — `kind`, `receiver`, `sellAmountIntended`, `buyAmountIntended`, and authoritative executed amounts. The adapter's `getHookData()` struct is wiped at settlement, so the orderbook is the source of truth.
+
+**Split (mirrors OwnerBackfill + OrderStatusTracker)**:
+- `FlashLoanOrderBackfiller` — one-shot at go-live (`startBlock = endBlock = "latest"`). Bulk-drains the entire historical backlog (`enrichedAt IS NULL`) in bounded sequential slices (`FLASH_LOAN_BACKFILL_SLICE_SIZE`) so the whole drain happens in one firing.
+- `FlashLoanOrderEnricher` — every block. Enriches orders that settle during live sync, plus any stragglers, capped at `MAX_FLASH_LOAN_ORDERS_PER_BLOCK_<chainId>`.
+
+**How it works**: both call one shared routine — fetch the batch via `fetchFlashLoanEnrichmentByUids` (cache-first), upsert orderbook fields + `enrichedAt` on hits, bump `enrichmentAttempts` on misses (up to `MAX_FLASH_LOAN_ENRICHMENT_ATTEMPTS`, then abandoned). Enrichment never runs in the historical path.
+
+**Writes to**: `flashLoanOrder`, `cow_cache.order_uid_cache`.
+
 ### Component D: Orderbook Client (`orderbookClient.ts`)
 
 **Responsibility**: The single interface to the CoW Protocol Orderbook API. All API calls go through this module. It handles fetching, filtering, EIP-1271 signature decoding, generator matching, and per-UID caching.
@@ -89,6 +101,7 @@ The system has seven components. Each has a single responsibility.
 **Public functions**:
 - `fetchComposableOrders(context, chainId, owner)` — full owner fetch, filter, decode, match, cache
 - `fetchOrderStatusByUids(context, chainId, uids)` — batch UID status lookup with cache
+- `fetchFlashLoanEnrichmentByUids(context, chainId, uids)` — batch UID enrichment for flash-loan orders, cache-first
 - `upsertDiscreteOrders(context, chainId, orders)` — write to discreteOrder table
 
 **Writes to**: `discreteOrder`, `cow_cache.order_uid_cache`.
@@ -145,12 +158,14 @@ Orders discovered on-chain (by OrderDiscoveryPoller or UID pre-computation) but 
 
 ### `cow_cache.order_uid_cache`
 
-Per-UID terminal status cache. Survives Ponder resyncs (external `cow_cache` schema).
+Shared per-UID terminal-order cache. Survives Ponder resyncs (external `cow_cache` schema), so a reindex doesn't re-hit the orderbook. Used by both the discrete-order path (status + executed amounts) and the flash-loan path (kind/receiver/intended + executed amounts). The flash-loan columns are nullable; the two UID populations are disjoint, so they never collide.
 
 | Column | Purpose |
 |--------|---------|
 | `chain_id`, `order_uid` | Primary key |
-| `status` | Terminal only: fulfilled, expired, cancelled |
+| `status` | Terminal only: fulfilled, expired, cancelled (flash-loan rows: always `fulfilled`) |
+| `executed_sell_amount`, `executed_buy_amount` | Executed amounts |
+| `kind`, `receiver`, `sell_amount`, `buy_amount` | Flash-loan enrichment fields (null for discrete rows) |
 | `fetched_at` | When it was cached |
 
 ---

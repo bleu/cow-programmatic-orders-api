@@ -2,7 +2,7 @@
  * PollResultErrors parser — converts viem multicall failures into typed PollResult values.
  *
  * ABI definitions have moved to abis/PollResultErrorsAbi.ts (re-exported from here for
- * backward compatibility with blockHandler.ts imports).
+ * backward compatibility with the block handler imports).
  *
  * Reference: composable-cow/src/interfaces/IConditionalOrder.sol
  */

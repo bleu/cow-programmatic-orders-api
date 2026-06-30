@@ -7,12 +7,14 @@ import { conditionalOrderGeneratorDocs } from "./conditional-order-generator";
 import { discreteOrderDocs } from "./discrete-order";
 import { transactionDocs } from "./transaction";
 import { ownerMappingDocs } from "./owner-mapping";
+import { flashLoanOrderDocs } from "./flash-loan-order";
 
 const docs = extendWithBaseDefinitions({
   ...conditionalOrderGeneratorDocs,
   ...discreteOrderDocs,
   ...transactionDocs,
   ...ownerMappingDocs,
+  ...flashLoanOrderDocs,
 });
 
 const _docsMiddleware = createDocumentationMiddleware(docs);
