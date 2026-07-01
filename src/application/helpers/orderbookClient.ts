@@ -19,7 +19,7 @@ import {
   discreteOrder,
 } from "ponder:schema";
 import { and, eq, inArray, sql } from "ponder";
-import { pgSchema, integer, text } from "drizzle-orm/pg-core";
+import { pgSchema, integer, text, bigint } from "drizzle-orm/pg-core";
 import { encodeAbiParameters, keccak256, type Hex } from "viem";
 import { type OrderType } from "../../utils/order-types";
 import { COMPOSABLE_COW_HANDLER_ADDRESSES, ORDERBOOK_API_URLS } from "../../data";
@@ -82,11 +82,18 @@ const BATCH_SIZE = 50;
 
 /**
  * Fetch composable orders for an owner, using per-UID cache for terminal orders.
+ * Incremental drain (COW-1117): Ponder rebuilds the onchain discreteOrder table
+ * from scratch on every schema-hash redeploy, so a naive implementation re-fetches
+ * an owner's entire history each deploy. Instead the full composable-order rows are
+ * kept in the durable cow_cache.composable_order table (survives reindex), and only
+ * the delta newer than MAX(creation_date) is fetched from the orderbook:
  *
- * 1. Full fetch from /account/{owner}/orders, filter to eip1271, match to generators
- * 2. For each composable order: check UID cache — if terminal, use cached status
- * 3. Batch-refresh non-cached/open UIDs via POST /orders/by_uids
- * 4. Cache terminal results
+ * 1. cursor = newest creation_date already cached for this owner (undefined = full drain)
+ * 2. Fetch /account/{owner}/orders newest-first, stopping once older than the cursor
+ * 3. Decode → filter to composable → match to generators, then persist the delta
+ * 4. Rebuild the full owner set from the durable cache (delta + all older rows)
+ * 5. Re-check any still-open cached rows via by_uids so statuses don't go stale
+ * 6. Re-map generator_hash → the current generator eventId (changes each reindex)
  */
 export async function fetchComposableOrders(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -100,62 +107,60 @@ export async function fetchComposableOrders(
     return [];
   }
 
-  log("info", "ob:fetch", { owner, chainId });
-  // Drain the full account history (maxPages=0 = unlimited) at the default
-  // PAGE_LIMIT=1000. Non-deterministic generators (PerpetualSwap etc.) can have
-  // thousands of historical orders; the previous 4×25=100 cap silently dropped
-  // ~99.7% of an active owner's history (COW-1117).
-  const allApiOrders = await fetchAccountOrders(apiBaseUrl, owner, 0, SIGNING_SCHEME_EIP1271);
-  const composable = await filterAndProcess(context, chainId, allApiOrders);
+  // Only fetch orders newer than what we've already durably cached for this owner.
+  const cursor = await readOwnerBackfillCursor(context, chainId, owner);
+  log("info", "ob:fetch", { owner, chainId, since: cursor ?? null });
 
-  if (composable.length === 0) {
-    log("info", "ob:fetchResult", { owner, chainId, apiTotal: allApiOrders.length, composable: 0 });
-    return [];
-  }
+  const deltaApiOrders = await fetchAccountOrders(apiBaseUrl, owner, 0, SIGNING_SCHEME_EIP1271, PAGE_LIMIT, cursor);
+  const delta = await filterAndProcess(context, chainId, deltaApiOrders);
 
-  // Check UID cache for terminal statuses
-  const cachedStatuses = await getCachedUidStatuses(context, chainId, composable.map((o) => o.uid));
+  // Persist the delta (account-endpoint status is the live status) into the durable cache.
+  await upsertComposableCache(context, chainId, owner, delta.map(toCacheRow));
 
-  const toRefresh: string[] = [];
-  const results: ComposableOrder[] = [];
+  // Rebuild the full owner set from the durable cache (delta + everything older).
+  const cachedRows = await readOwnerComposableCache(context, chainId, owner);
 
-  for (const order of composable) {
-    const cached = cachedStatuses.get(order.uid);
-    if (cached && TERMINAL_STATUSES.has(cached.status)) {
-      // Use cached terminal status — skip API refresh
-      results.push({ ...order, status: cached.status as ComposableOrder["status"] });
-    } else {
-      toRefresh.push(order.uid);
-      results.push(order);
-    }
-  }
+  // Re-check any still-open cached rows — long-lived orders that terminated below the
+  // cursor since a prior drain would otherwise keep a stale "open" status forever.
+  const reconciled = await reconcileOpenCachedRows(context, chainId, owner, apiBaseUrl, cachedRows);
 
-  // Batch-refresh non-cached/open UIDs
-  if (toRefresh.length > 0) {
-    const refreshed = await fetchOrdersByUids(apiBaseUrl, toRefresh);
-    const refreshedByUid = new Map(refreshed.map((o) => [o.uid, o]));
+  // The per-deployment generator eventId changes each reindex; re-map by the stable hash.
+  const results = await remapToCurrentGenerators(context, chainId, reconciled);
 
-    for (const result of results) {
-      const fresh = refreshedByUid.get(result.uid);
-      if (fresh && toRefresh.includes(result.uid)) {
-        result.status = fresh.status as ComposableOrder["status"];
-        result.validTo = fresh.validTo;
-        result.executedSellAmount = fresh.executedSellAmount;
-        result.executedBuyAmount = fresh.executedBuyAmount;
-      }
-    }
-
-    // Cache any newly terminal results
-    const newTerminal = results.filter(
-      (o) => toRefresh.includes(o.uid) && TERMINAL_STATUSES.has(o.status),
-    );
-    if (newTerminal.length > 0) {
-      await cacheUidStatuses(context, chainId, newTerminal);
-    }
-  }
-
-  log("info", "ob:fetchResult", { owner, chainId, apiTotal: allApiOrders.length, composable: composable.length, cached: composable.length - toRefresh.length, refreshed: toRefresh.length });
+  log("info", "ob:fetchResult", { owner, chainId, since: cursor ?? null, delta: delta.length, total: results.length });
   return results;
+}
+
+/** Durable-cache row shape for cow_cache.composable_order (owner passed separately). */
+interface ComposableCacheRow {
+  orderUid: string;
+  generatorHash: string;
+  orderType: OrderType;
+  status: string;
+  sellAmount: string;
+  buyAmount: string;
+  feeAmount: string;
+  validTo: number | null;
+  creationDate: bigint;
+  executedSellAmount: string | null;
+  executedBuyAmount: string | null;
+}
+
+/** Project a freshly-decoded ComposableOrder into the durable-cache row shape. */
+function toCacheRow(o: ComposableOrder): ComposableCacheRow {
+  return {
+    orderUid: o.uid,
+    generatorHash: o.generatorHash,
+    orderType: o.orderType,
+    status: o.status,
+    sellAmount: o.sellAmount,
+    buyAmount: o.buyAmount,
+    feeAmount: o.feeAmount,
+    validTo: o.validTo ?? null,
+    creationDate: o.creationDate,
+    executedSellAmount: o.executedSellAmount ?? null,
+    executedBuyAmount: o.executedBuyAmount ?? null,
+  };
 }
 
 /**
@@ -410,6 +415,11 @@ export class OrderbookUnavailableError extends Error {
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Parse an orderbook order's ISO creationDate into Unix seconds. */
+function orderCreationSeconds(order: OrderbookOrder): number {
+  return Math.floor(new Date(order.creationDate).getTime() / 1000);
+}
+
 /** Parse a `Retry-After` header (delta-seconds or HTTP-date) into milliseconds; null if absent/unparseable. */
 function parseRetryAfter(value: string | null): number | null {
   if (!value) return null;
@@ -464,13 +474,20 @@ async function fetchOrderbook(
 /** Fetch orders for an owner with pagination. maxPages limits how many pages are fetched (0 = unlimited).
  *  signingScheme, if provided, is appended as a query param — the API filters server-side when supported,
  *  reducing payload for owners with many ECDSA orders mixed with composable ones.
- *  pageSize overrides the default PAGE_LIMIT per request. */
-async function fetchAccountOrders(
+ *  pageSize overrides the default PAGE_LIMIT per request.
+ *
+ *  sinceCreationDate (Unix seconds), if provided, enables an incremental drain: the
+ *  API returns orders newest-first (creationDate DESC), so once a page contains an
+ *  order strictly older than the cursor, everything beyond it is already known and
+ *  pagination stops. Orders at or after the cursor are kept (the boundary is
+ *  re-included so ties at exactly the cursor second are never dropped). See COW-1117. */
+export async function fetchAccountOrders(
   apiBaseUrl: string,
   owner: Hex,
   maxPages = 0,
   signingScheme?: string,
   pageSize = PAGE_LIMIT,
+  sinceCreationDate?: number,
 ): Promise<OrderbookOrder[]> {
   const allOrders: OrderbookOrder[] = [];
   let offset = 0;
@@ -484,7 +501,16 @@ async function fetchAccountOrders(
     try {
       const response = await fetchOrderbook(url, undefined, "ob:account");
       const page = (await response.json()) as OrderbookOrder[];
-      allOrders.push(...page);
+
+      if (sinceCreationDate !== undefined) {
+        // DESC order → orders at/after the cursor form a prefix of the page.
+        const fresh = page.filter((o) => orderCreationSeconds(o) >= sinceCreationDate);
+        allOrders.push(...fresh);
+        if (fresh.length < page.length) break; // crossed the cursor — older orders already cached
+      } else {
+        allOrders.push(...page);
+      }
+
       pagesFetched++;
       if (page.length < pageSize) break; // last page
       if (maxPages > 0 && pagesFetched >= maxPages) break; // page cap reached
@@ -642,6 +668,25 @@ async function filterAndProcess(
 // flash-loan path (kind/receiver/intended + executed amounts). The flash-loan
 // columns are nullable; the two UID populations are disjoint.
 const cowCacheSchema = pgSchema("cow_cache");
+
+// Durable full composable-order rows (survives reindex). See setup.ts for the DDL.
+const composableOrderCache = cowCacheSchema.table("composable_order", {
+  chainId: integer("chain_id").notNull(),
+  orderUid: text("order_uid").notNull(),
+  owner: text("owner").notNull(),
+  generatorHash: text("generator_hash").notNull(),
+  orderType: text("order_type").notNull(),
+  status: text("status").notNull(),
+  sellAmount: text("sell_amount").notNull(),
+  buyAmount: text("buy_amount").notNull(),
+  feeAmount: text("fee_amount").notNull(),
+  validTo: integer("valid_to"),
+  creationDate: bigint("creation_date", { mode: "bigint" }).notNull(),
+  executedSellAmount: text("executed_sell_amount"),
+  executedBuyAmount: text("executed_buy_amount"),
+  fetchedAt: bigint("fetched_at", { mode: "bigint" }).notNull(),
+});
+
 const orderUidCache = cowCacheSchema.table("order_uid_cache", {
   chainId: integer("chain_id").notNull(),
   orderUid: text("order_uid").notNull(),
@@ -827,4 +872,196 @@ async function cacheUidStatuses(
   } catch {
     // Best-effort cache write
   }
+}
+
+// ─── Durable composable-order cache helpers ───────────────────────────────────
+// cow_cache.composable_order (created in setup.ts) holds full composable-order rows
+// keyed by (chain_id, order_uid), so the backfill drains only the delta newer than
+// MAX(creation_date) per owner instead of the full history on each reindex. See COW-1117.
+
+/** Newest creation_date already cached for this owner (Unix seconds), or undefined
+ *  when nothing is cached — the signal to do a full-history drain. */
+async function readOwnerBackfillCursor(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  context: any,
+  chainId: number,
+  owner: Hex,
+): Promise<number | undefined> {
+  try {
+    const rows = (await context.db.sql
+      .select({ cursor: sql<string | null>`max(${composableOrderCache.creationDate})` })
+      .from(composableOrderCache)
+      .where(
+        and(
+          eq(composableOrderCache.chainId, chainId),
+          eq(composableOrderCache.owner, owner.toLowerCase()),
+        ),
+      )) as { cursor: string | null }[];
+    const raw = rows[0]?.cursor;
+    return raw == null ? undefined : Number(raw);
+  } catch {
+    return undefined; // no cache table / error → full drain
+  }
+}
+
+/** All durably-cached composable rows for an owner. */
+async function readOwnerComposableCache(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  context: any,
+  chainId: number,
+  owner: Hex,
+): Promise<ComposableCacheRow[]> {
+  try {
+    return (await context.db.sql
+      .select({
+        orderUid: composableOrderCache.orderUid,
+        generatorHash: composableOrderCache.generatorHash,
+        orderType: composableOrderCache.orderType,
+        status: composableOrderCache.status,
+        sellAmount: composableOrderCache.sellAmount,
+        buyAmount: composableOrderCache.buyAmount,
+        feeAmount: composableOrderCache.feeAmount,
+        validTo: composableOrderCache.validTo,
+        creationDate: composableOrderCache.creationDate,
+        executedSellAmount: composableOrderCache.executedSellAmount,
+        executedBuyAmount: composableOrderCache.executedBuyAmount,
+      })
+      .from(composableOrderCache)
+      .where(
+        and(
+          eq(composableOrderCache.chainId, chainId),
+          eq(composableOrderCache.owner, owner.toLowerCase()),
+        ),
+      )) as ComposableCacheRow[];
+  } catch {
+    return [];
+  }
+}
+
+/** Upsert durable composable rows; excluded status/validTo/executed overwrite on conflict. */
+async function upsertComposableCache(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  context: any,
+  chainId: number,
+  owner: Hex,
+  rows: ComposableCacheRow[],
+): Promise<void> {
+  if (rows.length === 0) return;
+  const now = BigInt(Math.floor(Date.now() / 1000));
+  try {
+    await context.db.sql
+      .insert(composableOrderCache)
+      .values(rows.map((r) => ({
+        chainId,
+        orderUid: r.orderUid,
+        owner: owner.toLowerCase(),
+        generatorHash: r.generatorHash,
+        orderType: r.orderType,
+        status: r.status,
+        sellAmount: r.sellAmount,
+        buyAmount: r.buyAmount,
+        feeAmount: r.feeAmount,
+        validTo: r.validTo,
+        creationDate: r.creationDate,
+        executedSellAmount: r.executedSellAmount,
+        executedBuyAmount: r.executedBuyAmount,
+        fetchedAt: now,
+      })))
+      .onConflictDoUpdate({
+        target: [composableOrderCache.chainId, composableOrderCache.orderUid],
+        set: {
+          status: sql`excluded.status`,
+          validTo: sql`excluded.valid_to`,
+          executedSellAmount: sql`excluded.executed_sell_amount`,
+          executedBuyAmount: sql`excluded.executed_buy_amount`,
+          fetchedAt: now,
+        },
+      });
+  } catch (err) {
+    log("warn", "ob:composableCacheWriteFailed", { chainId, rows: rows.length, err: String(err) });
+  }
+}
+
+/** Re-check non-terminal cached rows via by_uids; update status/validTo/executed and
+ *  re-persist any that became terminal. Mutates and returns `rows`. */
+async function reconcileOpenCachedRows(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  context: any,
+  chainId: number,
+  owner: Hex,
+  apiBaseUrl: string,
+  rows: ComposableCacheRow[],
+): Promise<ComposableCacheRow[]> {
+  const openUids = rows.filter((r) => !TERMINAL_STATUSES.has(r.status)).map((r) => r.orderUid);
+  if (openUids.length === 0) return rows;
+
+  const refreshed = await fetchOrdersByUids(apiBaseUrl, openUids);
+  if (refreshed.length === 0) return rows;
+  const byUid = new Map(refreshed.map((o) => [o.uid, o]));
+
+  const newlyTerminal: ComposableCacheRow[] = [];
+  for (const row of rows) {
+    const fresh = byUid.get(row.orderUid);
+    if (!fresh) continue;
+    row.status = fresh.status;
+    row.validTo = fresh.validTo;
+    row.executedSellAmount = fresh.executedSellAmount;
+    row.executedBuyAmount = fresh.executedBuyAmount;
+    if (TERMINAL_STATUSES.has(fresh.status)) newlyTerminal.push(row);
+  }
+
+  if (newlyTerminal.length > 0) {
+    await upsertComposableCache(context, chainId, owner, newlyTerminal);
+  }
+  return rows;
+}
+
+/** Map durable rows (keyed by the stable generator_hash) to ComposableOrder with the
+ *  current per-deployment generator eventId. Rows with no current generator are dropped. */
+async function remapToCurrentGenerators(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  context: any,
+  chainId: number,
+  rows: ComposableCacheRow[],
+): Promise<ComposableOrder[]> {
+  if (rows.length === 0) return [];
+  const hashes = [...new Set(rows.map((r) => r.generatorHash))] as Hex[];
+
+  let generators: { eventId: string; hash: string }[];
+  try {
+    generators = (await context.db.sql
+      .select({ eventId: conditionalOrderGenerator.eventId, hash: conditionalOrderGenerator.hash })
+      .from(conditionalOrderGenerator)
+      .where(
+        and(
+          eq(conditionalOrderGenerator.chainId, chainId),
+          inArray(conditionalOrderGenerator.hash, hashes),
+        ),
+      )) as { eventId: string; hash: string }[];
+  } catch {
+    return [];
+  }
+
+  const eventIdByHash = new Map(generators.map((g) => [g.hash, g.eventId]));
+
+  const results: ComposableOrder[] = [];
+  for (const row of rows) {
+    const generatorId = eventIdByHash.get(row.generatorHash);
+    if (!generatorId) continue;
+    results.push({
+      uid: row.orderUid,
+      status: row.status as ComposableOrder["status"],
+      generatorId,
+      generatorHash: row.generatorHash,
+      orderType: row.orderType,
+      sellAmount: row.sellAmount,
+      buyAmount: row.buyAmount,
+      feeAmount: row.feeAmount,
+      validTo: row.validTo,
+      creationDate: row.creationDate,
+      executedSellAmount: row.executedSellAmount,
+      executedBuyAmount: row.executedBuyAmount,
+    });
+  }
+  return results;
 }
