@@ -24,8 +24,6 @@ import { encodeAbiParameters, keccak256, type Hex } from "viem";
 import { type OrderType } from "../../utils/order-types";
 import { COMPOSABLE_COW_HANDLER_ADDRESSES, ORDERBOOK_API_URLS } from "../../data";
 import {
-  BOOTSTRAP_MAX_PAGES,
-  BOOTSTRAP_PAGE_SIZE,
   ORDERBOOK_HTTP_TIMEOUT_MS,
   ORDERBOOK_MAX_RETRIES,
   ORDERBOOK_RETRY_BASE_MS,
@@ -103,7 +101,11 @@ export async function fetchComposableOrders(
   }
 
   log("info", "ob:fetch", { owner, chainId });
-  const allApiOrders = await fetchAccountOrders(apiBaseUrl, owner, BOOTSTRAP_MAX_PAGES, SIGNING_SCHEME_EIP1271, BOOTSTRAP_PAGE_SIZE);
+  // Drain the full account history (maxPages=0 = unlimited) at the default
+  // PAGE_LIMIT=1000. Non-deterministic generators (PerpetualSwap etc.) can have
+  // thousands of historical orders; the previous 4×25=100 cap silently dropped
+  // ~99.7% of an active owner's history (COW-1117).
+  const allApiOrders = await fetchAccountOrders(apiBaseUrl, owner, 0, SIGNING_SCHEME_EIP1271);
   const composable = await filterAndProcess(context, chainId, allApiOrders);
 
   if (composable.length === 0) {

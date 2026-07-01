@@ -19,7 +19,7 @@ vi.mock("ponder", () => ({
 
 import * as data from "../../src/data";
 import { ORDERBOOK_MAX_RETRIES } from "../../src/constants";
-import { fetchFlashLoanEnrichmentByUids, fetchOrderStatusByUids, fetchOwnerOrderStatuses } from "../../src/application/helpers/orderbookClient";
+import { fetchComposableOrders, fetchFlashLoanEnrichmentByUids, fetchOrderStatusByUids, fetchOwnerOrderStatuses } from "../../src/application/helpers/orderbookClient";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -473,6 +473,49 @@ describe("fetchOwnerOrderStatuses", () => {
       expect(firstPath).toContain(`/api/v1/account/${FAKE_OWNER}/orders`);
       expect(firstPath).toContain("limit=1000");
       expect(firstPath).toContain("offset=0");
+    } finally {
+      await close();
+    }
+  });
+});
+
+// ─── fetchComposableOrders full-history drain tests ───────────────────────────
+
+describe("fetchComposableOrders — full-history drain", () => {
+  const DRAIN_OWNER = "0x7592b2cccb62c02f0977dd3ad51137888c272bc1" as Hex;
+
+  it("paginates the full account history at limit=1000, past the old 100-order cap", async () => {
+    const receivedOffsets: number[] = [];
+    const receivedLimits = new Set<string>();
+
+    // 3 pages of the account endpoint: 1000 + 1000 + 500 = 2500 orders,
+    // mimicking a large-history owner. All are non-composable (signature "0x"
+    // decodes to null), so they filter out and no generator lookup is needed —
+    // but fetchAccountOrders still drains every page first.
+    const { url, close } = await startServer((req, res) => {
+      const parsed = new URL(req.url ?? "/", "http://127.0.0.1");
+      const offset = parseInt(parsed.searchParams.get("offset") ?? "0", 10);
+      receivedOffsets.push(offset);
+      receivedLimits.add(parsed.searchParams.get("limit") ?? "");
+
+      const count = offset >= 2000 ? 500 : 1000;
+      const orders = Array.from({ length: count }, (_, i) =>
+        makeOrderStub({ uid: `0xorder${offset + i}`, status: "open" }),
+      );
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(orders));
+    });
+
+    try {
+      await withFakeApi(TEST_CHAIN_ID, url, async () => {
+        await fetchComposableOrders(makeContext(), TEST_CHAIN_ID, DRAIN_OWNER);
+
+        // Old behavior capped at 4 pages × 25 = offsets 0,25,50,75 — never past 100.
+        expect(receivedOffsets).toContain(0);
+        expect(receivedOffsets).toContain(1000);
+        expect(receivedOffsets).toContain(2000);
+        expect(receivedLimits).toEqual(new Set(["1000"]));
+      });
     } finally {
       await close();
     }

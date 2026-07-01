@@ -98,6 +98,7 @@ export const conditionalOrderGenerator = onchainTable(
     lastPollResult: t.text(),
     nextCheckTimestamp: t.bigint(),        // for PollTryAtEpoch — store epoch directly
     consecutiveTryNextBlock: t.integer().notNull().default(0),  // Backoff counter for stuck generators
+    historyBackfilled: t.boolean().notNull().default(false),    // OwnerBackfill has drained this generator's full /account history (COW-1117)
   }),
   (table) => ({
     pk: primaryKey({ columns: [table.chainId, table.eventId] }),
