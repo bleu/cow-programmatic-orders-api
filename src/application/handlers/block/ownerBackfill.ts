@@ -1,6 +1,6 @@
 import { ponder } from "ponder:registry";
-import { bootstrapRetryQueue, conditionalOrderGenerator, discreteOrder } from "ponder:schema";
-import { and, eq, inArray, isNull, ne, or } from "ponder";
+import { bootstrapRetryQueue, conditionalOrderGenerator } from "ponder:schema";
+import { and, eq, inArray } from "ponder";
 import type { Hex } from "viem";
 import { type SupportedChainId } from "../../../data";
 import {
@@ -30,9 +30,11 @@ ponder.on("OwnerBackfill:block", async ({ event, context }) => {
 
   log("info", "OwnerBackfill:START", { block: String(currentBlock), chainId, pendingRetry: queued.length });
 
-  // Find Active non-deterministic generators with no discrete orders.
-  // Skip generators already bootstrapped with 0 orders on a prior run
-  // (marked lastPollResult='bootstrap:noop') to avoid re-fetching every restart.
+  // Find Active non-deterministic generators whose full /account history has not
+  // yet been drained. Eligibility is gated on the dedicated historyBackfilled flag
+  // — NOT on "has zero discrete orders" — so a generator the realtime poller has
+  // already inserted rows for is still backfilled (COW-1117). The flag is set once
+  // per owner after a successful drain, so restarts don't re-fetch.
   const generators = await context.db.sql
     .select({
       generatorId: conditionalOrderGenerator.eventId,
@@ -40,23 +42,12 @@ ponder.on("OwnerBackfill:block", async ({ event, context }) => {
       orderType: conditionalOrderGenerator.orderType,
     })
     .from(conditionalOrderGenerator)
-    .leftJoin(
-      discreteOrder,
-      and(
-        eq(conditionalOrderGenerator.chainId, discreteOrder.chainId),
-        eq(conditionalOrderGenerator.eventId, discreteOrder.conditionalOrderGeneratorId),
-      ),
-    )
     .where(
       and(
         eq(conditionalOrderGenerator.chainId, chainId),
         eq(conditionalOrderGenerator.status, "Active"),
         inArray(conditionalOrderGenerator.orderType, [...NON_DETERMINISTIC_TYPES]),
-        isNull(discreteOrder.orderUid),
-        or(
-          isNull(conditionalOrderGenerator.lastPollResult),
-          ne(conditionalOrderGenerator.lastPollResult, "bootstrap:noop"),
-        ),
+        eq(conditionalOrderGenerator.historyBackfilled, false),
       ),
     ) as {
     generatorId: string;
@@ -64,7 +55,7 @@ ponder.on("OwnerBackfill:block", async ({ event, context }) => {
     orderType: OrderType;
   }[];
 
-  // Build owner → generatorIds map for marking owners as bootstrapped after 0-order fetch
+  // Build owner → generatorIds map for marking each owner's generators backfilled
   const ownerGeneratorIds = new Map<Hex, string[]>();
   for (const gen of generators) {
     const existing = ownerGeneratorIds.get(gen.owner) ?? [];
@@ -97,9 +88,7 @@ ponder.on("OwnerBackfill:block", async ({ event, context }) => {
       await context.db.sql
         .delete(bootstrapRetryQueue)
         .where(and(eq(bootstrapRetryQueue.chainId, chainId), eq(bootstrapRetryQueue.owner, owner as Hex)));
-      if (count === 0) {
-        await markOwnerBootstrapped(context, chainId, owner as Hex, ownerGeneratorIds);
-      }
+      await markOwnerHistoryBackfilled(context, chainId, owner as Hex, ownerGeneratorIds);
     } catch (err) {
       if (err instanceof TimeoutError) {
         log("warn", "OwnerBackfill:owner_retry_timeout", { block: String(currentBlock), chainId, owner, retryCount: retryCount + 1, timeoutMs: BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS });
@@ -134,9 +123,7 @@ ponder.on("OwnerBackfill:block", async ({ event, context }) => {
       );
       const count = await upsertDiscreteOrders(context, chainId, orders);
       totalDiscovered += count;
-      if (count === 0) {
-        await markOwnerBootstrapped(context, chainId, owner, ownerGeneratorIds);
-      }
+      await markOwnerHistoryBackfilled(context, chainId, owner, ownerGeneratorIds);
     } catch (err) {
       if (err instanceof TimeoutError) {
         log("warn", "OwnerBackfill:owner_timeout", { block: String(currentBlock), chainId, owner, timeoutMs: BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS });
@@ -154,7 +141,10 @@ ponder.on("OwnerBackfill:block", async ({ event, context }) => {
 });
 
 
-async function markOwnerBootstrapped(
+// Mark every generator of this owner as history-backfilled so subsequent runs
+// (and restarts) don't re-drain the full /account history. Set once after a
+// successful drain regardless of how many orders were found (0 or thousands).
+async function markOwnerHistoryBackfilled(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   context: any,
   chainId: number,
@@ -165,12 +155,12 @@ async function markOwnerBootstrapped(
   if (genIds.length === 0) return;
   await context.db.sql
     .update(conditionalOrderGenerator)
-    .set({ lastPollResult: "bootstrap:noop" })
+    .set({ historyBackfilled: true })
     .where(
       and(
         eq(conditionalOrderGenerator.chainId, chainId),
         inArray(conditionalOrderGenerator.eventId, genIds),
       ),
     );
-  log("info", "OwnerBackfill:owner_noop", { chainId, owner, generators: genIds.length });
+  log("info", "OwnerBackfill:owner_backfilled", { chainId, owner, generators: genIds.length });
 }

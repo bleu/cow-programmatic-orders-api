@@ -19,7 +19,7 @@ vi.mock("ponder", () => ({
 
 import * as data from "../../src/data";
 import { ORDERBOOK_MAX_RETRIES } from "../../src/constants";
-import { fetchFlashLoanEnrichmentByUids, fetchOrderStatusByUids, fetchOwnerOrderStatuses } from "../../src/application/helpers/orderbookClient";
+import { fetchAccountOrders, fetchComposableOrders, fetchFlashLoanEnrichmentByUids, fetchOrderStatusByUids, fetchOwnerOrderStatuses } from "../../src/application/helpers/orderbookClient";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -473,6 +473,195 @@ describe("fetchOwnerOrderStatuses", () => {
       expect(firstPath).toContain(`/api/v1/account/${FAKE_OWNER}/orders`);
       expect(firstPath).toContain("limit=1000");
       expect(firstPath).toContain("offset=0");
+    } finally {
+      await close();
+    }
+  });
+});
+
+// ─── fetchComposableOrders full-history drain tests ───────────────────────────
+
+describe("fetchComposableOrders — full-history drain", () => {
+  const DRAIN_OWNER = "0x7592b2cccb62c02f0977dd3ad51137888c272bc1" as Hex;
+
+  it("paginates the full account history at limit=1000, past the old 100-order cap", async () => {
+    const receivedOffsets: number[] = [];
+    const receivedLimits = new Set<string>();
+
+    // 3 pages of the account endpoint: 1000 + 1000 + 500 = 2500 orders,
+    // mimicking a large-history owner. All are non-composable (signature "0x"
+    // decodes to null), so they filter out and no generator lookup is needed —
+    // but fetchAccountOrders still drains every page first.
+    const { url, close } = await startServer((req, res) => {
+      const parsed = new URL(req.url ?? "/", "http://127.0.0.1");
+      const offset = parseInt(parsed.searchParams.get("offset") ?? "0", 10);
+      receivedOffsets.push(offset);
+      receivedLimits.add(parsed.searchParams.get("limit") ?? "");
+
+      const count = offset >= 2000 ? 500 : 1000;
+      const orders = Array.from({ length: count }, (_, i) =>
+        makeOrderStub({ uid: `0xorder${offset + i}`, status: "open" }),
+      );
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(orders));
+    });
+
+    try {
+      await withFakeApi(TEST_CHAIN_ID, url, async () => {
+        await fetchComposableOrders(makeContext(), TEST_CHAIN_ID, DRAIN_OWNER);
+
+        // Old behavior capped at 4 pages × 25 = offsets 0,25,50,75 — never past 100.
+        expect(receivedOffsets).toContain(0);
+        expect(receivedOffsets).toContain(1000);
+        expect(receivedOffsets).toContain(2000);
+        expect(receivedLimits).toEqual(new Set(["1000"]));
+      });
+    } finally {
+      await close();
+    }
+  });
+});
+
+// ─── fetchComposableOrders durable-cache rebuild test ─────────────────────────
+
+describe("fetchComposableOrders — rebuild from durable cache", () => {
+  const OWNER = "0x2222222222222222222222222222222222222222" as Hex;
+  const GEN_HASH = `0x${"cc".repeat(32)}`;
+
+  // Simulates a post-reindex deploy: discreteOrder is empty, but cow_cache.composable_order
+  // still holds the owner's history and the orderbook has nothing new past the cursor.
+  function makeIncrementalContext(opts: {
+    cursor: string;
+    cacheRows: Record<string, unknown>[];
+    generators: { eventId: string; hash: string }[];
+  }) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const select = (proj: any) => ({
+      from: () => ({
+        where: async () => {
+          if (proj.cursor !== undefined) return [{ cursor: opts.cursor }];
+          if (proj.eventId !== undefined) return opts.generators;
+          return opts.cacheRows;
+        },
+      }),
+    });
+    return {
+      db: { sql: {
+        select,
+        insert: () => ({ values: () => ({ onConflictDoUpdate: async () => {} }) }),
+      } },
+    };
+  }
+
+  it("returns the cached history re-mapped to the current generator eventId when no new orders exist", async () => {
+    // Orderbook returns nothing newer than the cursor.
+    const { url, close } = await startServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end("[]");
+    });
+
+    const cacheRows = [
+      {
+        orderUid: "0xcached-order",
+        generatorHash: GEN_HASH,
+        orderType: "PerpetualSwap",
+        status: "fulfilled",
+        sellAmount: "1000",
+        buyAmount: "2000",
+        feeAmount: "0",
+        validTo: 9999999999,
+        creationDate: 1700000000n,
+        executedSellAmount: "1000",
+        executedBuyAmount: "2000",
+      },
+    ];
+    const ctx = makeIncrementalContext({
+      cursor: "1700000000",
+      cacheRows,
+      // eventId differs from any prior deployment — the row is keyed by the stable hash.
+      generators: [{ eventId: "gen-current", hash: GEN_HASH }],
+    });
+
+    try {
+      await withFakeApi(TEST_CHAIN_ID, url, async () => {
+        const result = await fetchComposableOrders(ctx, TEST_CHAIN_ID, OWNER);
+        expect(result).toHaveLength(1);
+        expect(result[0]!.uid).toBe("0xcached-order");
+        expect(result[0]!.generatorId).toBe("gen-current");
+        expect(result[0]!.status).toBe("fulfilled");
+      });
+    } finally {
+      await close();
+    }
+  });
+});
+
+// ─── fetchAccountOrders incremental-cursor tests ──────────────────────────────
+
+const toIso = (unixSeconds: number) => new Date(unixSeconds * 1000).toISOString();
+
+describe("fetchAccountOrders — sinceCreationDate early-stop", () => {
+  const OWNER = "0x1111111111111111111111111111111111111111" as Hex;
+
+  it("stops paginating once a page dips below the cursor, keeping only orders at/after it", async () => {
+    // Orders are newest-first (creationDate DESC). cursor=250 means everything at
+    // or after 250 is new; older is already cached and must not be re-fetched.
+    const pages: Record<number, OrderStub[]> = {
+      0: [
+        makeOrderStub({ uid: "0xo1", status: "open", creationDate: toIso(500) }),
+        makeOrderStub({ uid: "0xo2", status: "open", creationDate: toIso(400) }),
+      ],
+      2: [
+        makeOrderStub({ uid: "0xo3", status: "fulfilled", creationDate: toIso(300) }),
+        makeOrderStub({ uid: "0xo4", status: "fulfilled", creationDate: toIso(200) }), // < cursor → stop
+      ],
+      4: [
+        makeOrderStub({ uid: "0xo5", status: "fulfilled", creationDate: toIso(100) }),
+      ],
+    };
+    const receivedOffsets: number[] = [];
+
+    const { url, close } = await startServer((req, res) => {
+      const parsed = new URL(req.url ?? "/", "http://127.0.0.1");
+      const offset = parseInt(parsed.searchParams.get("offset") ?? "0", 10);
+      receivedOffsets.push(offset);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(pages[offset] ?? []));
+    });
+
+    try {
+      await withFakeApi(TEST_CHAIN_ID, url, async () => {
+        const orders = await fetchAccountOrders(url, OWNER, 0, undefined, 2, 250);
+
+        // Never requested offset 4 — pagination stopped after crossing the cursor.
+        expect(receivedOffsets).toEqual([0, 2]);
+        // Kept o1,o2 (whole first page) + o3 (>= cursor); dropped o4 (< cursor).
+        expect(orders.map((o) => o.uid)).toEqual(["0xo1", "0xo2", "0xo3"]);
+      });
+    } finally {
+      await close();
+    }
+  });
+
+  it("drains every page when no cursor is given (full backfill)", async () => {
+    const pages: Record<number, OrderStub[]> = {
+      0: [makeOrderStub({ uid: "0xa", status: "open", creationDate: toIso(500) }), makeOrderStub({ uid: "0xb", status: "open", creationDate: toIso(400) })],
+      2: [makeOrderStub({ uid: "0xc", status: "open", creationDate: toIso(300) })],
+    };
+    const receivedOffsets: number[] = [];
+    const { url, close } = await startServer((req, res) => {
+      const parsed = new URL(req.url ?? "/", "http://127.0.0.1");
+      const offset = parseInt(parsed.searchParams.get("offset") ?? "0", 10);
+      receivedOffsets.push(offset);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(pages[offset] ?? []));
+    });
+    try {
+      await withFakeApi(TEST_CHAIN_ID, url, async () => {
+        const orders = await fetchAccountOrders(url, OWNER, 0, undefined, 2);
+        expect(receivedOffsets).toEqual([0, 2]);
+        expect(orders.map((o) => o.uid)).toEqual(["0xa", "0xb", "0xc"]);
+      });
     } finally {
       await close();
     }
