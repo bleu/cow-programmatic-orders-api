@@ -109,3 +109,19 @@ export const DETERMINISTIC_ORDER_TYPE: Record<OrderType, boolean> = {
   CowAmmConstantProduct: false,
   Unknown: false,
 };
+
+/** True when discrete orders for this type must be discovered (not precomputed). */
+export function isNonDeterministic(orderType: OrderType): boolean {
+  return !DETERMINISTIC_ORDER_TYPE[orderType];
+}
+
+/**
+ * Non-deterministic order types, derived from DETERMINISTIC_ORDER_TYPE so the set is
+ * exhaustive and never drifts from the canonical classification. These are the types
+ * whose discrete-order UIDs can't be precomputed at creation, so their historical
+ * orders are discovered by OwnerBackfill and gate readiness. Used for the
+ * historyBackfilled creation-time flag and OwnerBackfill's eligibility query.
+ */
+export const NON_DETERMINISTIC_TYPES: readonly OrderType[] = (
+  Object.keys(DETERMINISTIC_ORDER_TYPE) as OrderType[]
+).filter((t) => !DETERMINISTIC_ORDER_TYPE[t]);

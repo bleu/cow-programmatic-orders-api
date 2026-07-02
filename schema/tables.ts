@@ -98,6 +98,7 @@ export const conditionalOrderGenerator = onchainTable(
     lastPollResult: t.text(),
     nextCheckTimestamp: t.bigint(),        // for PollTryAtEpoch — store epoch directly
     consecutiveTryNextBlock: t.integer().notNull().default(0),  // Backoff counter for stuck generators
+    historyBackfilled: t.boolean().notNull().default(false),    // OwnerBackfill has drained this generator's full /account history
   }),
   (table) => ({
     pk: primaryKey({ columns: [table.chainId, table.eventId] }),
@@ -112,6 +113,10 @@ export const conditionalOrderGenerator = onchainTable(
     // Covers both handlers — OrderDiscoveryPoller queries allCandidatesKnown=false, CancellationWatcher queries true.
     generatorPollIdx: index("generator_poll_idx")
       .on(table.chainId, table.status, table.allCandidatesKnown, table.lastCheckBlock),
+    // OwnerBackfill eligibility select + /readyz completion count: filter on
+    // (chainId, status, historyBackfilled).
+    historyBackfilledIdx: index("generator_history_backfilled_idx")
+      .on(table.chainId, table.status, table.historyBackfilled),
   })
 );
 
@@ -161,20 +166,6 @@ export const candidateDiscreteOrder = onchainTable(
     // CandidateConfirmer stale sweep: SELECT WHERE chainId + validTo <= timestamp LIMIT 500.
     staleIdx: index("candidate_discrete_order_stale_idx")
       .on(table.chainId, table.validTo),
-  })
-);
-
-export const bootstrapRetryQueue = onchainTable(
-  "bootstrap_retry_queue",
-  (t) => ({
-    owner: t.hex().notNull(),
-    chainId: t.integer().notNull(),
-    firstTimeoutAt: t.bigint().notNull(),   // block number of first timeout
-    retryCount: t.integer().notNull().default(1),
-    lastRetryAt: t.bigint().notNull(),      // block number of most recent attempt
-  }),
-  (table) => ({
-    pk: primaryKey({ columns: [table.chainId, table.owner] }),
   })
 );
 

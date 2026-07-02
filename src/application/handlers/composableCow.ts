@@ -43,7 +43,7 @@ import {
   transaction,
 } from "ponder:schema";
 import { encodeAbiParameters, keccak256, type Hex } from "viem";
-import { getOrderTypeFromHandler, type OrderType } from "../../utils/order-types";
+import { getOrderTypeFromHandler, isNonDeterministic, type OrderType } from "../../utils/order-types";
 import { decodeStaticInput } from "../../decoders/index";
 import { precomputeAndDiscover } from "../helpers/uidPrecompute";
 import { CirclesBackingOrderAbi } from "../../../abis/CirclesBackingOrderAbi";
@@ -103,6 +103,10 @@ async function insertGenerator(
   },
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   context: any,
+  // True when this generator is created during live sync (ComposableCowLive). Live
+  // generators have no pre-creation history and are owned by the realtime poller from
+  // birth, so they never need an OwnerBackfill drain.
+  isLive: boolean,
 ): Promise<{
   ownerAddress: Hex;
   chainId: number;
@@ -221,6 +225,11 @@ async function insertGenerator(
       decodeError,
       txHash: event.transaction.hash,
       nextCheckBlock: event.block.number,
+      // Only non-deterministic generators created during historical backfill need an
+      // OwnerBackfill drain. Deterministic types are fully handled by precompute at
+      // creation, and live-created generators are owned by the realtime poller — both
+      // are "already backfilled" so they don't gate readiness. See ownerBackfill.ts.
+      historyBackfilled: isLive || !isNonDeterministic(orderType),
     })
     .onConflictDoNothing();
 
@@ -232,7 +241,7 @@ async function insertGenerator(
 ponder.on(
   "ComposableCow:ConditionalOrderCreated",
   async ({ event, context }) => {
-    const { ownerAddress, chainId, decodedParams, orderType } = await insertGenerator(event, context);
+    const { ownerAddress, chainId, decodedParams, orderType } = await insertGenerator(event, context, false);
 
     // Pre-compute UIDs for deterministic order types (TWAP, StopLoss, CirclesBackingOrder).
     // Fetches status from API by UID, upserts discrete orders, and
@@ -250,7 +259,7 @@ ponder.on(
 ponder.on(
   "ComposableCowLive:ConditionalOrderCreated",
   async ({ event, context }) => {
-    const { ownerAddress, chainId, decodedParams, orderType } = await insertGenerator(event, context);
+    const { ownerAddress, chainId, decodedParams, orderType } = await insertGenerator(event, context, true);
 
     await precomputeAndDiscover(
       context, chainId, event.id, ownerAddress, orderType, decodedParams, event.block.timestamp,

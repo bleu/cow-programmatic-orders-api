@@ -94,33 +94,19 @@ export const SETTLEMENT_INNER_RPC_TIMEOUT_MS = 5_000;
 
 /**
  * Hard wall-clock cap for the whole per-owner bootstrap fetch in OwnerBackfill
- * (account pagination + by_uids refresh). Owners that exceed this are skipped;
- * the normal OrderDiscoveryPoller / CandidateConfirmer path picks them up on subsequent blocks.
+ * (account pagination + by_uids refresh). An owner that exceeds this is left
+ * eligible (historyBackfilled stays false) and retried on a later OwnerBackfill block.
  */
 export const BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS = 30_000;
 
 /**
- * Page size used by fetchComposableOrders when calling /account/{owner}/orders.
- * Small pages (25 orders) keep each HTTP response tiny and fast, avoiding the
- * per-page ORDERBOOK_HTTP_TIMEOUT_MS budget even for the largest owners.
- * The regular fetchAccountOrders callers use PAGE_LIMIT=1000.
+ * Per-block ceiling on how many distinct owners OwnerBackfill drains in a single
+ * firing. Bounds the transaction size and the per-block orderbook request rate so
+ * the historical drain spreads across live-sync blocks instead of one burst.
+ *
+ * Override per chain with env var MAX_OWNERS_BACKFILL_PER_BLOCK_<chainId>.
  */
-export const BOOTSTRAP_PAGE_SIZE = 25;
-
-/**
- * Maximum pages fetched from /account/{owner}/orders in fetchComposableOrders.
- * At BOOTSTRAP_PAGE_SIZE=25 this caps the fetch at 100 orders per owner —
- * sufficient for any realistic composable-order history since orders are returned
- * newest-first and composable orders are typically recent.
- */
-export const BOOTSTRAP_MAX_PAGES = 4;
-
-/**
- * Maximum number of times OwnerBackfill will retry a timed-out owner across
- * indexer restarts. After this many consecutive failures the owner is removed
- * from bootstrap_retry_queue and left to the normal OrderDiscoveryPoller/CandidateConfirmer discovery path.
- */
-export const BOOTSTRAP_MAX_RETRY_COUNT = 5;
+export const DEFAULT_MAX_OWNERS_BACKFILL_PER_BLOCK = 25;
 
 /**
  * Maximum number of TWAP parts that precomputeOrderUids will attempt to enumerate.

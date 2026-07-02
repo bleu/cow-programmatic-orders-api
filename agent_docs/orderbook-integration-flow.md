@@ -74,13 +74,21 @@ The system has seven components. Each has a single responsibility.
 
 ### Component OwnerBackfill (`block/ownerBackfill.ts`)
 
-**Responsibility**: One-time discovery of historical discrete orders for non-deterministic generators that were created during backfill. Runs once at the start of live sync (`startBlock = endBlock = "latest"`).
+**Responsibility**: Discovery of historical discrete orders for non-deterministic generators (the realtime poller only ever returns the *current* tradeable order, never past fulfilled/expired ones). Bounded batch per firing so the work spreads across blocks instead of one burst.
 
-**How it works**: Finds all generators with `status = 'Active'` and no `discreteOrder` rows and non-deterministic `orderType`. For each unique owner, calls `fetchComposableOrders(owner)` from the Orderbook Client, which fetches all orders by owner, filters to composable, and upserts into `discreteOrder`.
+**Two registrations, one drain**:
+- **OwnerBackfill (historical)** — `startBlock` = ComposableCow start block, `endBlock: "latest"`, coarse interval. Runs *during* the event backfill, so the orderbook drain overlaps historical sync and is largely done by the time Ponder reaches the tip. Orders an owner creates after its drain are at blocks ahead of `"latest"` and get discovered by the realtime catch-up (poller → confirmer → status tracker) as Ponder processes those blocks — so draining early loses nothing.
+- **OwnerBackfillLive** — `startBlock: "latest"`, fine interval. Mops up owners created late in the backfill or not finished before the tip.
 
-**Why it exists**: Non-deterministic generators created during backfill have no discrete orders because UID pre-computation doesn't work for them and the contract poller only runs at live sync. This one-time bootstrap fills the gap. After running once, it has no further work to do.
+**How it works**: Each firing selects up to `MAX_OWNERS_BACKFILL_PER_BLOCK_<chainId>` (default 25) distinct owners with `status = 'Active'`, non-deterministic `orderType`, and `historyBackfilled = false`. For each, it calls `fetchComposableOrders(owner)` (which drains the owner's history incrementally — see below), upserts into `discreteOrder`, and sets `historyBackfilled = true` on that owner's generators **only if the drain completed in full**. A partial drain (rate limit / timeout) leaves the owner eligible → retried on a later block. No retry queue — the flag *is* the queue.
 
-**Writes to**: `discreteOrder`.
+Eligibility is gated on the dedicated `conditionalOrderGenerator.historyBackfilled` flag, **not** on "has zero discrete orders". An active generator the realtime `OrderDiscoveryPoller` has already inserted a row for is still backfilled. The flag is set at generator creation (composableCow.ts) for the cases that never need a drain — deterministic types (precompute handles them) and generators created during live sync (owned by the poller from birth) — so the only `false` rows are non-deterministic historical generators.
+
+**Why bounded + repeating**: at production scale there are thousands of non-deterministic generators; draining them all in one firing would exceed the orderbook rate limit and hold one giant transaction. Spreading a bounded batch per block is wall-clock-paced (rate-limit friendly) and keeps transactions small. Promotion readiness is gated on the drain completing (`/readyz`), so a blue-green deploy never promotes a pod with history still filling.
+
+**Cost across deploys**: Ponder rebuilds onchain tables from scratch on every schema-hash redeploy (`historyBackfilled` and `discreteOrder` included), so this handler re-runs each deploy. To avoid re-fetching an owner's entire history every time, the full composable-order rows are kept in the durable `cow_cache.composable_order` table (survives reindex) and only the delta newer than the cached high-water mark is fetched — see the Orderbook Client below.
+
+**Writes to**: `discreteOrder`, `conditionalOrderGenerator` (`historyBackfilled`), `cow_cache.composable_order`.
 
 ### Component FlashLoanOrderBackfiller + FlashLoanOrderEnricher (`block/flashLoanOrderBackfiller.ts`, `block/flashLoanOrderEnricher.ts`)
 
@@ -99,12 +107,15 @@ The system has seven components. Each has a single responsibility.
 **Responsibility**: The single interface to the CoW Protocol Orderbook API. All API calls go through this module. It handles fetching, filtering, EIP-1271 signature decoding, generator matching, and per-UID caching.
 
 **Public functions**:
-- `fetchComposableOrders(context, chainId, owner)` — full owner fetch, filter, decode, match, cache
+- `fetchComposableOrders(context, chainId, owner)` — incremental owner drain (see below), rebuilt from the durable cache
+- `fetchAccountOrders(apiBaseUrl, owner, maxPages?, signingScheme?, pageSize?, sinceCreationDate?)` — paginated `/account/{owner}/orders` fetch; with `sinceCreationDate` it stops once a (newest-first) page dips below the cursor
 - `fetchOrderStatusByUids(context, chainId, uids)` — batch UID status lookup with cache
 - `fetchFlashLoanEnrichmentByUids(context, chainId, uids)` — batch UID enrichment for flash-loan orders, cache-first
 - `upsertDiscreteOrders(context, chainId, orders)` — write to discreteOrder table
 
-**Writes to**: `discreteOrder`, `cow_cache.order_uid_cache`.
+**`fetchComposableOrders` — incremental drain**: rather than re-fetching the whole history each deploy, it reads `MAX(creation_date)` for the owner from `cow_cache.composable_order` as a cursor, fetches only orders newer than it (orders are returned newest-first, so pagination stops at the cursor), persists the delta, then rebuilds the **full** owner set from the durable cache. It re-checks any still-open cached rows via `/orders/by_uids`, and re-maps `generator_hash → the current generator eventId` (the eventId is per-deployment and changes each reindex; the hash is stable). First deploy full-drains; later deploys fetch only the delta.
+
+**Writes to**: `discreteOrder`, `cow_cache.composable_order`, `cow_cache.order_uid_cache`.
 
 ### Component E: API Endpoints (`api/index.ts`)
 
@@ -166,6 +177,20 @@ Shared per-UID terminal-order cache. Survives Ponder resyncs (external `cow_cach
 | `status` | Terminal only: fulfilled, expired, cancelled (flash-loan rows: always `fulfilled`) |
 | `executed_sell_amount`, `executed_buy_amount` | Executed amounts |
 | `kind`, `receiver`, `sell_amount`, `buy_amount` | Flash-loan enrichment fields (null for discrete rows) |
+| `fetched_at` | When it was cached |
+
+### `cow_cache.composable_order`
+
+Durable **full** composable-order rows for the OwnerBackfill incremental drain. Like `order_uid_cache` it lives in the external `cow_cache` schema and survives reindex — but it stores every field needed to rebuild a `discreteOrder` row (not just terminal status), so redeploys fetch only the delta newer than `MAX(creation_date)` per owner instead of the full history. It stores the stable `generator_hash` rather than the per-deployment `eventId`, which `fetchComposableOrders` re-maps to the current generator on read. Created in `setup.ts`.
+
+| Column | Purpose |
+|--------|---------|
+| `chain_id`, `order_uid` | Primary key |
+| `owner` | Indexed (`chain_id`, `owner`) — cursor lookup + per-owner rebuild |
+| `generator_hash` | Stable `keccak256(handler, salt, staticInput)`; re-mapped to the current generator `eventId` on read |
+| `order_type` | Handler-derived order type |
+| `status`, `sell_amount`, `buy_amount`, `fee_amount`, `valid_to`, `executed_sell_amount`, `executed_buy_amount` | Full order fields to rebuild `discreteOrder` |
+| `creation_date` | Orderbook creation timestamp (seconds) — the incremental high-water cursor |
 | `fetched_at` | When it was cached |
 
 ---
@@ -258,32 +283,30 @@ Shared per-UID terminal-order cache. Survives Ponder resyncs (external `cow_cach
 
 4. **Expire by validTo.** Any `discreteOrder` where `status = 'open'` and `validTo <= currentTimestamp` → set to `expired`.
 
-### 3.6 OwnerBackfill — One-Time Discovery
+### 3.6 OwnerBackfill — Historical Discovery (per-block, bounded)
 
-**When**: Once, at `startBlock = endBlock = "latest"`.
+**When**: During the event backfill (historical handler, `startBlock` = ComposableCow start block, coarse interval) and from the tip onward (live handler, `startBlock: "latest"`, fine interval). Both run the same drain.
 
-1. **Find generators with missing orders.** Query `conditionalOrderGenerator` where `status = 'Active'` AND no `discreteOrder` rows exist AND `orderType` is non-deterministic.
+1. **Select a bounded batch.** Up to `MAX_OWNERS_BACKFILL_PER_BLOCK_<chainId>` (default 25) distinct owners with `status = 'Active'` AND non-deterministic `orderType` AND `historyBackfilled = false`, ordered by owner. (Gated on the flag, **not** on "no discreteOrder rows" — so generators the realtime poller already touched are still backfilled.)
 
-2. **Fetch by owner.** For each unique owner, call `fetchComposableOrders(owner)` from the Orderbook Client. This fetches all orders by owner, filters to composable, decodes signatures, matches to generators, and upserts into `discreteOrder`.
+2. **Fetch by owner.** For each, call `fetchComposableOrders(owner)`. This drains the owner's history incrementally (delta since the durable-cache cursor), rebuilds the full set, matches to generators, and upserts into `discreteOrder`. Set `historyBackfilled = true` on that owner's generators **only if the drain returned complete**; otherwise leave it eligible for a later block.
 
-3. **Done.** This handler fires once and has no further work. It fills the gap for PerpetualSwap/GoodAfterTime/TradeAboveThreshold generators created during backfill.
+3. **Repeat.** The next firing takes the next batch (drained owners have dropped out). When no eligible owner remains, the query is a cheap no-op. Readiness (`/readyz`) turns green once the pending count hits 0.
 
 ### 3.7 Orderbook Client — Fetch & Cache Logic
 
 The Orderbook Client is used by all other components. Two main entry points:
 
-**`fetchComposableOrders(context, chainId, owner)`** — Full owner fetch:
+**`fetchComposableOrders(context, chainId, owner)`** — Incremental owner drain:
 
 1. Resolve API URL from `ORDERBOOK_API_URLS[chainId]`
-2. `GET /account/{owner}/orders` (paginated, 1000/page)
-3. Filter: keep `signingScheme = "eip1271"`, skip `presignaturePending`
-4. For each composable order: check `order_uid_cache`
-   - Terminal HIT → use cached status (no API call for this UID)
-   - MISS or OPEN → add to "needs refresh" list
-5. Batch refresh via `POST /orders/by_uids`
-6. Decode EIP-1271 signatures → match to generators by hash → derive partIndex
-7. Cache newly terminal UIDs
-8. Return `ComposableOrder[]`
+2. Read the cursor: `MAX(creation_date)` for this owner from `cow_cache.composable_order` (undefined ⇒ full drain)
+3. `GET /account/{owner}/orders` (paginated, 1000/page, newest-first) fetching only the delta — pagination **stops** once a page dips below the cursor
+4. Filter: keep `signingScheme = "eip1271"`, skip `presignaturePending`; decode EIP-1271 signatures → match to generators by hash
+5. Persist the delta into `cow_cache.composable_order`
+6. Rebuild the **full** owner set from `cow_cache.composable_order` (delta + all older rows)
+7. Re-check any still-open cached rows via `POST /orders/by_uids`; re-persist any that became terminal
+8. Re-map `generator_hash → current generator eventId` (drops rows whose generator no longer exists) and return `ComposableOrder[]`
 
 **`fetchOrderStatusByUids(context, chainId, uids)`** — Batch UID lookup:
 
@@ -386,6 +409,8 @@ The bootstrap discovers orders via `fetchComposableOrders(owner)`, which relies 
 
 **This is correct behavior, not a gap.** All CoW Protocol orders go through the Orderbook API. An order that never reached the API is the same as an order that never existed from the protocol's perspective — it was never submitted to solvers and never had a chance to be settled. The watch-tower is the standard submission path and is operated by the CoW Protocol team.
 
+**History depth:** backfill is gated on the `historyBackfilled` flag (independent of whether the generator already has discrete orders) and drains the owner's full `/account/{owner}/orders` history at 1000/page — so an active owner's entire history is discovered, not just the most recent page. Redeploys stay cheap via the incremental `cow_cache.composable_order` cursor (delta-only fetch).
+
 ---
 
 ## 7. Visual Diagrams (Mermaid)
@@ -400,7 +425,7 @@ flowchart TB
         BH1["Block Handler 1<br/><i>OrderDiscoveryPoller — every block</i>"]
         BH2["Block Handler 2<br/><i>CandidateConfirmer — every block</i>"]
         BH3["Block Handler 3<br/><i>OrderStatusTracker — every block</i>"]
-        BH4["Block Handler 4<br/><i>OwnerBackfill — once at latest</i>"]
+        BH4["Block Handler 4<br/><i>OwnerBackfill — per block (bounded)</i>"]
         GPV["GPv2Settlement<br/><i>flash loans only</i>"]
         CSF["CoWShedFactory"]
     end
@@ -441,7 +466,7 @@ flowchart TB
     BH1 -->|update scheduling| Gen
     BH2 -->|"confirm via API<br/>(POST /orders/by_uids)"| Disc
     BH3 -->|"update status via API<br/>(POST /orders/by_uids)"| Disc
-    BH4 -->|"one-time owner fetch<br/>(GET /account/{owner}/orders)"| Disc
+    BH4 -->|"per-block owner drain<br/>(GET /account/{owner}/orders)"| Disc
 
     CompD --> Disc
     AB --> CompD
@@ -473,7 +498,7 @@ flowchart TD
     Term -->|No| Active["Generator stays Active<br/>OrderStatusTracker tracks open orders"]
 
     Skip --> BackfillQ{"Backfill or<br/>Live sync?"}
-    BackfillQ -->|Backfill| Wait["Wait for OwnerBackfill bootstrap<br/>at live sync start"]
+    BackfillQ -->|Backfill| Wait["Discovered by OwnerBackfill<br/>(runs during backfill, bounded per block)"]
     BackfillQ -->|Live| Poll["OrderDiscoveryPoller<br/>discovers when tradeable"]
 
     style Deactivate fill:#d4edda
@@ -514,9 +539,9 @@ flowchart LR
 
     subgraph OwnerBackfill["OwnerBackfill"]
         direction TB
-        C4Q["Query: Active generators<br/>non-deterministic<br/>no discreteOrder rows"]
-        C4F["API: GET /account/{owner}/orders<br/>per unique owner"]
-        C4U["Upsert discreteOrder<br/>for discovered orders"]
+        C4Q["Query: Active generators<br/>non-deterministic<br/>historyBackfilled = false"]
+        C4F["API: GET /account/{owner}/orders<br/>per unique owner<br/>(delta since cursor)"]
+        C4U["Upsert discreteOrder + composable_order cache<br/>set historyBackfilled = true"]
         C4Q --> C4F --> C4U
     end
 

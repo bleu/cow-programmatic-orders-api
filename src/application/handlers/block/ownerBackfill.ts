@@ -1,160 +1,139 @@
 import { ponder } from "ponder:registry";
-import { bootstrapRetryQueue, conditionalOrderGenerator, discreteOrder } from "ponder:schema";
-import { and, eq, inArray, isNull, ne, or } from "ponder";
+import { conditionalOrderGenerator } from "ponder:schema";
+import { and, eq, inArray } from "ponder";
 import type { Hex } from "viem";
 import { type SupportedChainId } from "../../../data";
 import {
-  BOOTSTRAP_MAX_RETRY_COUNT,
   BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
+  DEFAULT_MAX_OWNERS_BACKFILL_PER_BLOCK,
 } from "../../../constants";
 import { fetchComposableOrders, upsertDiscreteOrders } from "../../helpers/orderbookClient";
 import { TimeoutError, withTimeout } from "../../helpers/withTimeout";
 import { log } from "../../helpers/logger";
-import { type OrderType } from "../../../utils/order-types";
-
-const NON_DETERMINISTIC_TYPES: readonly OrderType[] = ["PerpetualSwap", "GoodAfterTime", "TradeAboveThreshold", "CurveCowSwapBurner", "BalancerCowSwapFeeBurner", "CowAmmConstantProduct", "Unknown"];
+import { NON_DETERMINISTIC_TYPES } from "../../../utils/order-types";
 
 // ─── OwnerBackfill ───────────────────────────────────────────────────────────
-// One-time discovery of historical discrete orders for non-deterministic
-// generators created during backfill. Fires once at startBlock=endBlock="latest".
+// Discovers historical discrete orders for non-deterministic generators (the realtime
+// poller only ever returns the *current* tradeable order, never past ones). Each firing
+// drains a bounded batch of not-yet-backfilled owners, so the work spreads across blocks
+// (rate-limit friendly) and no single transaction holds thousands of owners.
+//
+// Two registrations share this drain:
+//   - OwnerBackfill (historical): startBlock = composableCow start block, coarse interval.
+//     Runs *during* the event backfill so the drain overlaps historical sync and is
+//     largely done by the time Ponder reaches the tip — orders an owner creates after its
+//     drain are at blocks ahead of "latest" and get picked up by the realtime catch-up
+//     (OrderDiscoveryPoller etc.) exactly as any live order would.
+//   - OwnerBackfillLive: startBlock = "latest", fine interval. Mops up owners created late
+//     in the backfill and any that weren't finished before the tip.
+//
+// Readiness is gated on the drain completing (see /readyz), so promotion never ships an
+// indexer with history still missing.
+//
+// Eligibility is the historyBackfilled flag, set at generator creation for the cases
+// that never need a drain (deterministic types, and generators created live) — see
+// composableCow.ts. So the only false rows are non-deterministic historical generators,
+// which this handler flips to true once their owner is fully drained.
 
-ponder.on("OwnerBackfill:block", async ({ event, context }) => {
+function resolveOwnerCap(chainId: number): number {
+  const raw = Number(process.env[`MAX_OWNERS_BACKFILL_PER_BLOCK_${chainId}`]);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAX_OWNERS_BACKFILL_PER_BLOCK;
+}
+
+// Shared drain — registered for both the historical and live block handlers below.
+async function drainOwnerBatch(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  event: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  context: any,
+  phase: "historical" | "live",
+): Promise<void> {
   const chainId = context.chain.id as SupportedChainId;
   const currentBlock = event.block.number;
+  const cap = resolveOwnerCap(chainId);
 
-  // Drain the retry queue first — owners that timed out in a previous run
-  const queued = await context.db.sql
-    .select({ owner: bootstrapRetryQueue.owner, retryCount: bootstrapRetryQueue.retryCount })
-    .from(bootstrapRetryQueue)
-    .where(eq(bootstrapRetryQueue.chainId, chainId));
+  const eligibleWhere = and(
+    eq(conditionalOrderGenerator.chainId, chainId),
+    eq(conditionalOrderGenerator.status, "Active"),
+    inArray(conditionalOrderGenerator.orderType, [...NON_DETERMINISTIC_TYPES]),
+    eq(conditionalOrderGenerator.historyBackfilled, false),
+  );
 
-  log("info", "OwnerBackfill:START", { block: String(currentBlock), chainId, pendingRetry: queued.length });
+  // Take up to `cap` distinct owners this block; ordering by owner keeps progress
+  // deterministic and lets already-drained owners fall out of the set.
+  const ownerRows = (await context.db.sql
+    .selectDistinct({ owner: conditionalOrderGenerator.owner })
+    .from(conditionalOrderGenerator)
+    .where(eligibleWhere)
+    .orderBy(conditionalOrderGenerator.owner)
+    .limit(cap)) as { owner: Hex }[];
 
-  // Find Active non-deterministic generators with no discrete orders.
-  // Skip generators already bootstrapped with 0 orders on a prior run
-  // (marked lastPollResult='bootstrap:noop') to avoid re-fetching every restart.
-  const generators = await context.db.sql
+  if (ownerRows.length === 0) return; // nothing pending — cheap no-op every block
+
+  const owners = ownerRows.map((r) => r.owner);
+
+  // Generator ids for the selected owners, to flip historyBackfilled after a clean drain.
+  const genRows = (await context.db.sql
     .select({
       generatorId: conditionalOrderGenerator.eventId,
       owner: conditionalOrderGenerator.owner,
-      orderType: conditionalOrderGenerator.orderType,
     })
     .from(conditionalOrderGenerator)
-    .leftJoin(
-      discreteOrder,
-      and(
-        eq(conditionalOrderGenerator.chainId, discreteOrder.chainId),
-        eq(conditionalOrderGenerator.eventId, discreteOrder.conditionalOrderGeneratorId),
-      ),
-    )
-    .where(
-      and(
-        eq(conditionalOrderGenerator.chainId, chainId),
-        eq(conditionalOrderGenerator.status, "Active"),
-        inArray(conditionalOrderGenerator.orderType, [...NON_DETERMINISTIC_TYPES]),
-        isNull(discreteOrder.orderUid),
-        or(
-          isNull(conditionalOrderGenerator.lastPollResult),
-          ne(conditionalOrderGenerator.lastPollResult, "bootstrap:noop"),
-        ),
-      ),
-    ) as {
+    .where(and(eligibleWhere, inArray(conditionalOrderGenerator.owner, owners)))) as {
     generatorId: string;
     owner: Hex;
-    orderType: OrderType;
   }[];
 
-  // Build owner → generatorIds map for marking owners as bootstrapped after 0-order fetch
   const ownerGeneratorIds = new Map<Hex, string[]>();
-  for (const gen of generators) {
-    const existing = ownerGeneratorIds.get(gen.owner) ?? [];
-    existing.push(gen.generatorId);
-    ownerGeneratorIds.set(gen.owner, existing);
+  for (const row of genRows) {
+    const existing = ownerGeneratorIds.get(row.owner) ?? [];
+    existing.push(row.generatorId);
+    ownerGeneratorIds.set(row.owner, existing);
   }
 
-  let totalDiscovered = 0;
-  const retriedOwners = new Set<Hex>();
+  log("info", "OwnerBackfill:START", { block: String(currentBlock), chainId, phase, owners: owners.length, cap });
 
-  for (const { owner, retryCount } of queued) {
-    retriedOwners.add(owner as Hex);
+  let discovered = 0;
+  let drained = 0;
 
-    if (retryCount >= BOOTSTRAP_MAX_RETRY_COUNT) {
-      log("warn", "OwnerBackfill:owner_retry_abandoned", { block: String(currentBlock), chainId, owner, retryCount, maxRetries: BOOTSTRAP_MAX_RETRY_COUNT });
-      await context.db.sql
-        .delete(bootstrapRetryQueue)
-        .where(and(eq(bootstrapRetryQueue.chainId, chainId), eq(bootstrapRetryQueue.owner, owner as Hex)));
-      continue;
-    }
-
+  for (const owner of owners) {
     try {
-      const orders = await withTimeout(
-        fetchComposableOrders(context, chainId, owner as Hex),
-        BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
-        `OwnerBackfill:retry:${owner}`,
-      );
-      const count = await upsertDiscreteOrders(context, chainId, orders);
-      totalDiscovered += count;
-      await context.db.sql
-        .delete(bootstrapRetryQueue)
-        .where(and(eq(bootstrapRetryQueue.chainId, chainId), eq(bootstrapRetryQueue.owner, owner as Hex)));
-      if (count === 0) {
-        await markOwnerBootstrapped(context, chainId, owner as Hex, ownerGeneratorIds);
-      }
-    } catch (err) {
-      if (err instanceof TimeoutError) {
-        log("warn", "OwnerBackfill:owner_retry_timeout", { block: String(currentBlock), chainId, owner, retryCount: retryCount + 1, timeoutMs: BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS });
-        await context.db.sql
-          .update(bootstrapRetryQueue)
-          .set({ retryCount: retryCount + 1, lastRetryAt: currentBlock })
-          .where(and(eq(bootstrapRetryQueue.chainId, chainId), eq(bootstrapRetryQueue.owner, owner as Hex)));
-        continue;
-      }
-      throw err;
-    }
-  }
-
-  // Exclude owners already retried above — they were just attempted this run
-  const freshOwners = new Set(generators.map((g) => g.owner).filter((o) => !retriedOwners.has(o)));
-
-  if (freshOwners.size === 0 && retriedOwners.size === 0) {
-    log("info", "OwnerBackfill:no_bootstrap_needed", { block: String(currentBlock), chainId });
-    return;
-  }
-
-  if (freshOwners.size > 0) {
-    log("info", "OwnerBackfill:bootstrap_start", { block: String(currentBlock), chainId, generators: generators.length, freshOwners: freshOwners.size });
-  }
-
-  for (const owner of freshOwners) {
-    try {
-      const orders = await withTimeout(
+      const { orders, complete } = await withTimeout(
         fetchComposableOrders(context, chainId, owner),
         BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
         `OwnerBackfill:owner:${owner}`,
       );
-      const count = await upsertDiscreteOrders(context, chainId, orders);
-      totalDiscovered += count;
-      if (count === 0) {
-        await markOwnerBootstrapped(context, chainId, owner, ownerGeneratorIds);
+      discovered += await upsertDiscreteOrders(context, chainId, orders);
+
+      // Only flip the flag when the owner's history was drained in full. A partial
+      // drain (rate limit / timeout) leaves the owner eligible → retried next block.
+      if (complete) {
+        await markOwnerHistoryBackfilled(context, chainId, owner, ownerGeneratorIds);
+        drained++;
+      } else {
+        log("warn", "OwnerBackfill:owner_incomplete", { block: String(currentBlock), chainId, owner });
       }
     } catch (err) {
       if (err instanceof TimeoutError) {
         log("warn", "OwnerBackfill:owner_timeout", { block: String(currentBlock), chainId, owner, timeoutMs: BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS });
-        await context.db.sql
-          .insert(bootstrapRetryQueue)
-          .values({ chainId, owner, firstTimeoutAt: currentBlock, retryCount: 1, lastRetryAt: currentBlock })
-          .onConflictDoNothing();
-        continue;
+        continue; // leave eligible — retried next block
       }
       throw err;
     }
   }
 
-  log("info", "OwnerBackfill:DONE", { block: String(currentBlock), chainId, discovered: totalDiscovered });
-});
+  log("info", "OwnerBackfill:DONE", { block: String(currentBlock), chainId, phase, owners: owners.length, drained, discovered });
+}
 
+// Historical: runs during the event backfill (startBlock = composableCow start block).
+ponder.on("OwnerBackfill:block", ({ event, context }) => drainOwnerBatch(event, context, "historical"));
 
-async function markOwnerBootstrapped(
+// Live: runs from "latest" onward, mopping up late/unfinished owners.
+ponder.on("OwnerBackfillLive:block", ({ event, context }) => drainOwnerBatch(event, context, "live"));
+
+// Mark every eligible generator of this owner as history-backfilled so it drops out
+// of the eligibility set (and the readiness count). Set only after a full drain.
+async function markOwnerHistoryBackfilled(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   context: any,
   chainId: number,
@@ -165,12 +144,11 @@ async function markOwnerBootstrapped(
   if (genIds.length === 0) return;
   await context.db.sql
     .update(conditionalOrderGenerator)
-    .set({ lastPollResult: "bootstrap:noop" })
+    .set({ historyBackfilled: true })
     .where(
       and(
         eq(conditionalOrderGenerator.chainId, chainId),
         inArray(conditionalOrderGenerator.eventId, genIds),
       ),
     );
-  log("info", "OwnerBackfill:owner_noop", { chainId, owner, generators: genIds.length });
 }
