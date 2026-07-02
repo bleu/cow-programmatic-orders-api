@@ -482,7 +482,7 @@ describe("fetchOwnerOrderStatuses", () => {
 // ─── fetchComposableOrders full-history drain tests ───────────────────────────
 
 describe("fetchComposableOrders — full-history drain", () => {
-  const DRAIN_OWNER = "0x7592b2cccb62c02f0977dd3ad51137888c272bc1" as Hex;
+  const DRAIN_OWNER = "0x3333333333333333333333333333333333333333" as Hex;
 
   it("paginates the full account history at limit=1000, past the old 100-order cap", async () => {
     const receivedOffsets: number[] = [];

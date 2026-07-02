@@ -78,7 +78,7 @@ The system has seven components. Each has a single responsibility.
 
 **How it works**: Finds all generators with `status = 'Active'`, non-deterministic `orderType`, and `historyBackfilled = false`. For each unique owner, calls `fetchComposableOrders(owner)` from the Orderbook Client (which drains the owner's full order history — see below), upserts into `discreteOrder`, then sets `historyBackfilled = true` on that owner's generators.
 
-Eligibility is gated on the dedicated `conditionalOrderGenerator.historyBackfilled` flag, **not** on "has zero discrete orders". An active generator the realtime `OrderDiscoveryPoller` has already inserted a row for is still backfilled — the earlier `isNull(discreteOrder.orderUid)` gate meant backfill never ran for active generators, dropping ~99.7% of a busy owner's history (COW-1117).
+Eligibility is gated on the dedicated `conditionalOrderGenerator.historyBackfilled` flag, **not** on "has zero discrete orders". An active generator the realtime `OrderDiscoveryPoller` has already inserted a row for is still backfilled — gating on discrete-order presence would exclude any active generator the poller had already touched, so most of a busy owner's history would never be discovered.
 
 **Why it exists**: Non-deterministic generators created during backfill have no discrete orders because UID pre-computation doesn't work for them and the contract poller only runs at live sync. This one-time bootstrap fills the gap. After running once, it has no further work to do.
 
@@ -109,7 +109,7 @@ Eligibility is gated on the dedicated `conditionalOrderGenerator.historyBackfill
 - `fetchFlashLoanEnrichmentByUids(context, chainId, uids)` — batch UID enrichment for flash-loan orders, cache-first
 - `upsertDiscreteOrders(context, chainId, orders)` — write to discreteOrder table
 
-**`fetchComposableOrders` — incremental drain (COW-1117)**: rather than re-fetching the whole history each deploy, it reads `MAX(creation_date)` for the owner from `cow_cache.composable_order` as a cursor, fetches only orders newer than it (orders are returned newest-first, so pagination stops at the cursor), persists the delta, then rebuilds the **full** owner set from the durable cache. It re-checks any still-open cached rows via `/orders/by_uids`, and re-maps `generator_hash → the current generator eventId` (the eventId is per-deployment and changes each reindex; the hash is stable). First deploy full-drains; later deploys fetch only the delta.
+**`fetchComposableOrders` — incremental drain**: rather than re-fetching the whole history each deploy, it reads `MAX(creation_date)` for the owner from `cow_cache.composable_order` as a cursor, fetches only orders newer than it (orders are returned newest-first, so pagination stops at the cursor), persists the delta, then rebuilds the **full** owner set from the durable cache. It re-checks any still-open cached rows via `/orders/by_uids`, and re-maps `generator_hash → the current generator eventId` (the eventId is per-deployment and changes each reindex; the hash is stable). First deploy full-drains; later deploys fetch only the delta.
 
 **Writes to**: `discreteOrder`, `cow_cache.composable_order`, `cow_cache.order_uid_cache`.
 
@@ -177,7 +177,7 @@ Shared per-UID terminal-order cache. Survives Ponder resyncs (external `cow_cach
 
 ### `cow_cache.composable_order`
 
-Durable **full** composable-order rows for the OwnerBackfill incremental drain (COW-1117). Like `order_uid_cache` it lives in the external `cow_cache` schema and survives reindex — but it stores every field needed to rebuild a `discreteOrder` row (not just terminal status), so redeploys fetch only the delta newer than `MAX(creation_date)` per owner instead of the full history. It stores the stable `generator_hash` rather than the per-deployment `eventId`, which `fetchComposableOrders` re-maps to the current generator on read. Created in `setup.ts`.
+Durable **full** composable-order rows for the OwnerBackfill incremental drain. Like `order_uid_cache` it lives in the external `cow_cache` schema and survives reindex — but it stores every field needed to rebuild a `discreteOrder` row (not just terminal status), so redeploys fetch only the delta newer than `MAX(creation_date)` per owner instead of the full history. It stores the stable `generator_hash` rather than the per-deployment `eventId`, which `fetchComposableOrders` re-maps to the current generator on read. Created in `setup.ts`.
 
 | Column | Purpose |
 |--------|---------|
@@ -293,7 +293,7 @@ Durable **full** composable-order rows for the OwnerBackfill incremental drain (
 
 The Orderbook Client is used by all other components. Two main entry points:
 
-**`fetchComposableOrders(context, chainId, owner)`** — Incremental owner drain (COW-1117):
+**`fetchComposableOrders(context, chainId, owner)`** — Incremental owner drain:
 
 1. Resolve API URL from `ORDERBOOK_API_URLS[chainId]`
 2. Read the cursor: `MAX(creation_date)` for this owner from `cow_cache.composable_order` (undefined ⇒ full drain)
@@ -405,7 +405,7 @@ The bootstrap discovers orders via `fetchComposableOrders(owner)`, which relies 
 
 **This is correct behavior, not a gap.** All CoW Protocol orders go through the Orderbook API. An order that never reached the API is the same as an order that never existed from the protocol's perspective — it was never submitted to solvers and never had a chance to be settled. The watch-tower is the standard submission path and is operated by the CoW Protocol team.
 
-**History depth (Resolved — COW-1117):** the drain previously (a) skipped any generator that already had a discrete order and (b) capped the fetch at 100 orders (4 × 25), so an active owner with thousands of orders surfaced only a handful. Backfill is now gated on the `historyBackfilled` flag (independent of existing discrete orders) and drains the full history at 1000/page. Redeploys stay cheap via the incremental `cow_cache.composable_order` cursor (delta-only fetch).
+**History depth:** backfill is gated on the `historyBackfilled` flag (independent of whether the generator already has discrete orders) and drains the owner's full `/account/{owner}/orders` history at 1000/page — so an active owner's entire history is discovered, not just the most recent page. Redeploys stay cheap via the incremental `cow_cache.composable_order` cursor (delta-only fetch).
 
 ---
 

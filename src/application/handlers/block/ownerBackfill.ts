@@ -33,7 +33,7 @@ ponder.on("OwnerBackfill:block", async ({ event, context }) => {
   // Find Active non-deterministic generators whose full /account history has not
   // yet been drained. Eligibility is gated on the dedicated historyBackfilled flag
   // — NOT on "has zero discrete orders" — so a generator the realtime poller has
-  // already inserted rows for is still backfilled (COW-1117). The flag is set once
+  // already inserted rows for is still backfilled. The flag is set once
   // per owner after a successful drain, so restarts don't re-fetch.
   const generators = await context.db.sql
     .select({
@@ -143,7 +143,7 @@ ponder.on("OwnerBackfill:block", async ({ event, context }) => {
 
 // Mark every generator of this owner as history-backfilled so subsequent runs
 // (and restarts) don't re-drain the full /account history. Set once after a
-// successful drain regardless of how many orders were found (0 or thousands).
+// successful drain regardless of how many orders were found (none or many).
 async function markOwnerHistoryBackfilled(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   context: any,

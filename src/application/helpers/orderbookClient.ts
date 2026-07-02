@@ -82,7 +82,7 @@ const BATCH_SIZE = 50;
 
 /**
  * Fetch composable orders for an owner, using per-UID cache for terminal orders.
- * Incremental drain (COW-1117): Ponder rebuilds the onchain discreteOrder table
+ * Incremental drain: Ponder rebuilds the onchain discreteOrder table
  * from scratch on every schema-hash redeploy, so a naive implementation re-fetches
  * an owner's entire history each deploy. Instead the full composable-order rows are
  * kept in the durable cow_cache.composable_order table (survives reindex), and only
@@ -480,7 +480,7 @@ async function fetchOrderbook(
  *  API returns orders newest-first (creationDate DESC), so once a page contains an
  *  order strictly older than the cursor, everything beyond it is already known and
  *  pagination stops. Orders at or after the cursor are kept (the boundary is
- *  re-included so ties at exactly the cursor second are never dropped). See COW-1117. */
+ *  re-included so ties at exactly the cursor second are never dropped). */
 export async function fetchAccountOrders(
   apiBaseUrl: string,
   owner: Hex,
@@ -877,7 +877,7 @@ async function cacheUidStatuses(
 // ─── Durable composable-order cache helpers ───────────────────────────────────
 // cow_cache.composable_order (created in setup.ts) holds full composable-order rows
 // keyed by (chain_id, order_uid), so the backfill drains only the delta newer than
-// MAX(creation_date) per owner instead of the full history on each reindex. See COW-1117.
+// MAX(creation_date) per owner instead of the full history on each reindex.
 
 /** Newest creation_date already cached for this owner (Unix seconds), or undefined
  *  when nothing is cached — the signal to do a full-history drain. */

@@ -56,7 +56,7 @@ ponder.on("ComposableCow:setup", async ({ context }) => {
   // rebuild a discreteOrder row without re-hitting the orderbook — so OwnerBackfill
   // drains only the delta newer than MAX(creation_date) on each redeploy instead of
   // the owner's full history. generator_hash (not the per-deployment eventId) is stored
-  // so rows survive reindex and re-map to the current generator by hash. See COW-1117.
+  // so rows survive reindex and re-map to the current generator by hash.
   await context.db.sql.execute(sql`
     CREATE TABLE IF NOT EXISTS cow_cache.composable_order (
       chain_id              INTEGER NOT NULL,
