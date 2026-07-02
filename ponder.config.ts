@@ -4,7 +4,7 @@ import { ComposableCowAbi } from "./abis/ComposableCowAbi";
 import { CoWShedFactoryAbi } from "./abis/CoWShedFactoryAbi";
 import { GPv2SettlementAbi } from "./abis/GPv2SettlementAbi";
 
-// Build chain entries: { mainnet: { id: 1, rpc: "..." }, gnosis: { id: 100, rpc: "..." }, ... }
+// Build chain entries keyed by chain name: { <name>: { id, rpc, ... }, ... } for each active chain.
 const chains = Object.fromEntries(
   ACTIVE_CHAINS.map((c) => [
     c.name,
