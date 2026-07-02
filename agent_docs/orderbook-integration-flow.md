@@ -74,7 +74,11 @@ The system has seven components. Each has a single responsibility.
 
 ### Component OwnerBackfill (`block/ownerBackfill.ts`)
 
-**Responsibility**: Discovery of historical discrete orders for non-deterministic generators (the realtime poller only ever returns the *current* tradeable order, never past fulfilled/expired ones). **Repeating** live-sync handler (`startBlock: "latest"`, every block) — each firing drains a bounded batch of owners so the work spreads across blocks instead of one burst.
+**Responsibility**: Discovery of historical discrete orders for non-deterministic generators (the realtime poller only ever returns the *current* tradeable order, never past fulfilled/expired ones). Bounded batch per firing so the work spreads across blocks instead of one burst.
+
+**Two registrations, one drain**:
+- **OwnerBackfill (historical)** — `startBlock` = ComposableCow start block, `endBlock: "latest"`, coarse interval. Runs *during* the event backfill, so the orderbook drain overlaps historical sync and is largely done by the time Ponder reaches the tip. Orders an owner creates after its drain are at blocks ahead of `"latest"` and get discovered by the realtime catch-up (poller → confirmer → status tracker) as Ponder processes those blocks — so draining early loses nothing.
+- **OwnerBackfillLive** — `startBlock: "latest"`, fine interval. Mops up owners created late in the backfill or not finished before the tip.
 
 **How it works**: Each firing selects up to `MAX_OWNERS_BACKFILL_PER_BLOCK_<chainId>` (default 25) distinct owners with `status = 'Active'`, non-deterministic `orderType`, and `historyBackfilled = false`. For each, it calls `fetchComposableOrders(owner)` (which drains the owner's history incrementally — see below), upserts into `discreteOrder`, and sets `historyBackfilled = true` on that owner's generators **only if the drain completed in full**. A partial drain (rate limit / timeout) leaves the owner eligible → retried on a later block. No retry queue — the flag *is* the queue.
 
@@ -281,7 +285,7 @@ Durable **full** composable-order rows for the OwnerBackfill incremental drain. 
 
 ### 3.6 OwnerBackfill — Historical Discovery (per-block, bounded)
 
-**When**: Every block during live sync (`startBlock: "latest"`, repeating).
+**When**: During the event backfill (historical handler, `startBlock` = ComposableCow start block, coarse interval) and from the tip onward (live handler, `startBlock: "latest"`, fine interval). Both run the same drain.
 
 1. **Select a bounded batch.** Up to `MAX_OWNERS_BACKFILL_PER_BLOCK_<chainId>` (default 25) distinct owners with `status = 'Active'` AND non-deterministic `orderType` AND `historyBackfilled = false`, ordered by owner. (Gated on the flag, **not** on "no discreteOrder rows" — so generators the realtime poller already touched are still backfilled.)
 
@@ -494,7 +498,7 @@ flowchart TD
     Term -->|No| Active["Generator stays Active<br/>OrderStatusTracker tracks open orders"]
 
     Skip --> BackfillQ{"Backfill or<br/>Live sync?"}
-    BackfillQ -->|Backfill| Wait["Discovered by OwnerBackfill<br/>during live sync (per block)"]
+    BackfillQ -->|Backfill| Wait["Discovered by OwnerBackfill<br/>(runs during backfill, bounded per block)"]
     BackfillQ -->|Live| Poll["OrderDiscoveryPoller<br/>discovers when tradeable"]
 
     style Deactivate fill:#d4edda

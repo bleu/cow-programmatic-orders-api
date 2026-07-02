@@ -18,14 +18,16 @@ const chains = Object.fromEntries(
         : {}),
       // Many RPC providers cap eth_getLogs at 1000–2000 blocks; set conservatively to avoid
       // InvalidInputRpcError retry storms during backfill. Override via ETH_GET_LOGS_BLOCK_RANGE_<chainId>.
-      ethGetLogsBlockRange: Number(process.env[`ETH_GET_LOGS_BLOCK_RANGE_${c.chainId}`] ?? 1000),
+      ethGetLogsBlockRange: Number(
+        process.env[`ETH_GET_LOGS_BLOCK_RANGE_${c.chainId}`] ?? 1000
+      ),
     },
-  ]),
+  ])
 );
 
 const cowShedChains = ACTIVE_CHAINS.filter((c) => c.cowShedFactory !== null);
 const settlementChains = ACTIVE_CHAINS.filter(
-  (c) => c.gpv2Settlement !== null && c.flashLoan !== null,
+  (c) => c.gpv2Settlement !== null && c.flashLoan !== null
 );
 
 export default createConfig({
@@ -36,8 +38,11 @@ export default createConfig({
       chain: Object.fromEntries(
         ACTIVE_CHAINS.map((c) => [
           c.name,
-          { address: c.composableCow.address, startBlock: c.composableCow.startBlock },
-        ]),
+          {
+            address: c.composableCow.address,
+            startBlock: c.composableCow.startBlock,
+          },
+        ])
       ),
     },
     ComposableCowLive: {
@@ -45,8 +50,11 @@ export default createConfig({
       chain: Object.fromEntries(
         ACTIVE_CHAINS.map((c) => [
           c.name,
-          { address: c.composableCowLive.address, startBlock: "latest" as const },
-        ]),
+          {
+            address: c.composableCowLive.address,
+            startBlock: "latest" as const,
+          },
+        ])
       ),
     },
     CoWShedFactory: {
@@ -54,8 +62,11 @@ export default createConfig({
       chain: Object.fromEntries(
         cowShedChains.map((c) => [
           c.name,
-          { address: c.cowShedFactory!.address, startBlock: c.cowShedFactory!.startBlock },
-        ]),
+          {
+            address: c.cowShedFactory!.address,
+            startBlock: c.cowShedFactory!.startBlock,
+          },
+        ])
       ),
     },
     GPv2Settlement: {
@@ -73,16 +84,13 @@ export default createConfig({
               args: { solver: c.flashLoan!.aaveV3.router },
             },
           },
-        ]),
+        ])
       ),
     },
   },
   blocks: {
     // Block handler intervals are tuned per chain to keep total handler time
     // well within the available window while reducing unnecessary invocations.
-    //
-    // Gnosis  (5s blocks, interval=10): 10×5s=50s window, ~33s combined → 66% utilization
-    // Mainnet (12s blocks, interval=4):  4×12s=48s window, ~22s combined → 46% utilization
     //
     // All handlers fire together on the same block every interval blocks.
     // Simpler and more efficient than coprime staggering.
@@ -93,7 +101,7 @@ export default createConfig({
         ACTIVE_CHAINS.map((c) => [
           c.name,
           { startBlock: "latest" as const, interval: c.blockTime < 8 ? 10 : 4 },
-        ]),
+        ])
       ),
       interval: 1,
     },
@@ -103,7 +111,7 @@ export default createConfig({
         ACTIVE_CHAINS.map((c) => [
           c.name,
           { startBlock: "latest" as const, interval: c.blockTime < 8 ? 10 : 4 },
-        ]),
+        ])
       ),
       interval: 1,
     },
@@ -113,7 +121,7 @@ export default createConfig({
         ACTIVE_CHAINS.map((c) => [
           c.name,
           { startBlock: "latest" as const, interval: c.blockTime < 8 ? 10 : 4 },
-        ]),
+        ])
       ),
       interval: 1,
     },
@@ -124,7 +132,7 @@ export default createConfig({
         ACTIVE_CHAINS.map((c) => [
           c.name,
           { startBlock: "latest" as const, endBlock: "latest" as const },
-        ]),
+        ])
       ),
       interval: 1,
     },
@@ -134,21 +142,37 @@ export default createConfig({
         ACTIVE_CHAINS.map((c) => [
           c.name,
           { startBlock: "latest" as const, interval: c.blockTime < 8 ? 10 : 4 },
-        ]),
+        ])
       ),
       interval: 1,
     },
-    // OwnerBackfill — historical owner fetch for non-deterministic generators.
-    // Repeating live-sync handler: each firing drains a bounded batch of not-yet-
-    // backfilled owners (MAX_OWNERS_BACKFILL_PER_BLOCK_<chainId>), spreading the drain
-    // across blocks (rate-limit friendly) until every owner is complete. Readiness is
-    // gated on completion (/readyz), so promotion waits for the drain to finish.
+    // OwnerBackfill (historical) — drains non-deterministic generators' history during
+    // the event backfill (startBlock = composableCow start block), so the orderbook drain
+    // overlaps historical sync and is largely done by the tip. Coarse interval keeps the
+    // idle-block overhead low; each firing drains a bounded batch
+    // (MAX_OWNERS_BACKFILL_PER_BLOCK_<chainId>). Ends at "latest"; OwnerBackfillLive
+    // continues from there. Readiness is gated on completion (/readyz).
     OwnerBackfill: {
       chain: Object.fromEntries(
         ACTIVE_CHAINS.map((c) => [
           c.name,
-          { startBlock: "latest" as const },
-        ]),
+          {
+            startBlock: c.composableCow.startBlock,
+            endBlock: "latest" as const,
+            interval: 250,
+          },
+        ])
+      ),
+      interval: 1,
+    },
+    // OwnerBackfillLive — same drain, from the tip onward at a fine cadence: mops up
+    // owners created late in the backfill and any not finished before the tip.
+    OwnerBackfillLive: {
+      chain: Object.fromEntries(
+        ACTIVE_CHAINS.map((c) => [
+          c.name,
+          { startBlock: "latest" as const, interval: c.blockTime < 8 ? 10 : 4 },
+        ])
       ),
       interval: 1,
     },
@@ -163,7 +187,7 @@ export default createConfig({
             startBlock: "latest" as const,
             interval: c.blockTime < 8 ? 10 : 4,
           },
-        ]),
+        ])
       ),
       interval: 1,
     },

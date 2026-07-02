@@ -181,9 +181,9 @@ A fresh deployment (no prior `ponder_sync` cache) reindexes from the configured 
 
 | Phase | Typical duration | Notes |
 |-------|-----------------|-------|
-| Event backfill | 4–10 hours | Fetches `eth_getLogs` from start block to tip. Bottleneck is RPC throughput; a generous RPC endpoint shortens this. |
-| Live-sync catch-up | 5–15 minutes | Block handlers (OrderDiscoveryPoller, CandidateConfirmer, OrderStatusTracker, OwnerBackfill, CancellationWatcher) run at "latest" only. Stale TWAP candidates drain at 500/block. |
-| Full data completeness | After live-sync catch-up | All generators have candidates or discrete orders; historical TWAP parts resolved via account fallback. |
+| Event backfill | 4–10 hours | Fetches `eth_getLogs` from start block to tip. Bottleneck is RPC throughput; a generous RPC endpoint shortens this. OwnerBackfill (historical) drains owner history *during* this phase, so it overlaps sync rather than running after it. |
+| Live-sync catch-up | 5–15 minutes | Most block handlers (OrderDiscoveryPoller, CandidateConfirmer, OrderStatusTracker, OwnerBackfillLive, CancellationWatcher) run at "latest". Stale TWAP candidates drain at 500/block; OwnerBackfillLive mops up any owners not drained during backfill. |
+| Full data completeness | Gated by `/readyz` | All generators have candidates or discrete orders; every non-deterministic owner's history is drained (`historyBackfilled` complete). `/readyz` turns 200 only here — use it as the promotion probe. |
 
 A reindex that reuses an existing `ponder_sync` cache (same chain, same start blocks) skips the event backfill and completes in minutes.
 
