@@ -23,5 +23,5 @@ export const ChainProgressSchema = z.object({
 export const SyncProgressResponse = z
   .record(z.string(), ChainProgressSchema)
   .describe(
-    "Per-chain sync progress. Keys are chain names (e.g. 'mainnet', 'gnosis').",
+    "Per-chain sync progress. Keys are the active chains' Ponder chain names.",
   );
