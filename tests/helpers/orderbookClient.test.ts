@@ -584,11 +584,11 @@ describe("fetchComposableOrders — rebuild from durable cache", () => {
 
     try {
       await withFakeApi(TEST_CHAIN_ID, url, async () => {
-        const result = await fetchComposableOrders(ctx, TEST_CHAIN_ID, OWNER);
-        expect(result).toHaveLength(1);
-        expect(result[0]!.uid).toBe("0xcached-order");
-        expect(result[0]!.generatorId).toBe("gen-current");
-        expect(result[0]!.status).toBe("fulfilled");
+        const { orders } = await fetchComposableOrders(ctx, TEST_CHAIN_ID, OWNER);
+        expect(orders).toHaveLength(1);
+        expect(orders[0]!.uid).toBe("0xcached-order");
+        expect(orders[0]!.generatorId).toBe("gen-current");
+        expect(orders[0]!.status).toBe("fulfilled");
       });
     } finally {
       await close();
@@ -631,12 +631,13 @@ describe("fetchAccountOrders — sinceCreationDate early-stop", () => {
 
     try {
       await withFakeApi(TEST_CHAIN_ID, url, async () => {
-        const orders = await fetchAccountOrders(url, OWNER, 0, undefined, 2, 250);
+        const { orders, complete } = await fetchAccountOrders(url, OWNER, 0, undefined, 2, 250);
 
         // Never requested offset 4 — pagination stopped after crossing the cursor.
         expect(receivedOffsets).toEqual([0, 2]);
         // Kept o1,o2 (whole first page) + o3 (>= cursor); dropped o4 (< cursor).
         expect(orders.map((o) => o.uid)).toEqual(["0xo1", "0xo2", "0xo3"]);
+        expect(complete).toBe(true); // clean termination — crossed the cursor
       });
     } finally {
       await close();
@@ -658,9 +659,38 @@ describe("fetchAccountOrders — sinceCreationDate early-stop", () => {
     });
     try {
       await withFakeApi(TEST_CHAIN_ID, url, async () => {
-        const orders = await fetchAccountOrders(url, OWNER, 0, undefined, 2);
+        const { orders, complete } = await fetchAccountOrders(url, OWNER, 0, undefined, 2);
         expect(receivedOffsets).toEqual([0, 2]);
         expect(orders.map((o) => o.uid)).toEqual(["0xa", "0xb", "0xc"]);
+        expect(complete).toBe(true); // reached the last page
+      });
+    } finally {
+      await close();
+    }
+  });
+
+  it("reports complete=false when pagination is cut short by an orderbook error", async () => {
+    // Page 0 succeeds (full page), page 1 always 500s → fetchOrderbook exhausts retries
+    // and fetchAccountOrders breaks with a partial result.
+    const { url, close } = await startServer((req, res) => {
+      const parsed = new URL(req.url ?? "/", "http://127.0.0.1");
+      const offset = parseInt(parsed.searchParams.get("offset") ?? "0", 10);
+      if (offset === 0) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify([
+          makeOrderStub({ uid: "0xp0", status: "open", creationDate: toIso(500) }),
+          makeOrderStub({ uid: "0xp1", status: "open", creationDate: toIso(400) }),
+        ]));
+        return;
+      }
+      res.writeHead(500);
+      res.end("boom");
+    });
+    try {
+      await withFakeApi(TEST_CHAIN_ID, url, async () => {
+        const { orders, complete } = await fetchAccountOrders(url, OWNER, 0, undefined, 2);
+        expect(complete).toBe(false); // cut short — caller must not treat as full history
+        expect(orders.map((o) => o.uid)).toEqual(["0xp0", "0xp1"]); // partial page 0 only
       });
     } finally {
       await close();

@@ -100,18 +100,20 @@ export async function fetchComposableOrders(
   context: any,
   chainId: number,
   owner: Hex,
-): Promise<ComposableOrder[]> {
+): Promise<{ orders: ComposableOrder[]; complete: boolean }> {
   const apiBaseUrl = ORDERBOOK_API_URLS[chainId];
   if (!apiBaseUrl) {
     log("warn", "ob:noApiUrl", { chainId });
-    return [];
+    return { orders: [], complete: false };
   }
 
   // Only fetch orders newer than what we've already durably cached for this owner.
   const cursor = await readOwnerBackfillCursor(context, chainId, owner);
   log("info", "ob:fetch", { owner, chainId, since: cursor ?? null });
 
-  const deltaApiOrders = await fetchAccountOrders(apiBaseUrl, owner, 0, SIGNING_SCHEME_EIP1271, PAGE_LIMIT, cursor);
+  // complete=false (pagination cut short by rate limit / timeout) means the caller must
+  // NOT mark the owner backfilled — it stays eligible and is retried on a later block.
+  const { orders: deltaApiOrders, complete } = await fetchAccountOrders(apiBaseUrl, owner, 0, SIGNING_SCHEME_EIP1271, PAGE_LIMIT, cursor);
   const delta = await filterAndProcess(context, chainId, deltaApiOrders);
 
   // Persist the delta (account-endpoint status is the live status) into the durable cache.
@@ -127,8 +129,8 @@ export async function fetchComposableOrders(
   // The per-deployment generator eventId changes each reindex; re-map by the stable hash.
   const results = await remapToCurrentGenerators(context, chainId, reconciled);
 
-  log("info", "ob:fetchResult", { owner, chainId, since: cursor ?? null, delta: delta.length, total: results.length });
-  return results;
+  log("info", "ob:fetchResult", { owner, chainId, since: cursor ?? null, delta: delta.length, total: results.length, complete });
+  return { orders: results, complete };
 }
 
 /** Durable-cache row shape for cow_cache.composable_order (owner passed separately). */
@@ -305,7 +307,7 @@ export async function fetchOwnerOrderStatuses(
   const result = new Map<string, OrderStatusInfo>();
   const apiBaseUrl = ORDERBOOK_API_URLS[chainId];
   if (!apiBaseUrl) return result;
-  const orders = await fetchAccountOrders(apiBaseUrl, owner, maxPages);
+  const { orders } = await fetchAccountOrders(apiBaseUrl, owner, maxPages);
   for (const order of orders) {
     result.set(order.uid, {
       status: order.status,
@@ -488,10 +490,13 @@ export async function fetchAccountOrders(
   signingScheme?: string,
   pageSize = PAGE_LIMIT,
   sinceCreationDate?: number,
-): Promise<OrderbookOrder[]> {
+): Promise<{ orders: OrderbookOrder[]; complete: boolean }> {
   const allOrders: OrderbookOrder[] = [];
   let offset = 0;
   let pagesFetched = 0;
+  // complete=false means pagination was cut short by an error (rate limit / timeout /
+  // network) — the caller must NOT treat the result as the owner's full history.
+  let complete = false;
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -506,14 +511,14 @@ export async function fetchAccountOrders(
         // DESC order → orders at/after the cursor form a prefix of the page.
         const fresh = page.filter((o) => orderCreationSeconds(o) >= sinceCreationDate);
         allOrders.push(...fresh);
-        if (fresh.length < page.length) break; // crossed the cursor — older orders already cached
+        if (fresh.length < page.length) { complete = true; break; } // crossed the cursor — older orders already cached
       } else {
         allOrders.push(...page);
       }
 
       pagesFetched++;
-      if (page.length < pageSize) break; // last page
-      if (maxPages > 0 && pagesFetched >= maxPages) break; // page cap reached
+      if (page.length < pageSize) { complete = true; break; } // last page
+      if (maxPages > 0 && pagesFetched >= maxPages) { complete = true; break; } // page cap reached
       offset += page.length;
     } catch (err) {
       if (err instanceof OrderbookUnavailableError) {
@@ -529,7 +534,7 @@ export async function fetchAccountOrders(
     }
   }
 
-  return allOrders;
+  return { orders: allOrders, complete };
 }
 
 /** Batch-fetch orders by UID to refresh status of open orders.

@@ -74,13 +74,13 @@ The system has seven components. Each has a single responsibility.
 
 ### Component OwnerBackfill (`block/ownerBackfill.ts`)
 
-**Responsibility**: One-time discovery of historical discrete orders for non-deterministic generators that were created during backfill. Runs once at the start of live sync (`startBlock = endBlock = "latest"`).
+**Responsibility**: Discovery of historical discrete orders for non-deterministic generators (the realtime poller only ever returns the *current* tradeable order, never past fulfilled/expired ones). **Repeating** live-sync handler (`startBlock: "latest"`, every block) — each firing drains a bounded batch of owners so the work spreads across blocks instead of one burst.
 
-**How it works**: Finds all generators with `status = 'Active'`, non-deterministic `orderType`, and `historyBackfilled = false`. For each unique owner, calls `fetchComposableOrders(owner)` from the Orderbook Client (which drains the owner's full order history — see below), upserts into `discreteOrder`, then sets `historyBackfilled = true` on that owner's generators.
+**How it works**: Each firing selects up to `MAX_OWNERS_BACKFILL_PER_BLOCK_<chainId>` (default 25) distinct owners with `status = 'Active'`, non-deterministic `orderType`, and `historyBackfilled = false`. For each, it calls `fetchComposableOrders(owner)` (which drains the owner's history incrementally — see below), upserts into `discreteOrder`, and sets `historyBackfilled = true` on that owner's generators **only if the drain completed in full**. A partial drain (rate limit / timeout) leaves the owner eligible → retried on a later block. No retry queue — the flag *is* the queue.
 
-Eligibility is gated on the dedicated `conditionalOrderGenerator.historyBackfilled` flag, **not** on "has zero discrete orders". An active generator the realtime `OrderDiscoveryPoller` has already inserted a row for is still backfilled — gating on discrete-order presence would exclude any active generator the poller had already touched, so most of a busy owner's history would never be discovered.
+Eligibility is gated on the dedicated `conditionalOrderGenerator.historyBackfilled` flag, **not** on "has zero discrete orders". An active generator the realtime `OrderDiscoveryPoller` has already inserted a row for is still backfilled. The flag is set at generator creation (composableCow.ts) for the cases that never need a drain — deterministic types (precompute handles them) and generators created during live sync (owned by the poller from birth) — so the only `false` rows are non-deterministic historical generators.
 
-**Why it exists**: Non-deterministic generators created during backfill have no discrete orders because UID pre-computation doesn't work for them and the contract poller only runs at live sync. This one-time bootstrap fills the gap. After running once, it has no further work to do.
+**Why bounded + repeating**: at production scale there are thousands of non-deterministic generators; draining them all in one firing would exceed the orderbook rate limit and hold one giant transaction. Spreading a bounded batch per block is wall-clock-paced (rate-limit friendly) and keeps transactions small. Promotion readiness is gated on the drain completing (`/readyz`), so a blue-green deploy never promotes a pod with history still filling.
 
 **Cost across deploys**: Ponder rebuilds onchain tables from scratch on every schema-hash redeploy (`historyBackfilled` and `discreteOrder` included), so this handler re-runs each deploy. To avoid re-fetching an owner's entire history every time, the full composable-order rows are kept in the durable `cow_cache.composable_order` table (survives reindex) and only the delta newer than the cached high-water mark is fetched — see the Orderbook Client below.
 
@@ -279,15 +279,15 @@ Durable **full** composable-order rows for the OwnerBackfill incremental drain. 
 
 4. **Expire by validTo.** Any `discreteOrder` where `status = 'open'` and `validTo <= currentTimestamp` → set to `expired`.
 
-### 3.6 OwnerBackfill — One-Time Discovery
+### 3.6 OwnerBackfill — Historical Discovery (per-block, bounded)
 
-**When**: Once, at `startBlock = endBlock = "latest"`.
+**When**: Every block during live sync (`startBlock: "latest"`, repeating).
 
-1. **Find generators to backfill.** Query `conditionalOrderGenerator` where `status = 'Active'` AND `orderType` is non-deterministic AND `historyBackfilled = false`. (Gated on the flag, **not** on "no discreteOrder rows" — so generators the realtime poller already touched are still backfilled.)
+1. **Select a bounded batch.** Up to `MAX_OWNERS_BACKFILL_PER_BLOCK_<chainId>` (default 25) distinct owners with `status = 'Active'` AND non-deterministic `orderType` AND `historyBackfilled = false`, ordered by owner. (Gated on the flag, **not** on "no discreteOrder rows" — so generators the realtime poller already touched are still backfilled.)
 
-2. **Fetch by owner.** For each unique owner, call `fetchComposableOrders(owner)` from the Orderbook Client. This drains the owner's history incrementally (delta since the durable-cache cursor), rebuilds the full set, matches to generators, and upserts into `discreteOrder`. Then set `historyBackfilled = true` on that owner's generators.
+2. **Fetch by owner.** For each, call `fetchComposableOrders(owner)`. This drains the owner's history incrementally (delta since the durable-cache cursor), rebuilds the full set, matches to generators, and upserts into `discreteOrder`. Set `historyBackfilled = true` on that owner's generators **only if the drain returned complete**; otherwise leave it eligible for a later block.
 
-3. **Done.** This handler fires once and has no further work. It fills the gap for PerpetualSwap/GoodAfterTime/TradeAboveThreshold generators created during backfill.
+3. **Repeat.** The next firing takes the next batch (drained owners have dropped out). When no eligible owner remains, the query is a cheap no-op. Readiness (`/readyz`) turns green once the pending count hits 0.
 
 ### 3.7 Orderbook Client — Fetch & Cache Logic
 
@@ -421,7 +421,7 @@ flowchart TB
         BH1["Block Handler 1<br/><i>OrderDiscoveryPoller — every block</i>"]
         BH2["Block Handler 2<br/><i>CandidateConfirmer — every block</i>"]
         BH3["Block Handler 3<br/><i>OrderStatusTracker — every block</i>"]
-        BH4["Block Handler 4<br/><i>OwnerBackfill — once at latest</i>"]
+        BH4["Block Handler 4<br/><i>OwnerBackfill — per block (bounded)</i>"]
         GPV["GPv2Settlement<br/><i>flash loans only</i>"]
         CSF["CoWShedFactory"]
     end
@@ -462,7 +462,7 @@ flowchart TB
     BH1 -->|update scheduling| Gen
     BH2 -->|"confirm via API<br/>(POST /orders/by_uids)"| Disc
     BH3 -->|"update status via API<br/>(POST /orders/by_uids)"| Disc
-    BH4 -->|"one-time owner fetch<br/>(GET /account/{owner}/orders)"| Disc
+    BH4 -->|"per-block owner drain<br/>(GET /account/{owner}/orders)"| Disc
 
     CompD --> Disc
     AB --> CompD
@@ -494,7 +494,7 @@ flowchart TD
     Term -->|No| Active["Generator stays Active<br/>OrderStatusTracker tracks open orders"]
 
     Skip --> BackfillQ{"Backfill or<br/>Live sync?"}
-    BackfillQ -->|Backfill| Wait["Wait for OwnerBackfill bootstrap<br/>at live sync start"]
+    BackfillQ -->|Backfill| Wait["Discovered by OwnerBackfill<br/>during live sync (per block)"]
     BackfillQ -->|Live| Poll["OrderDiscoveryPoller<br/>discovers when tradeable"]
 
     style Deactivate fill:#d4edda

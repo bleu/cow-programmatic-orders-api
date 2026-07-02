@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   DETERMINISTIC_ORDER_TYPE,
+  NON_DETERMINISTIC_TYPES,
+  isNonDeterministic,
   type OrderType,
 } from "../../src/utils/order-types";
 
@@ -29,5 +31,33 @@ describe("DETERMINISTIC_ORDER_TYPE", () => {
     expect(DETERMINISTIC_ORDER_TYPE["BalancerCowSwapFeeBurner"]).toBe(false);
     expect(DETERMINISTIC_ORDER_TYPE["CowAmmConstantProduct"]).toBe(false);
     expect(DETERMINISTIC_ORDER_TYPE["Unknown"]).toBe(false);
+  });
+});
+
+describe("NON_DETERMINISTIC_TYPES / isNonDeterministic", () => {
+  it("is the exact complement of DETERMINISTIC_ORDER_TYPE (derived, no drift)", () => {
+    const expected = (Object.keys(DETERMINISTIC_ORDER_TYPE) as OrderType[]).filter(
+      (t) => !DETERMINISTIC_ORDER_TYPE[t],
+    );
+    expect([...NON_DETERMINISTIC_TYPES].sort()).toEqual([...expected].sort());
+  });
+
+  it("isNonDeterministic agrees with the deterministic record for every type", () => {
+    for (const t of Object.keys(DETERMINISTIC_ORDER_TYPE) as OrderType[]) {
+      expect(isNonDeterministic(t)).toBe(!DETERMINISTIC_ORDER_TYPE[t]);
+    }
+  });
+
+  it("includes SwapOrderHandler and ERC4626CowSwapFeeBurner (drift-fix regression guard)", () => {
+    // The old hand-listed OwnerBackfill set omitted these two non-deterministic types,
+    // so their history was never backfilled. Deriving from the record covers them.
+    expect(NON_DETERMINISTIC_TYPES).toContain("SwapOrderHandler");
+    expect(NON_DETERMINISTIC_TYPES).toContain("ERC4626CowSwapFeeBurner");
+  });
+
+  it("excludes deterministic types", () => {
+    expect(NON_DETERMINISTIC_TYPES).not.toContain("TWAP");
+    expect(NON_DETERMINISTIC_TYPES).not.toContain("StopLoss");
+    expect(NON_DETERMINISTIC_TYPES).not.toContain("CirclesBackingOrder");
   });
 });

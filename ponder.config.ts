@@ -138,12 +138,16 @@ export default createConfig({
       ),
       interval: 1,
     },
-    // OwnerBackfill — one-time owner fetch for non-deterministic backfill orders.
+    // OwnerBackfill — historical owner fetch for non-deterministic generators.
+    // Repeating live-sync handler: each firing drains a bounded batch of not-yet-
+    // backfilled owners (MAX_OWNERS_BACKFILL_PER_BLOCK_<chainId>), spreading the drain
+    // across blocks (rate-limit friendly) until every owner is complete. Readiness is
+    // gated on completion (/readyz), so promotion waits for the drain to finish.
     OwnerBackfill: {
       chain: Object.fromEntries(
         ACTIVE_CHAINS.map((c) => [
           c.name,
-          { startBlock: "latest" as const, endBlock: "latest" as const },
+          { startBlock: "latest" as const },
         ]),
       ),
       interval: 1,
