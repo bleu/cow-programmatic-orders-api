@@ -199,6 +199,8 @@ Block handlers only run during live sync. TWAP parts computed during backfill la
 
 **Residual gap**: Orders that no longer appear in `/account/{owner}/orders` (beyond the CoW API's retention window) will be recorded as `expired` regardless of their actual fill status. This affects only very old orders for users with a large order history.
 
-Non-deterministic generators (PerpetualSwap, GoodAfterTime, TradeAboveThreshold, Unknown) are handled by OwnerBackfill, which calls `/account/{owner}/orders` once at live-sync start and upserts discovered orders directly into `discrete_order`.
+Non-deterministic generators (PerpetualSwap, GoodAfterTime, TradeAboveThreshold, Unknown) are handled by OwnerBackfill, which drains each owner's full `/account/{owner}/orders` history once at live-sync start and upserts discovered orders directly into `discrete_order`.
+
+**Redeploy cost**: Ponder rebuilds onchain tables from scratch on every schema-hash deploy, so OwnerBackfill re-runs each time. To avoid re-fetching an owner's entire history per deploy, the full composable-order rows are kept in the durable `cow_cache.composable_order` table (external schema, survives reindex). On redeploy only the delta newer than the cached `MAX(creation_date)` is fetched; the rest is rebuilt from the cache. The first-ever deploy (empty cache) does the full drain (COW-1117).
 
 
