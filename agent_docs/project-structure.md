@@ -27,10 +27,10 @@
 | Field | Value |
 |-------|-------|
 | Contract | ComposableCoW |
-| Mainnet address | `0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74` |
-| Start block | `17883049` (deployment block) |
+| Address | `0xfdaFc9d1902f4e0b84f65F49f244b32b31013b74` (same CREATE2 address on every chain) |
+| Start block | per chain (deployment block; see `src/chains/`) |
 | End block | none — index continuously |
-| Active chains | mainnet only |
+| Active chains | see `ACTIVE_CHAINS` in `src/chains/index.ts` |
 
 ---
 
@@ -118,8 +118,7 @@ src/data.ts
 |----------|----------|-------------|
 | `MAINNET_RPC_URL` | Yes | Ethereum mainnet RPC endpoint |
 | `DATABASE_URL` | No | PostgreSQL URL (defaults to SQLite if unset) |
-| `GNOSIS_RPC_URL` | No | Reserved for future gnosis chain |
-| `ARBITRUM_RPC_URL` | No | Reserved for future arbitrum chain |
+| `<CHAIN>_RPC_URL` | Per active chain | RPC endpoint for each active chain (e.g. `GNOSIS_RPC_URL`); required when that chain is active |
 | `<CHAIN>_WS_RPC_URL` | No | Optional WebSocket endpoint (e.g. `MAINNET_WS_RPC_URL`) — enables Ponder realtime subscriptions; falls back to HTTP polling when unset |
 
 ---
@@ -147,7 +146,7 @@ Example query once blocks around `17883049` are indexed:
 
 ## Intentionally Out of Scope
 
-- Gnosis Chain / Arbitrum chain configuration (future sprint)
+- Enabling additional (currently inactive) chains defined in `src/chains/`
 - `MerkleRootSet` / `SwapGuardSet` event handlers
 - Order-matching and signature decoding logic (S2.x)
 - `schema/views.ts`

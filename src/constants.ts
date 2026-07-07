@@ -37,8 +37,9 @@ export const DEFAULT_MAX_GENERATORS_PER_BLOCK = 200;
  *   count <= COOLDOWN_THRESHOLD -> +10 blocks
  *   count >  COOLDOWN_THRESHOLD -> +50 blocks
  *
- * Block counts (not seconds) intentionally — simpler, and the ceiling is
- * acceptable on both gnosis (~5s/block -> 250s) and mainnet (~12s/block -> 600s).
+ * Block counts (not seconds) intentionally — simpler, and the ceiling stays
+ * acceptable across the range of active-chain block times (e.g. ~250s at 5s/block,
+ * ~600s at 12s/block).
  */
 export const TRY_NEXT_BLOCK_WARMUP_THRESHOLD = 50;
 export const TRY_NEXT_BLOCK_COOLDOWN_THRESHOLD = 200;
@@ -51,9 +52,9 @@ export const TRY_NEXT_BLOCK_BACKOFF_COLD = 50n;
  *
  * For deterministic generators (`allCandidatesKnown = true`), `remove()` detection
  * is via a `ComposableCoW.singleOrders(owner, hash)` storage read. `remove()` is
- * rare; a ~100 block cadence gives a worst-case detection lag of ~20 min on
- * mainnet and ~8 min on Gnosis while keeping the RPC cost well below
- * OrderDiscoveryPoller's every-block poll.
+ * rare; a ~100 block cadence gives a worst-case detection lag on the order of
+ * minutes (scaling with each chain's block time) while keeping the RPC cost well
+ * below OrderDiscoveryPoller's every-block poll.
  */
 export const DETERMINISTIC_CANCEL_SWEEP_INTERVAL = 100n;
 

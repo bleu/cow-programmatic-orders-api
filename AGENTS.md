@@ -9,7 +9,7 @@ Ponder-based indexer and GraphQL API for Composable CoW programmatic orders. Ind
 ## Architecture
 
 ```
-ComposableCoW contract (mainnet + gnosis; more chains planned)
+ComposableCoW contract (per active chain — see src/chains/index.ts)
        ↓  events
   ponder.config.ts  ←  src/chains/  (contract addresses + start blocks per chain)
        ↓
@@ -54,4 +54,4 @@ Start PostgreSQL with `docker compose up -d` to use it instead of the default SQ
 - New event handlers go in `src/application/handlers/` (one file per contract)
 - Adding a chain: create a chain file in `src/chains/` and register it in `src/chains/index.ts`; set its `rpcEnvVar` and optionally `wsRpcEnvVar` (the optional `<CHAIN>_WS_RPC_URL` enables Ponder realtime WS subscriptions)
 - External HTTP / RPC calls in block handlers must use `withTimeout(...)` and be partial-failure tolerant — see `agent_docs/code-patterns.md` § External I/O in block handlers
-- Current scope: mainnet + gnosis; Arbitrum planned
+- Active chains are configured in `src/chains/index.ts` (`ACTIVE_CHAINS`)
