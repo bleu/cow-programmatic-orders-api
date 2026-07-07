@@ -76,7 +76,7 @@ The system has seven components. Each has a single responsibility.
 
 **Responsibility**: Discovery of historical discrete orders for non-deterministic generators (the realtime poller only ever returns the *current* tradeable order, never past fulfilled/expired ones). Bounded batch per firing so the work spreads across blocks instead of one burst.
 
-**Single registration, from the tip onward**: `startBlock: "latest"`, fine interval. It runs during live sync only, so its orderbook drain happens after sync reaches the tip rather than interleaving with the event backfill. This is the sole owner-history drain — there is no historical registration. The trade-off: the drain no longer overlaps sync, so `/readyz` reports pending for a while after Ponder's built-in `/ready` flips (the total drain work is unchanged, it just moves from during sync to post-tip).
+**Registration**: `startBlock: "latest"`, fine interval. Runs during live sync, draining owner history from the tip onward. `/readyz` gates promotion on the drain completing, so it returns pending until every eligible owner is drained.
 
 **How it works**: Each firing selects up to `MAX_OWNERS_BACKFILL_PER_BLOCK_<chainId>` (default 100) distinct owners with `status = 'Active'`, non-deterministic `orderType`, and `historyBackfilled = false`. For each, it calls `fetchComposableOrders(owner)` (which drains the owner's history incrementally — see below), upserts into `discreteOrder`, and sets `historyBackfilled = true` on that owner's generators **only if the drain completed in full**. A partial drain (rate limit / timeout) leaves the owner eligible → retried on a later block. No retry queue — the flag *is* the queue.
 
@@ -283,7 +283,7 @@ Durable **full** composable-order rows for the OwnerBackfillLive incremental dra
 
 ### 3.6 OwnerBackfillLive — Historical Discovery (per-block, bounded)
 
-**When**: From the tip onward (live sync only, `startBlock: "latest"`, fine interval). This is the sole owner-history drain; it does not run during the event backfill.
+**When**: From the tip onward (live sync, `startBlock: "latest"`, fine interval). This is the owner-history drain.
 
 1. **Select a bounded batch.** Up to `MAX_OWNERS_BACKFILL_PER_BLOCK_<chainId>` (default 100) distinct owners with `status = 'Active'` AND non-deterministic `orderType` AND `historyBackfilled = false`, ordered by owner. (Gated on the flag, **not** on "no discreteOrder rows" — so generators the realtime poller already touched are still backfilled.)
 

@@ -100,7 +100,7 @@ The indexer exposes two health endpoints with distinct semantics:
 | `/ready` | Ponder sync — has it reached the chain tip? | Only when historical sync is complete |
 | `/readyz` | **Readiness** — synced **and** owner backfill complete | Ponder synced AND no non-deterministic historical generator still pending |
 
-Use **`/readyz`** as the readiness/promotion probe. Ponder's built-in `/ready` flips as soon as historical sync reaches the tip, but `OwnerBackfillLive` drains historical discrete orders across the live-sync blocks after the tip — so `/ready` alone would promote a pod whose history is still filling. Expect `/readyz` to report pending for a while after `/ready` flips, since the drain runs post-tip rather than overlapping sync. `/readyz` returns 200 only once Ponder is synced **and** `COUNT(historyBackfilled = false) = 0` (it internally checks `/ready` first, so it also can't false-positive on an empty fresh DB). Ponder reserves the `/ready` path, so `/readyz` is a distinct endpoint served by the app.
+Use **`/readyz`** as the readiness/promotion probe. Ponder's built-in `/ready` flips as soon as historical sync reaches the tip, and `OwnerBackfillLive` then drains historical discrete orders across the following live-sync blocks. `/readyz` waits for both: it returns 200 only once Ponder is synced **and** `COUNT(historyBackfilled = false) = 0` (it internally checks `/ready` first, so it also can't false-positive on an empty fresh DB). Expect it to report pending during the drain, which begins after `/ready` flips. Ponder reserves the `/ready` path, so `/readyz` is a distinct endpoint served by the app.
 
 Map these to different K8s probe types. The specific timing values (`periodSeconds`, `failureThreshold`, `initialDelaySeconds`) depend on your cluster's SLOs; what matters is which path and port to use:
 
@@ -181,7 +181,7 @@ A fresh deployment (no prior `ponder_sync` cache) reindexes from the configured 
 
 | Phase | Typical duration | Notes |
 |-------|-----------------|-------|
-| Event backfill | 4–10 hours | Fetches `eth_getLogs` from start block to tip. Bottleneck is RPC throughput; a generous RPC endpoint shortens this. No owner-history drain runs here — it starts once sync reaches the tip, so orderbook I/O stays out of historical sync. |
+| Event backfill | 4–10 hours | Fetches `eth_getLogs` from start block to tip. Bottleneck is RPC throughput; a generous RPC endpoint shortens this. The owner-history drain runs in the next phase (live-sync catch-up), keeping orderbook I/O off the critical path to the tip. |
 | Live-sync catch-up | 5–15 minutes | Block handlers (OrderDiscoveryPoller, CandidateConfirmer, OrderStatusTracker, OwnerBackfillLive, CancellationWatcher) run at "latest". Stale TWAP candidates drain at 500/block; OwnerBackfillLive drains every non-deterministic owner's history from the tip onward. |
 | Full data completeness | Gated by `/readyz` | All generators have candidates or discrete orders; every non-deterministic owner's history is drained (`historyBackfilled` complete). `/readyz` turns 200 only here — use it as the promotion probe. |
 
