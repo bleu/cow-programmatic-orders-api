@@ -18,6 +18,7 @@ import { sql } from "ponder";
 import {
   discreteOrder,
 } from "ponder:schema";
+import type { Context } from "ponder:registry";
 import { type Hex } from "viem";
 import { ORDERBOOK_API_URLS } from "../../../data";
 import {
@@ -69,8 +70,7 @@ import {
  * 6. Re-map generator_hash → the current generator eventId (changes each reindex)
  */
 export async function fetchComposableOrders(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   owner: Hex,
 ): Promise<{ orders: ComposableOrder[]; complete: boolean }> {
@@ -112,8 +112,7 @@ export async function fetchComposableOrders(
  * the block handler's initial "open".
  */
 export async function upsertDiscreteOrders(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   orders: ComposableOrder[],
 ): Promise<number> {
@@ -153,8 +152,7 @@ export async function upsertDiscreteOrders(
  * the original fresh fetch).
  */
 export async function fetchOrderStatusByUids(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   uids: string[],
 ): Promise<Map<string, OrderStatusInfo>> {
@@ -271,8 +269,7 @@ export async function fetchOwnerOrderStatuses(
  * indexed, or aged out) are omitted — the caller retries on a later block.
  */
 export async function fetchFlashLoanEnrichmentByUids(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   uids: string[],
 ): Promise<Map<string, FlashLoanEnrichment>> {

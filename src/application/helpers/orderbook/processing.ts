@@ -1,4 +1,5 @@
 import { and, eq, inArray } from "ponder";
+import type { Context } from "ponder:registry";
 import {
   conditionalOrderGenerator,
 } from "ponder:schema";
@@ -20,8 +21,7 @@ import {
 
 /** Filter API orders to composable eip1271, decode signatures, match to generators. */
 export async function filterAndProcess(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   apiOrders: OrderbookOrder[],
 ): Promise<ComposableOrder[]> {
@@ -102,8 +102,7 @@ export async function filterAndProcess(
 /** Re-check non-terminal cached rows via by_uids; update status/validTo/executed and
  *  re-persist any that became terminal. Mutates and returns `rows`. */
 export async function reconcileOpenCachedRows(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   owner: Hex,
   apiBaseUrl: string,
@@ -136,8 +135,7 @@ export async function reconcileOpenCachedRows(
 /** Map durable rows (keyed by the stable generator_hash) to ComposableOrder with the
  *  current per-deployment generator eventId. Rows with no current generator are dropped. */
 export async function remapToCurrentGenerators(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   rows: ComposableCacheRow[],
 ): Promise<ComposableOrder[]> {

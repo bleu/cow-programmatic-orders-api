@@ -34,7 +34,7 @@ Example: `DATABASE_URL=postgresql://cow_programmatic:secretpass@localhost:5433/c
 |----------|----------|-------------|
 | `MAX_GENERATORS_PER_BLOCK_<chainId>` | No | Per-block cap on how many generators `OrderDiscoveryPoller` and `CancellationWatcher` will touch on the given chain (e.g. `MAX_GENERATORS_PER_BLOCK_1=200`, `MAX_GENERATORS_PER_BLOCK_100=400`). Default is 200. Excess generators defer to the next block, prioritized by oldest `lastCheckBlock` first. |
 | `MAX_DISCRETE_ORDERS_PER_BLOCK_<chainId>` | No | Per-block cap on how many open discrete orders `OrderStatusTracker` will check on the given chain (e.g. `MAX_DISCRETE_ORDERS_PER_BLOCK_1=200`). Default is 200. Excess orders are deferred to the next block, prioritised by oldest `promotedAt` first. |
-| `MAX_OWNERS_BACKFILL_PER_BLOCK_<chainId>` | No | Per-block cap on how many distinct owners `OwnerBackfill` drains on the given chain (e.g. `MAX_OWNERS_BACKFILL_PER_BLOCK_1=25`). Default is 25. Bounds the per-block orderbook request rate and transaction size while the historical drain spreads across live-sync blocks. |
+| `MAX_OWNERS_BACKFILL_PER_BLOCK_<chainId>` | No | Per-block cap on how many distinct owners `OwnerBackfillLive` drains on the given chain (e.g. `MAX_OWNERS_BACKFILL_PER_BLOCK_1=100`). Default is 100. Bounds the per-block orderbook request rate and transaction size while the owner-history drain spreads across live-sync blocks from the tip onward. |
 | `DISABLE_SETTLEMENT_FACTORY_CHECK` | No | Skips `getCode` + `FACTORY()` RPC calls in the GPv2Settlement handler. Useful for benchmarking base sync throughput. |
 | `PINO_LOG_LEVEL` | No | Log verbosity: `debug`, `info`, `warn`, `error`. Defaults to Ponder's built-in default. |
 
@@ -100,7 +100,7 @@ The indexer exposes two health endpoints with distinct semantics:
 | `/ready` | Ponder sync — has it reached the chain tip? | Only when historical sync is complete |
 | `/readyz` | **Readiness** — synced **and** owner backfill complete | Ponder synced AND no non-deterministic historical generator still pending |
 
-Use **`/readyz`** as the readiness/promotion probe. Ponder's built-in `/ready` flips as soon as historical sync reaches the tip, but OwnerBackfill drains historical discrete orders across the following live-sync blocks — so `/ready` alone would promote a pod whose history is still filling. `/readyz` returns 200 only once Ponder is synced **and** `COUNT(historyBackfilled = false) = 0` (it internally checks `/ready` first, so it also can't false-positive on an empty fresh DB). Ponder reserves the `/ready` path, so `/readyz` is a distinct endpoint served by the app.
+Use **`/readyz`** as the readiness/promotion probe. Ponder's built-in `/ready` flips as soon as historical sync reaches the tip, and `OwnerBackfillLive` then drains historical discrete orders across the following live-sync blocks. `/readyz` waits for both: it returns 200 only once Ponder is synced **and** `COUNT(historyBackfilled = false) = 0` (it internally checks `/ready` first, so it also can't false-positive on an empty fresh DB). Expect it to report pending during the drain, which begins after `/ready` flips. Ponder reserves the `/ready` path, so `/readyz` is a distinct endpoint served by the app.
 
 Map these to different K8s probe types. The specific timing values (`periodSeconds`, `failureThreshold`, `initialDelaySeconds`) depend on your cluster's SLOs; what matters is which path and port to use:
 
@@ -181,15 +181,15 @@ A fresh deployment (no prior `ponder_sync` cache) reindexes from the configured 
 
 | Phase | Typical duration | Notes |
 |-------|-----------------|-------|
-| Event backfill | 4–10 hours | Fetches `eth_getLogs` from start block to tip. Bottleneck is RPC throughput; a generous RPC endpoint shortens this. OwnerBackfill (historical) drains owner history *during* this phase, so it overlaps sync rather than running after it. |
-| Live-sync catch-up | 5–15 minutes | Most block handlers (OrderDiscoveryPoller, CandidateConfirmer, OrderStatusTracker, OwnerBackfillLive, CancellationWatcher) run at "latest". Stale TWAP candidates drain at 500/block; OwnerBackfillLive mops up any owners not drained during backfill. |
+| Event backfill | 4–10 hours | Fetches `eth_getLogs` from start block to tip. Bottleneck is RPC throughput; a generous RPC endpoint shortens this. The owner-history drain runs in the next phase (live-sync catch-up), keeping orderbook I/O off the critical path to the tip. |
+| Live-sync catch-up | 5–15 minutes | Block handlers (OrderDiscoveryPoller, CandidateConfirmer, OrderStatusTracker, OwnerBackfillLive, CancellationWatcher) run at "latest". Stale TWAP candidates drain at 500/block; OwnerBackfillLive drains every non-deterministic owner's history from the tip onward. |
 | Full data completeness | Gated by `/readyz` | All generators have candidates or discrete orders; every non-deterministic owner's history is drained (`historyBackfilled` complete). `/readyz` turns 200 only here — use it as the promotion probe. |
 
 A reindex that reuses an existing `ponder_sync` cache (same chain, same start blocks) skips the event backfill and completes in minutes.
 
 ### `/ready` vs `/readyz` Semantics
 
-`GET /ready` (Ponder built-in) returns `200` when Ponder has processed all historical blocks up to the tip and the live indexer is running. It does **not** guarantee historical discrete-order data is complete — OwnerBackfill drains that across subsequent live blocks.
+`GET /ready` (Ponder built-in) returns `200` when Ponder has processed all historical blocks up to the tip and the live indexer is running. It does **not** guarantee historical discrete-order data is complete — `OwnerBackfillLive` drains that across live blocks after the tip.
 
 `GET /readyz` (app) returns `200` only when Ponder is synced **and** the owner backfill has finished (no non-deterministic historical generator with `historyBackfilled = false`). This is the promotion gate: it guarantees a newly-promoted pod has the full historical discrete-order set, so blue-green promotion never drops a complete pod for one that's still filling. It returns `503` (with the pending count) while the drain is in progress.
 
@@ -205,8 +205,8 @@ Block handlers only run during live sync. TWAP parts computed during backfill la
 
 **Residual gap**: Orders that no longer appear in `/account/{owner}/orders` (beyond the CoW API's retention window) will be recorded as `expired` regardless of their actual fill status. This affects only very old orders for users with a large order history.
 
-Non-deterministic generators (PerpetualSwap, GoodAfterTime, TradeAboveThreshold, fee-burners, CoW AMM, Unknown) are handled by OwnerBackfill, which drains each owner's full `/account/{owner}/orders` history and upserts discovered orders directly into `discrete_order`. It runs as a repeating live-sync handler draining a bounded batch of owners per block (`MAX_OWNERS_BACKFILL_PER_BLOCK_<chainId>`, default 25), so a large owner population spreads across blocks instead of one burst; `/readyz` gates promotion until it's done.
+Non-deterministic generators (PerpetualSwap, GoodAfterTime, TradeAboveThreshold, fee-burners, CoW AMM, Unknown) are handled by OwnerBackfillLive, which drains each owner's full `/account/{owner}/orders` history and upserts discovered orders directly into `discrete_order`. It runs as a repeating live-sync handler from the tip onward, draining a bounded batch of owners per block (`MAX_OWNERS_BACKFILL_PER_BLOCK_<chainId>`, default 100), so a large owner population spreads across blocks instead of one burst; `/readyz` gates promotion until it's done.
 
-**Redeploy cost**: Ponder rebuilds onchain tables from scratch on every schema-hash deploy, so OwnerBackfill re-runs each time. To avoid re-fetching an owner's entire history per deploy, the full composable-order rows are kept in the durable `cow_cache.composable_order` table (external schema, survives reindex). On redeploy only the delta newer than the cached `MAX(creation_date)` is fetched; the rest is rebuilt from the cache. The first-ever deploy (empty cache) does the full drain, which is the dominant cost and the main thing `/readyz` waits on.
+**Redeploy cost**: Ponder rebuilds onchain tables from scratch on every schema-hash deploy, so OwnerBackfillLive re-runs each time. To avoid re-fetching an owner's entire history per deploy, the full composable-order rows are kept in the durable `cow_cache.composable_order` table (external schema, survives reindex). On redeploy only the delta newer than the cached `MAX(creation_date)` is fetched; the rest is rebuilt from the cache. The first-ever deploy (empty cache) does the full drain, which is the dominant cost and the main thing `/readyz` waits on.
 
 

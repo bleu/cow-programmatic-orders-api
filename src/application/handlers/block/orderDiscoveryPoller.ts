@@ -1,4 +1,4 @@
-import { ponder } from "ponder:registry";
+import { ponder, type Context } from "ponder:registry";
 import { candidateDiscreteOrder, conditionalOrderGenerator } from "ponder:schema";
 import { and, asc, eq, lte, or, sql } from "ponder";
 import type { Hex } from "viem";
@@ -261,8 +261,7 @@ ponder.on("OrderDiscoveryPoller:block", async ({ event, context }) => {
 
 
 async function updateGeneratorPollState(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   generatorId: string,
   currentBlock: bigint,

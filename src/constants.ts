@@ -107,7 +107,7 @@ export const BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS = 30_000;
  *
  * Override per chain with env var MAX_OWNERS_BACKFILL_PER_BLOCK_<chainId>.
  */
-export const DEFAULT_MAX_OWNERS_BACKFILL_PER_BLOCK = 25;
+export const DEFAULT_MAX_OWNERS_BACKFILL_PER_BLOCK = 100;
 
 /**
  * Maximum number of TWAP parts that precomputeOrderUids will attempt to enumerate.

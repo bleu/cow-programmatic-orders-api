@@ -16,6 +16,7 @@
  */
 
 import type { Hex } from "viem";
+import type { Context } from "ponder:registry";
 import { and, eq, sql } from "ponder";
 import { candidateDiscreteOrder, conditionalOrderGenerator, discreteOrder } from "ponder:schema";
 import { computeOrderUid, type GPv2OrderData, KIND_SELL, KIND_BUY, BALANCE_ERC20 } from "./orderUid";
@@ -85,8 +86,7 @@ export function precomputeOrderUids(
  * Returns false if polling is still needed or the type is non-deterministic.
  */
 export async function precomputeAndDiscover(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   generatorEventId: string,
   owner: Hex,

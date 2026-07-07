@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { AddressInfo } from "node:net";
 import type { Hex } from "viem";
+import type { Context } from "ponder:registry";
 
 // Mock Ponder virtual modules that are not available outside the Ponder runtime.
 // vi.mock calls are hoisted by vitest so they resolve before any imports below.
@@ -57,9 +58,10 @@ async function withFakeApi(
   }
 }
 
-/** Minimal Ponder context stub for fetchOrderStatusByUids tests. */
-function makeContext() {
-  return { db: { sql: { execute: async () => [] } } };
+/** Minimal Ponder context stub for fetchOrderStatusByUids tests. Only `db.sql` is
+ * exercised, so a partial stub cast to Context is intentional. */
+function makeContext(): Context {
+  return { db: { sql: { execute: async () => [] } } } as unknown as Context;
 }
 
 /** Build a single `{ order: {...} }` item matching the real CoW Orderbook API shape (by_uids endpoint). */
@@ -550,7 +552,7 @@ describe("fetchComposableOrders — rebuild from durable cache", () => {
         select,
         insert: () => ({ values: () => ({ onConflictDoUpdate: async () => {} }) }),
       } },
-    };
+    } as unknown as Context;
   }
 
   it("returns the cached history re-mapped to the current generator eventId when no new orders exist", async () => {
@@ -819,7 +821,7 @@ describe("fetchFlashLoanEnrichmentByUids", () => {
       executedSellAmount: "111",
       executedBuyAmount: "220",
     };
-    const ctx = { db: { sql: { select: () => ({ from: () => ({ where: async () => [cachedRow] }) }) } } };
+    const ctx = { db: { sql: { select: () => ({ from: () => ({ where: async () => [cachedRow] }) }) } } } as unknown as Context;
     try {
       await withFakeApi(TEST_CHAIN_ID, url, async () => {
         const result = await fetchFlashLoanEnrichmentByUids(ctx, TEST_CHAIN_ID, [UID_A]);
@@ -845,7 +847,7 @@ describe("fetchFlashLoanEnrichmentByUids", () => {
           insert: () => ({ values: (vals: Record<string, unknown>[]) => ({ onConflictDoNothing: async () => { inserted.push(...vals); } }) }),
         },
       },
-    };
+    } as unknown as Context;
     try {
       await withFakeApi(TEST_CHAIN_ID, url, async () => {
         await fetchFlashLoanEnrichmentByUids(ctx, TEST_CHAIN_ID, [UID_A]);

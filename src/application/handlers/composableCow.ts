@@ -35,7 +35,7 @@
  *
  */
 
-import { ponder } from "ponder:registry";
+import { ponder, type Context } from "ponder:registry";
 import { and, eq, replaceBigInts } from "ponder";
 import {
   conditionalOrderGenerator,
@@ -62,8 +62,7 @@ const circlesImmutablesCache = new Map<
 >();
 
 async function fetchCirclesBackingImmutables(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   handler: Hex,
 ): Promise<{ sellToken: Hex; sellAmount: bigint }> {
@@ -101,8 +100,7 @@ async function insertGenerator(
     block: { number: bigint; timestamp: bigint };
     transaction: { hash: Hex };
   },
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   // True when this generator is created during live sync (ComposableCowLive). Live
   // generators have no pre-creation history and are owned by the realtime poller from
   // birth, so they never need an OwnerBackfill drain.

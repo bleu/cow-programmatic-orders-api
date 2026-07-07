@@ -1,4 +1,5 @@
 import { and, eq, inArray, sql } from "ponder";
+import type { Context } from "ponder:registry";
 import { pgSchema, integer, text, bigint } from "drizzle-orm/pg-core";
 import { type Hex } from "viem";
 import { log } from "../logger";
@@ -66,8 +67,7 @@ const orderUidCache = cowCacheSchema.table("order_uid_cache", {
 
 /** Read cached flash-loan enrichment for a list of UIDs. */
 export async function getCachedFlashLoanEnrichment(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   uids: string[],
 ): Promise<Map<string, FlashLoanEnrichment>> {
@@ -122,8 +122,7 @@ export async function getCachedFlashLoanEnrichment(
  * column — flash-loan orders are settled by definition.
  */
 export async function cacheFlashLoanEnrichment(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   entries: { uid: string; enrichment: FlashLoanEnrichment }[],
 ): Promise<void> {
@@ -154,8 +153,7 @@ export async function cacheFlashLoanEnrichment(
 
 /** Get cached data for a list of UIDs. Returns a Map of uid -> CachedOrderData. */
 export async function getCachedUidStatuses(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   uids: string[],
 ): Promise<Map<string, CachedOrderData>> {
@@ -198,8 +196,7 @@ export async function getCachedUidStatuses(
 
 /** Cache terminal statuses and executed amounts for composable orders. */
 export async function cacheUidStatuses(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   orders: ComposableOrder[],
 ): Promise<void> {
@@ -239,8 +236,7 @@ export async function cacheUidStatuses(
 /** Newest creation_date already cached for this owner (Unix seconds), or undefined
  *  when nothing is cached — the signal to do a full-history drain. */
 export async function readOwnerBackfillCursor(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   owner: Hex,
 ): Promise<number | undefined> {
@@ -263,8 +259,7 @@ export async function readOwnerBackfillCursor(
 
 /** All durably-cached composable rows for an owner. */
 export async function readOwnerComposableCache(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   owner: Hex,
 ): Promise<ComposableCacheRow[]> {
@@ -297,8 +292,7 @@ export async function readOwnerComposableCache(
 
 /** Upsert durable composable rows; excluded status/validTo/executed overwrite on conflict. */
 export async function upsertComposableCache(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   owner: Hex,
   rows: ComposableCacheRow[],
