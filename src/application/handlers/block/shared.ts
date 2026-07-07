@@ -1,4 +1,5 @@
 import { discreteOrderStatusEnum, flashLoanOrder } from "ponder:schema";
+import type { Context } from "ponder:registry";
 import { and, asc, eq, inArray, isNull, lt, sql } from "ponder";
 import type { Hex } from "viem";
 import { MAX_FLASH_LOAN_ENRICHMENT_ATTEMPTS } from "../../../constants";
@@ -26,8 +27,7 @@ export type PendingFlashLoanRow = {
 
 /** Select pending (un-enriched, under the attempt cap) flash-loan orders, oldest-first. */
 export async function selectPendingFlashLoanOrders(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   limit?: number,
 ): Promise<PendingFlashLoanRow[]> {
@@ -68,8 +68,7 @@ export async function selectPendingFlashLoanOrders(
  * later). Shared by both the backfiller and the live enricher.
  */
 export async function enrichFlashLoanOrders(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   enrichedAtTs: bigint,
   rows: PendingFlashLoanRow[],

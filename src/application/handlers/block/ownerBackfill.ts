@@ -1,4 +1,4 @@
-import { ponder } from "ponder:registry";
+import { ponder, type Context, type Event } from "ponder:registry";
 import { conditionalOrderGenerator } from "ponder:schema";
 import { and, eq, inArray } from "ponder";
 import type { Hex } from "viem";
@@ -7,7 +7,10 @@ import {
   BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
   DEFAULT_MAX_OWNERS_BACKFILL_PER_BLOCK,
 } from "../../../constants";
-import { fetchComposableOrders, upsertDiscreteOrders } from "../../helpers/orderbookClient";
+import {
+  fetchComposableOrders,
+  upsertDiscreteOrders,
+} from "../../helpers/orderbookClient";
 import { TimeoutError, withTimeout } from "../../helpers/withTimeout";
 import { log } from "../../helpers/logger";
 import { NON_DETERMINISTIC_TYPES } from "../../../utils/order-types";
@@ -33,14 +36,14 @@ import { NON_DETERMINISTIC_TYPES } from "../../../utils/order-types";
 
 function resolveOwnerCap(chainId: number): number {
   const raw = Number(process.env[`MAX_OWNERS_BACKFILL_PER_BLOCK_${chainId}`]);
-  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAX_OWNERS_BACKFILL_PER_BLOCK;
+  return Number.isFinite(raw) && raw > 0
+    ? raw
+    : DEFAULT_MAX_OWNERS_BACKFILL_PER_BLOCK;
 }
 
 async function drainOwnerBatch(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  event: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  event: Event<"OwnerBackfillLive:block">,
+  context: Context
 ): Promise<void> {
   const chainId = context.chain.id as SupportedChainId;
   const currentBlock = event.block.number;
@@ -50,7 +53,7 @@ async function drainOwnerBatch(
     eq(conditionalOrderGenerator.chainId, chainId),
     eq(conditionalOrderGenerator.status, "Active"),
     inArray(conditionalOrderGenerator.orderType, [...NON_DETERMINISTIC_TYPES]),
-    eq(conditionalOrderGenerator.historyBackfilled, false),
+    eq(conditionalOrderGenerator.historyBackfilled, false)
   );
 
   // Take up to `cap` distinct owners this block; ordering by owner keeps progress
@@ -73,7 +76,9 @@ async function drainOwnerBatch(
       owner: conditionalOrderGenerator.owner,
     })
     .from(conditionalOrderGenerator)
-    .where(and(eligibleWhere, inArray(conditionalOrderGenerator.owner, owners)))) as {
+    .where(
+      and(eligibleWhere, inArray(conditionalOrderGenerator.owner, owners))
+    )) as {
     generatorId: string;
     owner: Hex;
   }[];
@@ -85,7 +90,12 @@ async function drainOwnerBatch(
     ownerGeneratorIds.set(row.owner, existing);
   }
 
-  log("info", "OwnerBackfill:START", { block: String(currentBlock), chainId, owners: owners.length, cap });
+  log("info", "OwnerBackfill:START", {
+    block: String(currentBlock),
+    chainId,
+    owners: owners.length,
+    cap,
+  });
 
   let discovered = 0;
   let drained = 0;
@@ -95,41 +105,62 @@ async function drainOwnerBatch(
       const { orders, complete } = await withTimeout(
         fetchComposableOrders(context, chainId, owner),
         BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
-        `OwnerBackfill:owner:${owner}`,
+        `OwnerBackfill:owner:${owner}`
       );
       discovered += await upsertDiscreteOrders(context, chainId, orders);
 
       // Only flip the flag when the owner's history was drained in full. A partial
       // drain (rate limit / timeout) leaves the owner eligible → retried next block.
       if (complete) {
-        await markOwnerHistoryBackfilled(context, chainId, owner, ownerGeneratorIds);
+        await markOwnerHistoryBackfilled(
+          context,
+          chainId,
+          owner,
+          ownerGeneratorIds
+        );
         drained++;
       } else {
-        log("warn", "OwnerBackfill:owner_incomplete", { block: String(currentBlock), chainId, owner });
+        log("warn", "OwnerBackfill:owner_incomplete", {
+          block: String(currentBlock),
+          chainId,
+          owner,
+        });
       }
     } catch (err) {
       if (err instanceof TimeoutError) {
-        log("warn", "OwnerBackfill:owner_timeout", { block: String(currentBlock), chainId, owner, timeoutMs: BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS });
+        log("warn", "OwnerBackfill:owner_timeout", {
+          block: String(currentBlock),
+          chainId,
+          owner,
+          timeoutMs: BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
+        });
         continue; // leave eligible — retried next block
       }
       throw err;
     }
   }
 
-  log("info", "OwnerBackfill:DONE", { block: String(currentBlock), chainId, owners: owners.length, drained, discovered });
+  log("info", "OwnerBackfill:DONE", {
+    block: String(currentBlock),
+    chainId,
+    owners: owners.length,
+    drained,
+    discovered,
+  });
 }
 
 // Runs from "latest" onward, draining every eligible owner once sync reaches the tip.
-ponder.on("OwnerBackfillLive:block", ({ event, context }) => drainOwnerBatch(event, context));
+ponder.on("OwnerBackfillLive:block", ({ event, context }) =>
+  drainOwnerBatch(event, context)
+);
 
 // Mark every eligible generator of this owner as history-backfilled so it drops out
 // of the eligibility set (and the readiness count). Set only after a full drain.
 async function markOwnerHistoryBackfilled(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   owner: Hex,
-  ownerGeneratorIds: Map<Hex, string[]>,
+  ownerGeneratorIds: Map<Hex, string[]>
 ): Promise<void> {
   const genIds = ownerGeneratorIds.get(owner) ?? [];
   if (genIds.length === 0) return;
@@ -139,7 +170,7 @@ async function markOwnerHistoryBackfilled(
     .where(
       and(
         eq(conditionalOrderGenerator.chainId, chainId),
-        inArray(conditionalOrderGenerator.eventId, genIds),
-      ),
+        inArray(conditionalOrderGenerator.eventId, genIds)
+      )
     );
 }

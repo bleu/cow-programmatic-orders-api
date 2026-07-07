@@ -18,6 +18,7 @@ import {
   conditionalOrderGenerator,
   discreteOrder,
 } from "ponder:schema";
+import type { Context } from "ponder:registry";
 import { and, eq, inArray, sql } from "ponder";
 import { pgSchema, integer, text, bigint } from "drizzle-orm/pg-core";
 import { encodeAbiParameters, keccak256, type Hex } from "viem";
@@ -96,8 +97,7 @@ const BATCH_SIZE = 50;
  * 6. Re-map generator_hash → the current generator eventId (changes each reindex)
  */
 export async function fetchComposableOrders(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   owner: Hex,
 ): Promise<{ orders: ComposableOrder[]; complete: boolean }> {
@@ -171,8 +171,7 @@ function toCacheRow(o: ComposableOrder): ComposableCacheRow {
  * the block handler's initial "open".
  */
 export async function upsertDiscreteOrders(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   orders: ComposableOrder[],
 ): Promise<number> {
@@ -212,8 +211,7 @@ export async function upsertDiscreteOrders(
  * the original fresh fetch).
  */
 export async function fetchOrderStatusByUids(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   uids: string[],
 ): Promise<Map<string, OrderStatusInfo>> {
@@ -340,8 +338,7 @@ export interface FlashLoanEnrichment {
  * indexed, or aged out) are omitted — the caller retries on a later block.
  */
 export async function fetchFlashLoanEnrichmentByUids(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   uids: string[],
 ): Promise<Map<string, FlashLoanEnrichment>> {
@@ -588,8 +585,7 @@ async function fetchOrdersByUids(
 
 /** Filter API orders to composable eip1271, decode signatures, match to generators. */
 async function filterAndProcess(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   apiOrders: OrderbookOrder[],
 ): Promise<ComposableOrder[]> {
@@ -707,8 +703,7 @@ const orderUidCache = cowCacheSchema.table("order_uid_cache", {
 
 /** Read cached flash-loan enrichment for a list of UIDs. */
 async function getCachedFlashLoanEnrichment(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   uids: string[],
 ): Promise<Map<string, FlashLoanEnrichment>> {
@@ -763,8 +758,7 @@ async function getCachedFlashLoanEnrichment(
  * column — flash-loan orders are settled by definition.
  */
 async function cacheFlashLoanEnrichment(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   entries: { uid: string; enrichment: FlashLoanEnrichment }[],
 ): Promise<void> {
@@ -802,8 +796,7 @@ interface CachedOrderData {
 
 /** Get cached data for a list of UIDs. Returns a Map of uid -> CachedOrderData. */
 async function getCachedUidStatuses(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   uids: string[],
 ): Promise<Map<string, CachedOrderData>> {
@@ -846,8 +839,7 @@ async function getCachedUidStatuses(
 
 /** Cache terminal statuses and executed amounts for composable orders. */
 async function cacheUidStatuses(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   orders: ComposableOrder[],
 ): Promise<void> {
@@ -887,8 +879,7 @@ async function cacheUidStatuses(
 /** Newest creation_date already cached for this owner (Unix seconds), or undefined
  *  when nothing is cached — the signal to do a full-history drain. */
 async function readOwnerBackfillCursor(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   owner: Hex,
 ): Promise<number | undefined> {
@@ -911,8 +902,7 @@ async function readOwnerBackfillCursor(
 
 /** All durably-cached composable rows for an owner. */
 async function readOwnerComposableCache(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   owner: Hex,
 ): Promise<ComposableCacheRow[]> {
@@ -945,8 +935,7 @@ async function readOwnerComposableCache(
 
 /** Upsert durable composable rows; excluded status/validTo/executed overwrite on conflict. */
 async function upsertComposableCache(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   owner: Hex,
   rows: ComposableCacheRow[],
@@ -990,8 +979,7 @@ async function upsertComposableCache(
 /** Re-check non-terminal cached rows via by_uids; update status/validTo/executed and
  *  re-persist any that became terminal. Mutates and returns `rows`. */
 async function reconcileOpenCachedRows(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   owner: Hex,
   apiBaseUrl: string,
@@ -1024,8 +1012,7 @@ async function reconcileOpenCachedRows(
 /** Map durable rows (keyed by the stable generator_hash) to ComposableOrder with the
  *  current per-deployment generator eventId. Rows with no current generator are dropped. */
 async function remapToCurrentGenerators(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any,
+  context: Context,
   chainId: number,
   rows: ComposableCacheRow[],
 ): Promise<ComposableOrder[]> {
