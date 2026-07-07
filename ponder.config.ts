@@ -146,27 +146,11 @@ export default createConfig({
       ),
       interval: 1,
     },
-    // OwnerBackfill (historical) — drains non-deterministic generators' history during
-    // the event backfill (startBlock = composableCow start block), so the orderbook drain
-    // overlaps historical sync and is largely done by the tip. Coarse interval keeps the
-    // idle-block overhead low; each firing drains a bounded batch
-    // (MAX_OWNERS_BACKFILL_PER_BLOCK_<chainId>). Ends at "latest"; OwnerBackfillLive
-    // continues from there. Readiness is gated on completion (/readyz).
-    OwnerBackfill: {
-      chain: Object.fromEntries(
-        ACTIVE_CHAINS.map((c) => [
-          c.name,
-          {
-            startBlock: c.composableCow.startBlock,
-            endBlock: "latest" as const,
-            interval: 250,
-          },
-        ])
-      ),
-      interval: 1,
-    },
-    // OwnerBackfillLive — same drain, from the tip onward at a fine cadence: mops up
-    // owners created late in the backfill and any not finished before the tip.
+    // OwnerBackfillLive — drains non-deterministic generators' history from the tip
+    // onward at a fine cadence, one bounded batch per firing
+    // (MAX_OWNERS_BACKFILL_PER_BLOCK_<chainId>). Runs only from "latest" so the drain's
+    // orderbook API calls stay out of historical sync (which would otherwise delay Ponder
+    // reaching the tip). Readiness is gated on completion (/readyz).
     OwnerBackfillLive: {
       chain: Object.fromEntries(
         ACTIVE_CHAINS.map((c) => [

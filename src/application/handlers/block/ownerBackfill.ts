@@ -18,14 +18,10 @@ import { NON_DETERMINISTIC_TYPES } from "../../../utils/order-types";
 // drains a bounded batch of not-yet-backfilled owners, so the work spreads across blocks
 // (rate-limit friendly) and no single transaction holds thousands of owners.
 //
-// Two registrations share this drain:
-//   - OwnerBackfill (historical): startBlock = composableCow start block, coarse interval.
-//     Runs *during* the event backfill so the drain overlaps historical sync and is
-//     largely done by the time Ponder reaches the tip — orders an owner creates after its
-//     drain are at blocks ahead of "latest" and get picked up by the realtime catch-up
-//     (OrderDiscoveryPoller etc.) exactly as any live order would.
-//   - OwnerBackfillLive: startBlock = "latest", fine interval. Mops up owners created late
-//     in the backfill and any that weren't finished before the tip.
+// Registered as OwnerBackfillLive (startBlock = "latest", fine interval): the drain runs
+// only from the tip onward, so its orderbook API calls never run during historical sync
+// (they would otherwise slow Ponder's path to the tip). Every eligible owner — including
+// those created during the event backfill — is drained here once sync reaches "latest".
 //
 // Readiness is gated on the drain completing (see /readyz), so promotion never ships an
 // indexer with history still missing.
@@ -40,13 +36,11 @@ function resolveOwnerCap(chainId: number): number {
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAX_OWNERS_BACKFILL_PER_BLOCK;
 }
 
-// Shared drain — registered for both the historical and live block handlers below.
 async function drainOwnerBatch(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   event: any,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   context: any,
-  phase: "historical" | "live",
 ): Promise<void> {
   const chainId = context.chain.id as SupportedChainId;
   const currentBlock = event.block.number;
@@ -91,7 +85,7 @@ async function drainOwnerBatch(
     ownerGeneratorIds.set(row.owner, existing);
   }
 
-  log("info", "OwnerBackfill:START", { block: String(currentBlock), chainId, phase, owners: owners.length, cap });
+  log("info", "OwnerBackfill:START", { block: String(currentBlock), chainId, owners: owners.length, cap });
 
   let discovered = 0;
   let drained = 0;
@@ -122,14 +116,11 @@ async function drainOwnerBatch(
     }
   }
 
-  log("info", "OwnerBackfill:DONE", { block: String(currentBlock), chainId, phase, owners: owners.length, drained, discovered });
+  log("info", "OwnerBackfill:DONE", { block: String(currentBlock), chainId, owners: owners.length, drained, discovered });
 }
 
-// Historical: runs during the event backfill (startBlock = composableCow start block).
-ponder.on("OwnerBackfill:block", ({ event, context }) => drainOwnerBatch(event, context, "historical"));
-
-// Live: runs from "latest" onward, mopping up late/unfinished owners.
-ponder.on("OwnerBackfillLive:block", ({ event, context }) => drainOwnerBatch(event, context, "live"));
+// Runs from "latest" onward, draining every eligible owner once sync reaches the tip.
+ponder.on("OwnerBackfillLive:block", ({ event, context }) => drainOwnerBatch(event, context));
 
 // Mark every eligible generator of this owner as history-backfilled so it drops out
 // of the eligibility set (and the readiness count). Set only after a full drain.
