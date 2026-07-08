@@ -105,9 +105,25 @@ export const BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS = 30_000;
  * firing. Bounds the transaction size and the per-block orderbook request rate so
  * the historical drain spreads across live-sync blocks instead of one burst.
  *
+ * The drain runs inline on the realtime indexing path. Owner fetches now run
+ * concurrently (see DEFAULT_OWNER_BACKFILL_CONCURRENCY), so the per-firing wall-clock
+ * is roughly ceil(cap / concurrency) × BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS rather than
+ * cap × timeout — but keep the cap modest so a single firing can't stall event
+ * indexing when the orderbook API is slow.
+ *
  * Override per chain with env var MAX_OWNERS_BACKFILL_PER_BLOCK_<chainId>.
  */
-export const DEFAULT_MAX_OWNERS_BACKFILL_PER_BLOCK = 100;
+export const DEFAULT_MAX_OWNERS_BACKFILL_PER_BLOCK = 3;
+
+/**
+ * How many owner history fetches OwnerBackfill runs concurrently within a single
+ * firing. Bounds in-flight orderbook API load while collapsing the per-firing
+ * wall-clock: at concurrency >= cap, a firing takes ~one BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS
+ * worst case instead of cap × that.
+ *
+ * Override per chain with env var MAX_OWNERS_BACKFILL_CONCURRENCY_<chainId>.
+ */
+export const DEFAULT_OWNER_BACKFILL_CONCURRENCY = 5;
 
 /**
  * Maximum number of TWAP parts that precomputeOrderUids will attempt to enumerate.

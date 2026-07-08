@@ -6,12 +6,14 @@ import { type SupportedChainId } from "../../../data";
 import {
   BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
   DEFAULT_MAX_OWNERS_BACKFILL_PER_BLOCK,
+  DEFAULT_OWNER_BACKFILL_CONCURRENCY,
 } from "../../../constants";
 import {
   fetchComposableOrders,
   upsertDiscreteOrders,
 } from "../../helpers/orderbookClient";
 import { TimeoutError, withTimeout } from "../../helpers/withTimeout";
+import { mapWithConcurrency } from "../../helpers/concurrency";
 import { log } from "../../helpers/logger";
 import { NON_DETERMINISTIC_TYPES } from "../../../utils/order-types";
 
@@ -39,6 +41,60 @@ function resolveOwnerCap(chainId: number): number {
   return Number.isFinite(raw) && raw > 0
     ? raw
     : DEFAULT_MAX_OWNERS_BACKFILL_PER_BLOCK;
+}
+
+function resolveOwnerConcurrency(chainId: number): number {
+  const raw = Number(process.env[`MAX_OWNERS_BACKFILL_CONCURRENCY_${chainId}`]);
+  return Number.isFinite(raw) && raw > 0
+    ? raw
+    : DEFAULT_OWNER_BACKFILL_CONCURRENCY;
+}
+
+// Drain one owner's full history: fetch (timeout-bounded), upsert discovered orders,
+// and — only on a full drain — flip historyBackfilled. Returns the per-owner tallies
+// so the concurrent caller can aggregate. A per-owner timeout is swallowed (the owner
+// stays eligible and is retried next firing); any other error propagates to abort the
+// batch (the block handler is idempotent, so the block simply retries).
+async function drainOwner(
+  context: Context,
+  chainId: SupportedChainId,
+  currentBlock: bigint,
+  owner: Hex,
+  ownerGeneratorIds: Map<Hex, string[]>
+): Promise<{ discovered: number; drained: number }> {
+  try {
+    const { orders, complete } = await withTimeout(
+      fetchComposableOrders(context, chainId, owner),
+      BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
+      `OwnerBackfill:owner:${owner}`
+    );
+    const discovered = await upsertDiscreteOrders(context, chainId, orders);
+
+    // Only flip the flag when the owner's history was drained in full. A partial
+    // drain (rate limit / timeout) leaves the owner eligible → retried next block.
+    if (complete) {
+      await markOwnerHistoryBackfilled(context, chainId, owner, ownerGeneratorIds);
+      return { discovered, drained: 1 };
+    }
+
+    log("warn", "OwnerBackfill:owner_incomplete", {
+      block: String(currentBlock),
+      chainId,
+      owner,
+    });
+    return { discovered, drained: 0 };
+  } catch (err) {
+    if (err instanceof TimeoutError) {
+      log("warn", "OwnerBackfill:owner_timeout", {
+        block: String(currentBlock),
+        chainId,
+        owner,
+        timeoutMs: BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
+      });
+      return { discovered: 0, drained: 0 }; // leave eligible — retried next block
+    }
+    throw err;
+  }
 }
 
 async function drainOwnerBatch(
@@ -90,55 +146,25 @@ async function drainOwnerBatch(
     ownerGeneratorIds.set(row.owner, existing);
   }
 
+  const concurrency = resolveOwnerConcurrency(chainId);
+
   log("info", "OwnerBackfill:START", {
     block: String(currentBlock),
     chainId,
     owners: owners.length,
     cap,
+    concurrency,
   });
 
-  let discovered = 0;
-  let drained = 0;
+  // Owner fetches are independent HTTP round-trips, so run them concurrently
+  // (bounded) rather than one-at-a-time. Wall-clock per firing drops from
+  // cap × timeout to ~ceil(cap / concurrency) × timeout.
+  const tallies = await mapWithConcurrency(owners, concurrency, (owner) =>
+    drainOwner(context, chainId, currentBlock, owner, ownerGeneratorIds)
+  );
 
-  for (const owner of owners) {
-    try {
-      const { orders, complete } = await withTimeout(
-        fetchComposableOrders(context, chainId, owner),
-        BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
-        `OwnerBackfill:owner:${owner}`
-      );
-      discovered += await upsertDiscreteOrders(context, chainId, orders);
-
-      // Only flip the flag when the owner's history was drained in full. A partial
-      // drain (rate limit / timeout) leaves the owner eligible → retried next block.
-      if (complete) {
-        await markOwnerHistoryBackfilled(
-          context,
-          chainId,
-          owner,
-          ownerGeneratorIds
-        );
-        drained++;
-      } else {
-        log("warn", "OwnerBackfill:owner_incomplete", {
-          block: String(currentBlock),
-          chainId,
-          owner,
-        });
-      }
-    } catch (err) {
-      if (err instanceof TimeoutError) {
-        log("warn", "OwnerBackfill:owner_timeout", {
-          block: String(currentBlock),
-          chainId,
-          owner,
-          timeoutMs: BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
-        });
-        continue; // leave eligible — retried next block
-      }
-      throw err;
-    }
-  }
+  const discovered = tallies.reduce((sum, t) => sum + t.discovered, 0);
+  const drained = tallies.reduce((sum, t) => sum + t.drained, 0);
 
   log("info", "OwnerBackfill:DONE", {
     block: String(currentBlock),
