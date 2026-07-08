@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "ponder dev",
     "start": "ponder start -p 3000 --schema ${DATABASE_SCHEMA:-public} --log-format json",
+    "drain": "tsx src/worker/drain.ts",
     "db": "ponder db",
     "codegen": "ponder codegen",
     "lint": "eslint . --ext .ts",
@@ -21,6 +22,7 @@
     "@hono/zod-openapi": "^0.19.10",
     "drizzle-orm": "0.41.0",
     "hono": "^4.5.0",
+    "pg": "^8.11.0",
     "ponder": "^0.16.6",
     "ponder-enrich-gql-docs-middleware": "^0.1.3",
     "viem": "^2.21.3",
@@ -28,6 +30,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.9.0",
+    "@types/pg": "^8.11.0",
     "eslint": "^8.53.0",
     "eslint-config-ponder": "^0.16.2",
     "tsx": "^4.0.0",

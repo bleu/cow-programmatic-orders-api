@@ -1,5 +1,6 @@
 import { ponder } from "ponder:registry";
 import { sql } from "ponder";
+import { createCowCacheTables } from "../helpers/composableCache";
 import { log } from "../helpers/logger";
 
 /**
@@ -16,8 +17,10 @@ import { log } from "../helpers/logger";
  *   - Open orders: not cached — always re-fetched
  */
 ponder.on("ComposableCow:setup", async ({ context }) => {
-  // Create a separate schema that Ponder's per-deployment schema management won't touch.
-  await context.db.sql.execute(sql`CREATE SCHEMA IF NOT EXISTS cow_cache`);
+  // Create the cow_cache schema + the tables the drain worker owns (composable_order,
+  // owner_drain_state). Shared with src/worker/drain.ts so table existence is not
+  // startup-ordering-dependent — either process can create them first.
+  await createCowCacheTables(context.db.sql);
 
   // Per-UID cache of terminal order data, keyed by (chain_id, order_uid). Used by
   // both the discrete-order path (status + executed amounts) and the flash-loan
@@ -51,40 +54,10 @@ ponder.on("ComposableCow:setup", async ({ context }) => {
   // dedicated table if a prior build created it.
   await context.db.sql.execute(sql`DROP TABLE IF EXISTS cow_cache.flash_loan_order_cache`);
 
-  // Durable per-owner composable-order rows, keyed by (chain_id, order_uid). Unlike
-  // order_uid_cache (per-UID terminal status only), this holds every field needed to
-  // rebuild a discreteOrder row without re-hitting the orderbook — so OwnerBackfill
-  // drains only the delta newer than MAX(creation_date) on each redeploy instead of
-  // the owner's full history. generator_hash (not the per-deployment eventId) is stored
-  // so rows survive reindex and re-map to the current generator by hash.
-  await context.db.sql.execute(sql`
-    CREATE TABLE IF NOT EXISTS cow_cache.composable_order (
-      chain_id              INTEGER NOT NULL,
-      order_uid             TEXT NOT NULL,
-      owner                 TEXT NOT NULL,
-      generator_hash        TEXT NOT NULL,
-      order_type            TEXT NOT NULL,
-      status                TEXT NOT NULL,
-      sell_amount           TEXT NOT NULL,
-      buy_amount            TEXT NOT NULL,
-      fee_amount            TEXT NOT NULL,
-      valid_to              INTEGER,
-      creation_date         BIGINT NOT NULL,
-      executed_sell_amount   TEXT,
-      executed_buy_amount    TEXT,
-      fetched_at            BIGINT NOT NULL,
-      PRIMARY KEY (chain_id, order_uid)
-    )
-  `);
-  await context.db.sql.execute(sql`
-    CREATE INDEX IF NOT EXISTS composable_order_owner_idx
-      ON cow_cache.composable_order (chain_id, owner)
-  `);
-
   // Log surviving cache entries — non-zero means cache persisted across restart/resync
   const result = await context.db.sql.execute(
     sql`SELECT COUNT(*)::int AS count FROM cow_cache.order_uid_cache`,
-  ) as { count: number }[];
+  ) as unknown as { count: number }[];
   const count = result[0]?.count ?? 0;
 
   log("info", "setup:cacheReady", { count, entries: `${count} entr${count === 1 ? "y" : "ies"} from previous run` });

@@ -146,32 +146,25 @@ export default createConfig({
       ),
       interval: 1,
     },
-    // OwnerBackfill (historical) — drains non-deterministic generators' history during
-    // the event backfill (startBlock = composableCow start block), so the orderbook drain
-    // overlaps historical sync and is largely done by the tip. Coarse interval keeps the
-    // idle-block overhead low; each firing drains a bounded batch
-    // (MAX_OWNERS_BACKFILL_PER_BLOCK_<chainId>). Ends at "latest"; OwnerBackfillLive
-    // continues from there. Readiness is gated on completion (/readyz).
+    // OwnerBackfill — projection-only (HTTP-free). Projects fully-drained owners'
+    // cached composable orders (cow_cache.composable_order) into discreteOrder and flips
+    // historyBackfilled. The orderbook drain itself runs in the standalone worker
+    // (src/worker/drain.ts), not here (COW-1118).
+    //
+    // One registration, no endBlock: it fires through the historical backfill AND
+    // continues into realtime, so owners the worker completes after the tip still get
+    // projected (the old OwnerBackfillLive registration is gone). Coarse interval keeps
+    // the per-firing overhead low across the long backfill; because each firing is a
+    // cheap DB-only query, a completed owner is projected within one interval, bounding
+    // its contribution to time-to-ready — it can never wedge readiness.
     OwnerBackfill: {
       chain: Object.fromEntries(
         ACTIVE_CHAINS.map((c) => [
           c.name,
           {
             startBlock: c.composableCow.startBlock,
-            endBlock: "latest" as const,
             interval: 250,
           },
-        ])
-      ),
-      interval: 1,
-    },
-    // OwnerBackfillLive — same drain, from the tip onward at a fine cadence: mops up
-    // owners created late in the backfill and any not finished before the tip.
-    OwnerBackfillLive: {
-      chain: Object.fromEntries(
-        ACTIVE_CHAINS.map((c) => [
-          c.name,
-          { startBlock: "latest" as const, interval: c.blockTime < 8 ? 10 : 4 },
         ])
       ),
       interval: 1,

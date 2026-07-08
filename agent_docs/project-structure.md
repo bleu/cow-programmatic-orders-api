@@ -11,7 +11,11 @@
 | `schema/relations.ts` | Drizzle relations: `transaction → many(conditionalOrderGenerators)`, `conditionalOrderGenerator → one(transaction) + many(discreteOrders)`, `discreteOrder → one(conditionalOrderGenerator)` |
 | `src/data.ts` | Contract addresses + start blocks per chain; exports `ComposableCowContract` consumed by `ponder.config.ts` |
 | `src/api/index.ts` | Hono app exposing `/sql/*` (Ponder SQL client) and `/` + `/graphql` (GraphQL) |
-| `src/application/handlers/composableCow.ts` | `ConditionalOrderCreated` event handler — computes hash, upserts `transaction` row, inserts `conditionalOrderGenerator` row |
+| `src/application/handlers/composableCow.ts` | `ConditionalOrderCreated` event handler — computes hash, upserts `transaction` row, inserts `conditionalOrderGenerator` row, enqueues non-deterministic owners into `cow_cache.owner_drain_state` |
+| `src/application/handlers/block/ownerBackfill.ts` | OwnerBackfill projection (DB-only) — projects `complete` owners' cached rows into `discreteOrder` and flips `historyBackfilled` |
+| `src/application/helpers/orderbookHttp.ts` | Ponder-free orderbook HTTP client (retry/backoff, account pagination, by_uids) — shared by the indexer and the drain worker |
+| `src/application/helpers/composableCache.ts` | Ponder-free `cow_cache` tables (`composable_order`, `owner_drain_state`) + decode/hash + drain-state helpers + shared DDL |
+| `src/worker/drain.ts` | Standalone OwnerBackfill drain worker (`pnpm drain`) — fetches owner history into `cow_cache`, coordinating with the indexer only via `cow_cache` (COW-1118) |
 | `abis/ComposableCowAbi.ts` | Full ComposableCoW ABI (all events + functions) |
 | `vite.config.ts` | Vite config with `tsconfigPaths` plugin for Ponder bundler |
 | `tsconfig.json` | TypeScript config (`moduleResolution: bundler`, strict, ES2022) |
@@ -129,6 +133,7 @@ src/data.ts
 ```bash
 pnpm dev          # Start Ponder in development mode (hot reload)
 pnpm start        # Start Ponder in production mode
+pnpm drain        # Start the OwnerBackfill drain worker (needs DATABASE_URL; separate process)
 pnpm codegen      # Generate ponder-env.d.ts (run after config/schema changes)
 pnpm typecheck    # tsc --noEmit
 pnpm lint         # ESLint on all .ts files

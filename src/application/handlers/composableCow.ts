@@ -45,6 +45,7 @@ import {
 import { encodeAbiParameters, keccak256, type Hex } from "viem";
 import { getOrderTypeFromHandler, isNonDeterministic, type OrderType } from "../../utils/order-types";
 import { decodeStaticInput } from "../../decoders/index";
+import { enqueueOwnerDrain } from "../helpers/composableCache";
 import { precomputeAndDiscover } from "../helpers/uidPrecompute";
 import { CirclesBackingOrderAbi } from "../../../abis/CirclesBackingOrderAbi";
 import { log } from "../helpers/logger";
@@ -232,6 +233,15 @@ async function insertGenerator(
       historyBackfilled: isLive || !isNonDeterministic(orderType),
     })
     .onConflictDoNothing();
+
+  // Enqueue the owner for the standalone drain worker. HTTP-free — just a durable INSERT.
+  // ON CONFLICT DO NOTHING never resets an already-'complete' owner when a reindex replays
+  // history. Both historical and live non-deterministic owners are enqueued: the worker is
+  // the single source of the durable composable cache, and the projection only flips the
+  // (historical) generators whose historyBackfilled is still false.
+  if (isNonDeterministic(orderType)) {
+    await enqueueOwnerDrain(context.db.sql, chainId, ownerAddress);
+  }
 
   return { ownerAddress, chainId, decodedParams, orderType };
 }

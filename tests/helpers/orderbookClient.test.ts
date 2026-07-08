@@ -19,7 +19,9 @@ vi.mock("ponder", () => ({
 
 import * as data from "../../src/data";
 import { ORDERBOOK_MAX_RETRIES } from "../../src/constants";
-import { fetchAccountOrders, fetchComposableOrders, fetchFlashLoanEnrichmentByUids, fetchOrderStatusByUids, fetchOwnerOrderStatuses } from "../../src/application/helpers/orderbookClient";
+import { fetchAccountOrders, fetchFlashLoanEnrichmentByUids, fetchOrderStatusByUids, fetchOwnerOrderStatuses } from "../../src/application/helpers/orderbookClient";
+import { fetchAccountOrderPage } from "../../src/application/helpers/orderbookHttp";
+import { filterAndProcessForCache } from "../../src/application/helpers/composableCache";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -479,19 +481,17 @@ describe("fetchOwnerOrderStatuses", () => {
   });
 });
 
-// ─── fetchComposableOrders full-history drain tests ───────────────────────────
+// ─── drain worker: offset-walk page fetch ─────────────────────────────────────
 
-describe("fetchComposableOrders — full-history drain", () => {
+describe("fetchAccountOrderPage — single-page offset fetch", () => {
   const DRAIN_OWNER = "0x3333333333333333333333333333333333333333" as Hex;
 
-  it("paginates the full account history at limit=1000, past the old 100-order cap", async () => {
+  it("returns the raw page at the requested offset (untrimmed, for offset-walk termination)", async () => {
     const receivedOffsets: number[] = [];
     const receivedLimits = new Set<string>();
 
-    // 3 pages of the account endpoint: 1000 + 1000 + 500 = 2500 orders,
-    // mimicking a large-history owner. All are non-composable (signature "0x"
-    // decodes to null), so they filter out and no generator lookup is needed —
-    // but fetchAccountOrders still drains every page first.
+    // Mimic a large-history owner. The worker advances offset by the raw page length and
+    // stops on a short page, so each call must surface the untrimmed page.
     const { url, close } = await startServer((req, res) => {
       const parsed = new URL(req.url ?? "/", "http://127.0.0.1");
       const offset = parseInt(parsed.searchParams.get("offset") ?? "0", 10);
@@ -508,12 +508,13 @@ describe("fetchComposableOrders — full-history drain", () => {
 
     try {
       await withFakeApi(TEST_CHAIN_ID, url, async () => {
-        await fetchComposableOrders(makeContext(), TEST_CHAIN_ID, DRAIN_OWNER);
+        const apiBaseUrl = data.ORDERBOOK_API_URLS[TEST_CHAIN_ID]!;
+        const first = await fetchAccountOrderPage(apiBaseUrl, DRAIN_OWNER, 0, 1000);
+        const last = await fetchAccountOrderPage(apiBaseUrl, DRAIN_OWNER, 2000, 1000);
 
-        // Old behavior capped at 4 pages × 25 = offsets 0,25,50,75 — never past 100.
-        expect(receivedOffsets).toContain(0);
-        expect(receivedOffsets).toContain(1000);
-        expect(receivedOffsets).toContain(2000);
+        expect(first).toHaveLength(1000); // full page → walk continues
+        expect(last).toHaveLength(500); // short page → walk stops here
+        expect(receivedOffsets).toEqual([0, 2000]);
         expect(receivedLimits).toEqual(new Set(["1000"]));
       });
     } finally {
@@ -522,77 +523,20 @@ describe("fetchComposableOrders — full-history drain", () => {
   });
 });
 
-// ─── fetchComposableOrders durable-cache rebuild test ─────────────────────────
+// ─── filterAndProcessForCache: composable filtering (no DB) ───────────────────
 
-describe("fetchComposableOrders — rebuild from durable cache", () => {
-  const OWNER = "0x2222222222222222222222222222222222222222" as Hex;
-  const GEN_HASH = `0x${"cc".repeat(32)}`;
-
-  // Simulates a post-reindex deploy: discreteOrder is empty, but cow_cache.composable_order
-  // still holds the owner's history and the orderbook has nothing new past the cursor.
-  function makeIncrementalContext(opts: {
-    cursor: string;
-    cacheRows: Record<string, unknown>[];
-    generators: { eventId: string; hash: string }[];
-  }) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const select = (proj: any) => ({
-      from: () => ({
-        where: async () => {
-          if (proj.cursor !== undefined) return [{ cursor: opts.cursor }];
-          if (proj.eventId !== undefined) return opts.generators;
-          return opts.cacheRows;
-        },
-      }),
-    });
-    return {
-      db: { sql: {
-        select,
-        insert: () => ({ values: () => ({ onConflictDoUpdate: async () => {} }) }),
-      } },
-    };
-  }
-
-  it("returns the cached history re-mapped to the current generator eventId when no new orders exist", async () => {
-    // Orderbook returns nothing newer than the cursor.
-    const { url, close } = await startServer((_req, res) => {
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end("[]");
-    });
-
-    const cacheRows = [
-      {
-        orderUid: "0xcached-order",
-        generatorHash: GEN_HASH,
-        orderType: "PerpetualSwap",
-        status: "fulfilled",
-        sellAmount: "1000",
-        buyAmount: "2000",
-        feeAmount: "0",
-        validTo: 9999999999,
-        creationDate: 1700000000n,
-        executedSellAmount: "1000",
-        executedBuyAmount: "2000",
-      },
-    ];
-    const ctx = makeIncrementalContext({
-      cursor: "1700000000",
-      cacheRows,
-      // eventId differs from any prior deployment — the row is keyed by the stable hash.
-      generators: [{ eventId: "gen-current", hash: GEN_HASH }],
-    });
-
-    try {
-      await withFakeApi(TEST_CHAIN_ID, url, async () => {
-        const { orders } = await fetchComposableOrders(ctx, TEST_CHAIN_ID, OWNER);
-        expect(orders).toHaveLength(1);
-        expect(orders[0]!.uid).toBe("0xcached-order");
-        expect(orders[0]!.generatorId).toBe("gen-current");
-        expect(orders[0]!.status).toBe("fulfilled");
-      });
-    } finally {
-      await close();
-    }
+describe("filterAndProcessForCache", () => {
+  it("drops non-eip1271 and undecodable orders (signature '0x' → null)", () => {
+    const rows = filterAndProcessForCache(TEST_CHAIN_ID, [
+      // Non-eip1271 → dropped before decode.
+      { ...makeOrderStub({ uid: UID_A, status: "open" }), signingScheme: "eip712" },
+      // eip1271 but signature "0x" decodes to null → dropped.
+      makeOrderStub({ uid: UID_B, status: "open" }),
+      // presignaturePending is skipped explicitly.
+      makeOrderStub({ uid: `0x${"cc".repeat(56)}`, status: "presignaturePending" as never }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ] as any);
+    expect(rows).toEqual([]);
   });
 });
 

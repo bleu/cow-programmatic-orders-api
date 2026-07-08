@@ -100,13 +100,35 @@ export const SETTLEMENT_INNER_RPC_TIMEOUT_MS = 5_000;
 export const BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS = 30_000;
 
 /**
- * Per-block ceiling on how many distinct owners OwnerBackfill drains in a single
- * firing. Bounds the transaction size and the per-block orderbook request rate so
- * the historical drain spreads across live-sync blocks instead of one burst.
+ * Per-firing ceiling on how many pending owners the OwnerBackfill projection
+ * processes. The projection is DB-only (read the durable cache → discreteOrder,
+ * flip historyBackfilled), so this just bounds the transaction size; owners past
+ * the cap are picked up on the next firing.
  *
  * Override per chain with env var MAX_OWNERS_BACKFILL_PER_BLOCK_<chainId>.
  */
 export const DEFAULT_MAX_OWNERS_BACKFILL_PER_BLOCK = 25;
+
+// ─── Drain worker (src/worker/drain.ts) ───────────────────────────────────────
+
+/**
+ * How many owners the standalone drain worker drains concurrently. The orderbook
+ * rate limit is not the binding constraint (no 429s observed even at 300 concurrent
+ * requests); per-page latency/payload is, so a modest fan-out keeps time-to-drain
+ * low without risk. Override with env var DRAIN_OWNER_CONCURRENCY.
+ */
+export const DRAIN_OWNER_CONCURRENCY = 10;
+
+/** Idle backoff when the drain worker finds no claimable owners. Override with DRAIN_IDLE_SLEEP_MS. */
+export const DRAIN_IDLE_SLEEP_MS = 5_000;
+
+/**
+ * Lease TTL for a claimed ('draining') owner. A worker crash leaves an owner
+ * 'draining' forever; after this TTL another claim reclaims it (its next_offset is
+ * durably committed per page, so the walk resumes rather than restarts). Long
+ * enough to cover the slowest single-owner walk. Override with DRAIN_LEASE_TTL_MS.
+ */
+export const DRAIN_LEASE_TTL_MS = 300_000;
 
 /**
  * Maximum number of TWAP parts that precomputeOrderUids will attempt to enumerate.

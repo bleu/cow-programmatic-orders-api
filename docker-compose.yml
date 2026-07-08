@@ -75,6 +75,38 @@ services:
         max-file: "5"
     profiles: [deploy]
 
+  # OwnerBackfill drain worker — a long-lived sidecar that fetches non-deterministic
+  # owners' historical orders from the orderbook and fills cow_cache. Separate process so
+  # the slow HTTP drain never serializes into Ponder's single indexing slot (COW-1118).
+  # Touches ONLY the cow_cache schema (never Ponder's versioned schema), so it is
+  # deployment-independent: one worker serves every blue-green deploy and survives reindex.
+  # It needs no DATABASE_SCHEMA and no RPC URLs — only DATABASE_URL and outbound HTTPS to
+  # api.cow.fi. Reuses the same image; just a different command.
+  drain:
+    image: ${PROJECT_PREFIX:?error}-ponder:${APP_REVISION:?error}
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PIPELINE_BUILD_TAG: ${APP_REVISION}
+    command: ["pnpm", "drain"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-programmatic-orders} # ggignore
+      # Optional tuning (defaults in src/constants.ts):
+      # DRAIN_OWNER_CONCURRENCY: "10"
+      # DRAIN_IDLE_SLEEP_MS: "5000"
+      # DRAIN_LEASE_TTL_MS: "300000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    profiles: [deploy]
+
 volumes:
   postgres-data:
     name: ${PROJECT_PREFIX:-local}-postgres-data
