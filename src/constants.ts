@@ -113,7 +113,7 @@ export const BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS = 30_000;
  *
  * Override per chain with env var MAX_OWNERS_BACKFILL_PER_BLOCK_<chainId>.
  */
-export const DEFAULT_MAX_OWNERS_BACKFILL_PER_BLOCK = 3;
+export const DEFAULT_MAX_OWNERS_BACKFILL_PER_BLOCK = 10;
 
 /**
  * How many owner history fetches OwnerBackfill runs concurrently within a single
@@ -123,7 +123,7 @@ export const DEFAULT_MAX_OWNERS_BACKFILL_PER_BLOCK = 3;
  *
  * Override per chain with env var MAX_OWNERS_BACKFILL_CONCURRENCY_<chainId>.
  */
-export const DEFAULT_OWNER_BACKFILL_CONCURRENCY = 5;
+export const DEFAULT_OWNER_BACKFILL_CONCURRENCY = 10;
 
 /**
  * Maximum number of TWAP parts that precomputeOrderUids will attempt to enumerate.
