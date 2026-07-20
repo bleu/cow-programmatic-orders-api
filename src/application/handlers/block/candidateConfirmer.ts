@@ -9,6 +9,7 @@ import {
 } from "../../../constants";
 import { fetchOrderStatusByUids, fetchOwnerOrderStatuses } from "../../helpers/orderbookClient";
 import { withTimeout } from "../../helpers/withTimeout";
+import { bumpGeneratorsUpdatedAt } from "../../helpers/updatedAtBlock";
 import { log } from "../../helpers/logger";
 import { type DiscreteStatus } from "./shared";
 
@@ -108,6 +109,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
                 executedSellAmount: apiEntry?.executedSellAmount ?? null,
                 executedBuyAmount: apiEntry?.executedBuyAmount ?? null,
                 promotedAt: event.block.timestamp,
+                updatedAtBlock: event.block.number,
               };
             }),
           )
@@ -125,6 +127,13 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
             ),
           );
       }
+
+      await bumpGeneratorsUpdatedAt(
+        context,
+        chainId,
+        orphanCandidates.map((c) => c.generatorId),
+        event.block.number,
+      );
 
       const preflightKnown = preflightStatuses.size;
       log("info", "CandidateConfirmer:parent_cancelled", { block: String(event.block.number), chainId, parentCancelled: orphanCandidates.length, preflightKnown });
@@ -195,6 +204,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
       executedSellAmount: orderbookEntry.executedSellAmount,
       executedBuyAmount: orderbookEntry.executedBuyAmount,
       promotedAt: event.block.timestamp,
+      updatedAtBlock: event.block.number,
     });
     confirmedUids.push(candidate.orderUid);
   }
@@ -211,8 +221,16 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
           executedSellAmount: sql`excluded.executed_sell_amount`,
           executedBuyAmount: sql`excluded.executed_buy_amount`,
           promotedAt: sql`excluded.promoted_at`,
+          updatedAtBlock: sql`excluded.updated_at_block`,
         },
       });
+
+    await bumpGeneratorsUpdatedAt(
+      context,
+      chainId,
+      rowsToUpsert.map((r) => r.conditionalOrderGeneratorId),
+      event.block.number,
+    );
   }
 
   const confirmed = rowsToUpsert.length;
@@ -316,6 +334,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
         executedSellAmount: entry?.executedSellAmount ?? null,
         executedBuyAmount: entry?.executedBuyAmount ?? null,
         promotedAt: event.block.timestamp,
+        updatedAtBlock: event.block.number,
       };
     });
 
@@ -323,6 +342,13 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
       .insert(discreteOrder)
       .values(staleRows)
       .onConflictDoNothing();
+
+    await bumpGeneratorsUpdatedAt(
+      context,
+      chainId,
+      staleRows.map((r) => r.conditionalOrderGeneratorId),
+      event.block.number,
+    );
 
     await context.db.sql
       .delete(candidateDiscreteOrder)

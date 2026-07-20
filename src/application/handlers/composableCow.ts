@@ -228,6 +228,7 @@ async function insertGenerator(
       // creation, and live-created generators are owned by the realtime poller — both
       // are "already backfilled" so they don't gate readiness. See ownerBackfill.ts.
       historyBackfilled: isLive || !isNonDeterministic(orderType),
+      updatedAtBlock: event.block.number,
     })
     .onConflictDoNothing();
 
@@ -245,7 +246,7 @@ ponder.on(
     // Fetches status from API by UID, upserts discrete orders, and
     // deactivates the generator if all orders are already terminal.
     await precomputeAndDiscover(
-      context, chainId, event.id, ownerAddress, orderType, decodedParams, event.block.timestamp,
+      context, chainId, event.id, ownerAddress, orderType, decodedParams, event.block.timestamp, event.block.number,
     );
   },
 );
@@ -260,7 +261,7 @@ ponder.on(
     const { ownerAddress, chainId, decodedParams, orderType } = await insertGenerator(event, context, true);
 
     await precomputeAndDiscover(
-      context, chainId, event.id, ownerAddress, orderType, decodedParams, event.block.timestamp,
+      context, chainId, event.id, ownerAddress, orderType, decodedParams, event.block.timestamp, event.block.number,
     );
   },
 );

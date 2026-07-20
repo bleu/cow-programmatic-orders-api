@@ -26,6 +26,7 @@ import {
   SIGNING_SCHEME_EIP1271,
 } from "../../../constants";
 import { TimeoutError, withTimeout } from "../withTimeout";
+import { bumpGeneratorsUpdatedAt } from "../updatedAtBlock";
 import { log } from "../logger";
 import { fetchAccountOrders, fetchOrdersByUids } from "./http";
 import {
@@ -115,6 +116,7 @@ export async function upsertDiscreteOrders(
   context: Context,
   chainId: number,
   orders: ComposableOrder[],
+  blockNumber: bigint,
 ): Promise<number> {
   if (orders.length === 0) return 0;
   // One multi-row upsert instead of N individual roundtrips.
@@ -132,6 +134,7 @@ export async function upsertDiscreteOrders(
       creationDate: order.creationDate,
       executedSellAmount: order.executedSellAmount,
       executedBuyAmount: order.executedBuyAmount,
+      updatedAtBlock: blockNumber,
     })))
     .onConflictDoUpdate({
       target: [discreteOrder.chainId, discreteOrder.orderUid],
@@ -140,8 +143,15 @@ export async function upsertDiscreteOrders(
         validTo: sql`excluded.valid_to`,
         executedSellAmount: sql`excluded.executed_sell_amount`,
         executedBuyAmount: sql`excluded.executed_buy_amount`,
+        updatedAtBlock: sql`excluded.updated_at_block`,
       },
     });
+  await bumpGeneratorsUpdatedAt(
+    context,
+    chainId,
+    orders.map((order) => order.generatorId),
+    blockNumber,
+  );
   return orders.length;
 }
 

@@ -29,6 +29,8 @@ export const discreteOrderDocs: DocMap = {
     "Actual buy amount received after settlement. Null before the order is fulfilled.",
   "discreteOrder.promotedAt":
     "Unix timestamp (seconds) when CandidateConfirmer promoted this row from candidateDiscreteOrder. Null means the row was created directly without going through the candidate stage (TWAP/StopLoss precomputation at creation time, or OwnerBackfill). Non-null means this order was first discovered on-chain by OrderDiscoveryPoller or UID precomputation, held as a candidate until the orderbook API confirmed it (or until it expired).",
+  "discreteOrder.updatedAtBlock":
+    "Incremental-sync cursor: the indexer's processing block when this row was inserted or its status / executed amounts last changed. NOT the block the change happened on-chain (fills and expiries are discovered by polling the orderbook, so the value is the poll block). Every change here also bumps the parent generator's updatedAtBlock, so clients can poll changed generators per owner first, then fetch changed parts with conditionalOrderGeneratorId_in + updatedAtBlock_gte (inclusive; keep one cursor per chainId and merge rows by (chainId, orderUid) — duplicates are idempotent). Block reorgs are out of scope: changes re-applied below your cursor can be missed by a synced cache.",
   "discreteOrder.conditionalOrderGenerator":
     "The parent generator that produced this discrete order.",
 
