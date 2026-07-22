@@ -230,6 +230,7 @@ async function insertGenerator(
       // Unknown and CowAmmConstantProduct are excluded from the backfill entirely
       // (OWNER_BACKFILL_EXCLUDED), so they're also born "already backfilled".
       historyBackfilled: isLive || !isOwnerBackfillEligible(orderType),
+      updatedAtBlock: event.block.number,
     })
     .onConflictDoNothing();
 
@@ -247,7 +248,7 @@ ponder.on(
     // Fetches status from API by UID, upserts discrete orders, and
     // deactivates the generator if all orders are already terminal.
     await precomputeAndDiscover(
-      context, chainId, event.id, ownerAddress, orderType, decodedParams, event.block.timestamp,
+      context, chainId, event.id, ownerAddress, orderType, decodedParams, event.block.timestamp, event.block.number,
     );
   },
 );
@@ -262,7 +263,7 @@ ponder.on(
     const { ownerAddress, chainId, decodedParams, orderType } = await insertGenerator(event, context, true);
 
     await precomputeAndDiscover(
-      context, chainId, event.id, ownerAddress, orderType, decodedParams, event.block.timestamp,
+      context, chainId, event.id, ownerAddress, orderType, decodedParams, event.block.timestamp, event.block.number,
     );
   },
 );

@@ -99,6 +99,10 @@ export const conditionalOrderGenerator = onchainTable(
     nextCheckTimestamp: t.bigint(),        // for PollTryAtEpoch — store epoch directly
     consecutiveTryNextBlock: t.integer().notNull().default(0),  // Backoff counter for stuck generators
     historyBackfilled: t.boolean().notNull().default(false),    // OwnerBackfill has drained this generator's full /account history
+    // Sync cursor: the indexer's processing block of the last client-relevant
+    // change (insert, status change, or any change to a child discrete order).
+    // NOT bumped for polling metadata or standalone allCandidatesKnown flips.
+    updatedAtBlock: t.bigint().notNull(),
   }),
   (table) => ({
     pk: primaryKey({ columns: [table.chainId, table.eventId] }),
@@ -117,6 +121,10 @@ export const conditionalOrderGenerator = onchainTable(
     // (chainId, status, historyBackfilled).
     historyBackfilledIdx: index("generator_history_backfilled_idx")
       .on(table.chainId, table.status, table.historyBackfilled),
+    // Incremental sync: clients poll changed generators per owner with
+    // updatedAtBlock >= cursor.
+    updatedAtIdx: index("generator_updated_at_idx")
+      .on(table.chainId, table.resolvedOwner, table.updatedAtBlock),
   })
 );
 
@@ -135,6 +143,10 @@ export const discreteOrder = onchainTable(
     executedSellAmount: t.text(),                     // actual executed amount (from API, post-settlement)
     executedBuyAmount: t.text(),                      // actual executed amount (from API, post-settlement)
     promotedAt: t.bigint(),                           // block timestamp when CandidateConfirmer promoted from candidate; null = created directly (precompute or OwnerBackfill)
+    // Sync cursor: the indexer's processing block of the last insert or
+    // status/executed-amount change. Every change here also bumps the parent
+    // generator's updatedAtBlock.
+    updatedAtBlock: t.bigint().notNull(),
   }),
   (table) => ({
     pk: primaryKey({ columns: [table.chainId, table.orderUid] }),
@@ -143,6 +155,10 @@ export const discreteOrder = onchainTable(
     // OrderStatusTracker: per-block SELECT with chainId + status='open', ORDER BY promotedAt.
     discreteOrderStatusIdx: index("discrete_order_status_idx")
       .on(table.chainId, table.status, table.promotedAt),
+    // Incremental sync: clients fetch changed parts of changed generators with
+    // conditionalOrderGeneratorId IN (...) + updatedAtBlock >= cursor.
+    updatedAtIdx: index("discrete_order_updated_at_idx")
+      .on(table.chainId, table.conditionalOrderGeneratorId, table.updatedAtBlock),
   })
 );
 

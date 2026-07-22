@@ -14,7 +14,7 @@
  *   cancellation path via ComposableCoW.remove().
  */
 
-import { sql } from "ponder";
+import { and, eq, inArray, sql } from "ponder";
 import {
   discreteOrder,
 } from "ponder:schema";
@@ -27,6 +27,7 @@ import {
   UPSERT_CHUNK_SIZE,
 } from "../../../constants";
 import { TimeoutError, withTimeout } from "../withTimeout";
+import { bumpGeneratorsUpdatedAt } from "../updatedAtBlock";
 import { log } from "../logger";
 import { fetchAccountOrders, fetchOrdersByUids } from "./http";
 import {
@@ -88,6 +89,7 @@ export async function drainOwnerSlice(
   context: Context,
   chainId: number,
   owner: Hex,
+  blockNumber: bigint,
   signal?: AbortSignal,
 ): Promise<OwnerDrainResult> {
   const apiBaseUrl = ORDERBOOK_API_URLS[chainId];
@@ -98,8 +100,8 @@ export async function drainOwnerSlice(
 
   const state = await readOwnerDrainState(context, chainId, owner);
   return state.fullyDrained
-    ? drainOwnerDelta(context, chainId, owner, apiBaseUrl, state, signal)
-    : drainOwnerFull(context, chainId, owner, apiBaseUrl, state, signal);
+    ? drainOwnerDelta(context, chainId, owner, apiBaseUrl, state, blockNumber, signal)
+    : drainOwnerFull(context, chainId, owner, apiBaseUrl, state, blockNumber, signal);
 }
 
 /** Full-history drain: resumable page-by-page ingestion, then one completion pass. */
@@ -109,6 +111,7 @@ async function drainOwnerFull(
   owner: Hex,
   apiBaseUrl: string,
   state: OwnerDrainState,
+  blockNumber: bigint,
   signal?: AbortSignal,
 ): Promise<OwnerDrainResult> {
   log("info", "ob:fullDrain", { owner, chainId, startOffset: state.nextOffset });
@@ -117,7 +120,7 @@ async function drainOwnerFull(
   const onPage = async (pageOrders: OrderbookOrder[], nextOffset: number): Promise<void> => {
     const matched = await filterAndProcess(context, chainId, pageOrders);
     await upsertComposableCache(context, chainId, owner, matched.map(toCacheRow));
-    discovered += await upsertDiscreteOrders(context, chainId, matched);
+    discovered += await upsertDiscreteOrders(context, chainId, matched, blockNumber);
 
     // The first order of the offset-0 page is the newest order at drain start: the
     // delta-cursor candidate. Orders created mid-drain are newer, so a later delta
@@ -146,7 +149,9 @@ async function drainOwnerFull(
   const cachedRows = await readOwnerComposableCache(context, chainId, owner);
   const reconciled = await reconcileOpenCachedRows(context, chainId, owner, apiBaseUrl, cachedRows, signal);
   const results = await remapToCurrentGenerators(context, chainId, reconciled);
-  await upsertDiscreteOrders(context, chainId, results);
+  // Counts only rows the reconcile actually changed — page upserts above already
+  // counted the rest.
+  discovered += await upsertDiscreteOrders(context, chainId, results, blockNumber);
 
   // If the slice deadline hit during the reconcile, statuses may be stale — keep the
   // owner eligible; the next attempt resumes at the tail (one page) and retries
@@ -170,6 +175,7 @@ async function drainOwnerDelta(
   owner: Hex,
   apiBaseUrl: string,
   state: OwnerDrainState,
+  blockNumber: bigint,
   signal?: AbortSignal,
 ): Promise<OwnerDrainResult> {
   log("info", "ob:deltaDrain", { owner, chainId, since: state.deltaCursor ?? null });
@@ -190,19 +196,19 @@ async function drainOwnerDelta(
   const cachedRows = await readOwnerComposableCache(context, chainId, owner);
   const reconciled = await reconcileOpenCachedRows(context, chainId, owner, apiBaseUrl, cachedRows, signal);
   const results = await remapToCurrentGenerators(context, chainId, reconciled);
-  await upsertDiscreteOrders(context, chainId, results);
+  const discovered = await upsertDiscreteOrders(context, chainId, results, blockNumber);
 
   if (signal?.aborted) {
     log("warn", "ob:deltaDrainIncomplete", { owner, chainId, aborted: true, at: "reconcile" });
-    return { discovered: delta.length, complete: false };
+    return { discovered, complete: false };
   }
 
   // Newest raw order in the delta (pages are newest-first) becomes the next cursor.
   const newest = deltaApiOrders[0];
   if (newest) await writeOwnerDeltaCursor(context, chainId, owner, creationSeconds(newest));
 
-  log("info", "ob:deltaDrainDone", { owner, chainId, since: state.deltaCursor ?? null, delta: delta.length, total: results.length });
-  return { discovered: results.length, complete: true };
+  log("info", "ob:deltaDrainDone", { owner, chainId, since: state.deltaCursor ?? null, delta: delta.length, total: results.length, discovered });
+  return { discovered, complete: true };
 }
 
 /**
@@ -210,17 +216,55 @@ async function drainOwnerDelta(
  * Uses onConflictDoUpdate so the API's authoritative status overwrites
  * the block handler's initial "open". Chunked to stay clear of Postgres'
  * 65,535-bind-param statement cap on whale owners.
+ * Returns the number of rows actually inserted or changed, not the input size.
  */
 export async function upsertDiscreteOrders(
   context: Context,
   chainId: number,
   orders: ComposableOrder[],
+  blockNumber: bigint,
 ): Promise<number> {
+  if (orders.length === 0) return 0;
+
+  let changedCount = 0;
+  const changedGeneratorIds: string[] = [];
   for (let i = 0; i < orders.length; i += UPSERT_CHUNK_SIZE) {
     const chunk = orders.slice(i, i + UPSERT_CHUNK_SIZE);
+
+    // Skip no-op writes: resumed drain slices and delta rebuilds re-upsert pages
+    // already persisted. Without this filter every retry would bump updatedAtBlock
+    // on untouched rows and their parent generators, making cursor-synced clients
+    // re-fetch data that never changed. Compare only the fields the upsert below
+    // can change.
+    const existingRows = await context.db.sql
+      .select({
+        orderUid: discreteOrder.orderUid,
+        status: discreteOrder.status,
+        validTo: discreteOrder.validTo,
+        executedSellAmount: discreteOrder.executedSellAmount,
+        executedBuyAmount: discreteOrder.executedBuyAmount,
+      })
+      .from(discreteOrder)
+      .where(
+        and(
+          eq(discreteOrder.chainId, chainId),
+          inArray(discreteOrder.orderUid, chunk.map((order) => order.uid)),
+        ),
+      );
+    const existingByUid = new Map(existingRows.map((row) => [row.orderUid, row]));
+    const changedOrders = chunk.filter((order) => {
+      const existing = existingByUid.get(order.uid);
+      return !existing ||
+        existing.status !== order.status ||
+        existing.validTo !== order.validTo ||
+        existing.executedSellAmount !== order.executedSellAmount ||
+        existing.executedBuyAmount !== order.executedBuyAmount;
+    });
+    if (changedOrders.length === 0) continue;
+
     await context.db.sql
       .insert(discreteOrder)
-      .values(chunk.map((order) => ({
+      .values(changedOrders.map((order) => ({
         orderUid: order.uid,
         chainId,
         conditionalOrderGeneratorId: order.generatorId,
@@ -232,6 +276,7 @@ export async function upsertDiscreteOrders(
         creationDate: order.creationDate,
         executedSellAmount: order.executedSellAmount,
         executedBuyAmount: order.executedBuyAmount,
+        updatedAtBlock: blockNumber,
       })))
       .onConflictDoUpdate({
         target: [discreteOrder.chainId, discreteOrder.orderUid],
@@ -240,10 +285,15 @@ export async function upsertDiscreteOrders(
           validTo: sql`excluded.valid_to`,
           executedSellAmount: sql`excluded.executed_sell_amount`,
           executedBuyAmount: sql`excluded.executed_buy_amount`,
+          updatedAtBlock: sql`excluded.updated_at_block`,
         },
       });
+    changedCount += changedOrders.length;
+    changedGeneratorIds.push(...changedOrders.map((order) => order.generatorId));
   }
-  return orders.length;
+
+  await bumpGeneratorsUpdatedAt(context, chainId, changedGeneratorIds, blockNumber);
+  return changedCount;
 }
 
 /**

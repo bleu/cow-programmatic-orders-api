@@ -221,6 +221,7 @@ ponder.on("OrderDiscoveryPoller:block", async ({ event, context }) => {
               lastCheckBlock: currentBlock,
               lastPollResult: `pollNever:${pollResult.reason}`,
               consecutiveTryNextBlock: 0,
+              updatedAtBlock: currentBlock,
             })
             .where(
               and(
@@ -240,6 +241,7 @@ ponder.on("OrderDiscoveryPoller:block", async ({ event, context }) => {
               lastCheckBlock: currentBlock,
               lastPollResult: "cancelled:SingleOrderNotAuthed",
               consecutiveTryNextBlock: 0,
+              updatedAtBlock: currentBlock,
             })
             .where(
               and(

@@ -498,6 +498,7 @@ function makeDrainContext(opts: {
   drainState?: { nextOffset: number; fullyDrained: boolean; deltaCursor: number | null };
   cacheRows?: Record<string, unknown>[];
   generators?: { eventId: string; hash: string; orderType?: string }[];
+  existingDiscreteRows?: Record<string, unknown>[];
 } = {}) {
   const inserted: Record<string, unknown>[] = [];
   let insertStatements = 0;
@@ -508,6 +509,8 @@ function makeDrainContext(opts: {
         let rows: unknown[];
         if (proj.nextOffset !== undefined) rows = opts.drainState ? [opts.drainState] : [];
         else if (proj.eventId !== undefined) rows = opts.generators ?? [];
+        // upsertDiscreteOrders change detection: discreteOrder rows have no generatorHash.
+        else if (proj.orderUid !== undefined && proj.generatorHash === undefined) rows = opts.existingDiscreteRows ?? [];
         else rows = opts.cacheRows ?? [];
         return Object.assign(Promise.resolve(rows), { limit: () => Promise.resolve(rows) });
       },
@@ -523,8 +526,10 @@ function makeDrainContext(opts: {
       return { onConflictDoUpdate: record, onConflictDoNothing: record };
     },
   });
+  // bumpGeneratorsUpdatedAt cursor bumps — recorded but not asserted here.
+  const update = () => ({ set: () => ({ where: async () => {} }) });
   return {
-    ctx: { db: { sql: { select, insert } } } as unknown as Context,
+    ctx: { db: { sql: { select, insert, update } } } as unknown as Context,
     inserted,
     statementCount: () => insertStatements,
   };
@@ -558,7 +563,7 @@ describe("drainOwnerSlice — full-history drain", () => {
     try {
       await withFakeApi(TEST_CHAIN_ID, url, async () => {
         const { ctx, inserted } = makeDrainContext();
-        const { complete } = await drainOwnerSlice(ctx, TEST_CHAIN_ID, DRAIN_OWNER);
+        const { complete } = await drainOwnerSlice(ctx, TEST_CHAIN_ID, DRAIN_OWNER, 123n);
 
         expect(receivedOffsets).toContain(0);
         expect(receivedOffsets).toContain(1000);
@@ -594,7 +599,7 @@ describe("drainOwnerSlice — full-history drain", () => {
     try {
       await withFakeApi(TEST_CHAIN_ID, url, async () => {
         const { ctx, inserted } = makeDrainContext();
-        const { complete } = await drainOwnerSlice(ctx, TEST_CHAIN_ID, DRAIN_OWNER);
+        const { complete } = await drainOwnerSlice(ctx, TEST_CHAIN_ID, DRAIN_OWNER, 123n);
 
         expect(complete).toBe(false);
         // Progress banked: resume offset persisted, delta-cursor candidate recorded…
@@ -627,7 +632,7 @@ describe("drainOwnerSlice — full-history drain", () => {
         const { ctx, inserted } = makeDrainContext({
           drainState: { nextOffset: 1000, fullyDrained: false, deltaCursor: 5000 },
         });
-        const { complete } = await drainOwnerSlice(ctx, TEST_CHAIN_ID, DRAIN_OWNER);
+        const { complete } = await drainOwnerSlice(ctx, TEST_CHAIN_ID, DRAIN_OWNER, 123n);
 
         expect(receivedOffsets).toEqual([1000]); // never re-fetched from 0
         expect(complete).toBe(true);
@@ -658,7 +663,7 @@ describe("drainOwnerSlice — full-history drain", () => {
         const origPush = inserted.push.bind(inserted);
         inserted.push = (...rows) => { controller.abort(); return origPush(...rows); };
 
-        const { complete } = await drainOwnerSlice(ctx, TEST_CHAIN_ID, DRAIN_OWNER, controller.signal);
+        const { complete } = await drainOwnerSlice(ctx, TEST_CHAIN_ID, DRAIN_OWNER, 123n, controller.signal);
 
         expect(complete).toBe(false);
         expect(receivedOffsets).toEqual([0]); // no further pages after the abort
@@ -709,7 +714,7 @@ describe("drainOwnerSlice — delta mode (fully drained owner)", () => {
 
     try {
       await withFakeApi(TEST_CHAIN_ID, url, async () => {
-        const { discovered, complete } = await drainOwnerSlice(ctx, TEST_CHAIN_ID, OWNER);
+        const { discovered, complete } = await drainOwnerSlice(ctx, TEST_CHAIN_ID, OWNER, 123n);
         expect(complete).toBe(true);
         expect(discovered).toBe(1);
         const row = inserted.find((r) => r.orderUid === "0xcached-order");
@@ -749,7 +754,7 @@ describe("drainOwnerSlice — delta mode (fully drained owner)", () => {
 
     try {
       await withFakeApi(TEST_CHAIN_ID, url, async () => {
-        const { complete } = await drainOwnerSlice(ctx, TEST_CHAIN_ID, OWNER);
+        const { complete } = await drainOwnerSlice(ctx, TEST_CHAIN_ID, OWNER, 123n);
         expect(complete).toBe(false);
         expect(inserted.some((r) => r.deltaCursor !== undefined && r.deltaCursor !== null)).toBe(false);
       });
@@ -844,7 +849,7 @@ describe("upsertDiscreteOrders — chunking", () => {
     }));
 
     const { ctx, inserted, statementCount } = makeDrainContext();
-    const count = await upsertDiscreteOrders(ctx, TEST_CHAIN_ID, orders);
+    const count = await upsertDiscreteOrders(ctx, TEST_CHAIN_ID, orders, 123n);
 
     expect(count).toBe(orders.length);
     expect(inserted).toHaveLength(orders.length);

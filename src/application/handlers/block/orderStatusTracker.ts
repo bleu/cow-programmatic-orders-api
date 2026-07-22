@@ -4,6 +4,7 @@ import { and, asc, eq, inArray, lte, sql } from "ponder";
 import { type SupportedChainId } from "../../../data";
 import { DEFAULT_MAX_DISCRETE_ORDERS_PER_BLOCK } from "../../../constants";
 import { fetchOrderStatusByUids } from "../../helpers/orderbookClient";
+import { bumpGeneratorsUpdatedAt } from "../../helpers/updatedAtBlock";
 import { log } from "../../helpers/logger";
 
 const VALID_DISCRETE_STATUSES = new Set(["fulfilled", "unfilled", "expired", "cancelled"]);
@@ -72,6 +73,7 @@ ponder.on("OrderStatusTracker:block", async ({ event, context }) => {
         executedSellAmount: info.executedSellAmount ?? null,
         executedBuyAmount: info.executedBuyAmount ?? null,
         promotedAt: order.promotedAt,
+        updatedAtBlock: event.block.number,
       });
     }
 
@@ -87,8 +89,16 @@ ponder.on("OrderStatusTracker:block", async ({ event, context }) => {
             status: sql`excluded.status`,
             executedSellAmount: sql`excluded.executed_sell_amount`,
             executedBuyAmount: sql`excluded.executed_buy_amount`,
+            updatedAtBlock: sql`excluded.updated_at_block`,
           },
         });
+
+      await bumpGeneratorsUpdatedAt(
+        context,
+        chainId,
+        rowsToUpdate.map((r) => r.conditionalOrderGeneratorId),
+        event.block.number,
+      );
 
       log("info", "OrderStatusTracker:DONE", { block: String(event.block.number), chainId, open: openOrders.length, updated: rowsToUpdate.length });
     }
@@ -112,9 +122,9 @@ ponder.on("OrderStatusTracker:block", async ({ event, context }) => {
   ).map((g) => g.id);
 
   if (cancelledGeneratorIds.length > 0) {
-    await context.db.sql
+    const cascaded = await context.db.sql
       .update(discreteOrder)
-      .set({ status: "cancelled" })
+      .set({ status: "cancelled", updatedAtBlock: event.block.number })
       .where(
         and(
           eq(discreteOrder.chainId, chainId),
@@ -124,19 +134,35 @@ ponder.on("OrderStatusTracker:block", async ({ event, context }) => {
             cancelledGeneratorIds,
           ),
         ),
-      );
+      )
+      .returning({ generatorId: discreteOrder.conditionalOrderGeneratorId });
+
+    await bumpGeneratorsUpdatedAt(
+      context,
+      chainId,
+      cascaded.map((r) => r.generatorId),
+      event.block.number,
+    );
   }
 
   // Expire orders past validTo
-  await context.db.sql
+  const expired = await context.db.sql
     .update(discreteOrder)
-    .set({ status: "expired" })
+    .set({ status: "expired", updatedAtBlock: event.block.number })
     .where(
       and(
         eq(discreteOrder.chainId, chainId),
         eq(discreteOrder.status, "open"),
         lte(discreteOrder.validTo, Number(currentTimestamp)),
       ),
-    );
+    )
+    .returning({ generatorId: discreteOrder.conditionalOrderGeneratorId });
+
+  await bumpGeneratorsUpdatedAt(
+    context,
+    chainId,
+    expired.map((r) => r.generatorId),
+    event.block.number,
+  );
 });
 

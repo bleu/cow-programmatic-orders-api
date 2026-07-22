@@ -131,6 +131,7 @@ ponder.on("CancellationWatcher:block", async ({ event, context }) => {
           lastCheckBlock: currentBlock,
           lastPollResult: "cancelled:removeMapping",
           nextCheckBlock: null,
+          updatedAtBlock: currentBlock,
         })
         .where(
           and(

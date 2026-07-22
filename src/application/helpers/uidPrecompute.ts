@@ -93,6 +93,7 @@ export async function precomputeAndDiscover(
   orderType: OrderType,
   decodedParams: Record<string, string> | null,
   blockTimestamp: bigint,
+  blockNumber: bigint,
 ): Promise<boolean> {
   const precomputed = precomputeOrderUids(chainId, owner, orderType, decodedParams, blockTimestamp);
   if (!precomputed || precomputed.length === 0) return false;
@@ -123,6 +124,7 @@ export async function precomputeAndDiscover(
         creationDate: blockTimestamp,
         executedSellAmount: statusInfo?.executedSellAmount ?? null,
         executedBuyAmount: statusInfo?.executedBuyAmount ?? null,
+        updatedAtBlock: blockNumber,
       });
     } else {
       candidateRows.push({
@@ -155,6 +157,7 @@ export async function precomputeAndDiscover(
         set: {
           status: sql`excluded.status`,
           validTo: sql`excluded.valid_to`,
+          updatedAtBlock: sql`excluded.updated_at_block`,
         },
       });
   }
@@ -178,6 +181,7 @@ export async function precomputeAndDiscover(
         status: "Completed",
         allCandidatesKnown: true,
         lastPollResult: "precompute:allTerminal",
+        updatedAtBlock: blockNumber,
       })
       .where(
         and(

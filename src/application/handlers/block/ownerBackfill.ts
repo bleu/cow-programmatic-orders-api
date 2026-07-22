@@ -76,7 +76,7 @@ async function drainOwner(
   const controller = new AbortController();
   const deadline = setTimeout(() => controller.abort(), BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS);
   try {
-    const { discovered, complete } = await drainOwnerSlice(context, chainId, owner, controller.signal);
+    const { discovered, complete } = await drainOwnerSlice(context, chainId, owner, currentBlock, controller.signal);
 
     if (complete) {
       await markOwnerHistoryBackfilled(context, chainId, owner, ownerGeneratorIds);

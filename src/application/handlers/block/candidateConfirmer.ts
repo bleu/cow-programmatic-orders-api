@@ -9,6 +9,7 @@ import {
 } from "../../../constants";
 import { fetchOrderStatusByUids, fetchOwnerOrderStatuses } from "../../helpers/orderbookClient";
 import { withTimeout } from "../../helpers/withTimeout";
+import { bumpGeneratorsUpdatedAt } from "../../helpers/updatedAtBlock";
 import { log } from "../../helpers/logger";
 import { type DiscreteStatus } from "./shared";
 
@@ -88,9 +89,10 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
       // Chunked to avoid PostgreSQL bind-message parameter limits on large cascades.
       // preflightKnown counts API hits, not rows actually written.
       const CASCADE_CHUNK_SIZE = 500;
+      const cascadedGeneratorIds: string[] = [];
       for (let i = 0; i < orphanCandidates.length; i += CASCADE_CHUNK_SIZE) {
         const chunk = orphanCandidates.slice(i, i + CASCADE_CHUNK_SIZE);
-        await context.db.sql
+        const insertedRows = await context.db.sql
           .insert(discreteOrder)
           .values(
             chunk.map((c) => {
@@ -108,10 +110,13 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
                 executedSellAmount: apiEntry?.executedSellAmount ?? null,
                 executedBuyAmount: apiEntry?.executedBuyAmount ?? null,
                 promotedAt: event.block.timestamp,
+                updatedAtBlock: event.block.number,
               };
             }),
           )
-          .onConflictDoNothing();
+          .onConflictDoNothing()
+          .returning({ generatorId: discreteOrder.conditionalOrderGeneratorId });
+        cascadedGeneratorIds.push(...insertedRows.map((r) => r.generatorId));
 
         await context.db.sql
           .delete(candidateDiscreteOrder)
@@ -125,6 +130,15 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
             ),
           );
       }
+
+      // returning() only yields rows actually inserted — conflicts (UIDs already
+      // promoted with a terminal status) are no-ops and must not bump the cursor.
+      await bumpGeneratorsUpdatedAt(
+        context,
+        chainId,
+        cascadedGeneratorIds,
+        event.block.number,
+      );
 
       const preflightKnown = preflightStatuses.size;
       log("info", "CandidateConfirmer:parent_cancelled", { block: String(event.block.number), chainId, parentCancelled: orphanCandidates.length, preflightKnown });
@@ -195,6 +209,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
       executedSellAmount: orderbookEntry.executedSellAmount,
       executedBuyAmount: orderbookEntry.executedBuyAmount,
       promotedAt: event.block.timestamp,
+      updatedAtBlock: event.block.number,
     });
     confirmedUids.push(candidate.orderUid);
   }
@@ -211,8 +226,16 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
           executedSellAmount: sql`excluded.executed_sell_amount`,
           executedBuyAmount: sql`excluded.executed_buy_amount`,
           promotedAt: sql`excluded.promoted_at`,
+          updatedAtBlock: sql`excluded.updated_at_block`,
         },
       });
+
+    await bumpGeneratorsUpdatedAt(
+      context,
+      chainId,
+      rowsToUpsert.map((r) => r.conditionalOrderGeneratorId),
+      event.block.number,
+    );
   }
 
   const confirmed = rowsToUpsert.length;
@@ -316,13 +339,22 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
         executedSellAmount: entry?.executedSellAmount ?? null,
         executedBuyAmount: entry?.executedBuyAmount ?? null,
         promotedAt: event.block.timestamp,
+        updatedAtBlock: event.block.number,
       };
     });
 
-    await context.db.sql
+    const insertedStaleRows = await context.db.sql
       .insert(discreteOrder)
       .values(staleRows)
-      .onConflictDoNothing();
+      .onConflictDoNothing()
+      .returning({ generatorId: discreteOrder.conditionalOrderGeneratorId });
+
+    await bumpGeneratorsUpdatedAt(
+      context,
+      chainId,
+      insertedStaleRows.map((r) => r.generatorId),
+      event.block.number,
+    );
 
     await context.db.sql
       .delete(candidateDiscreteOrder)
