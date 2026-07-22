@@ -1,7 +1,8 @@
 import { and, eq, inArray, sql } from "ponder";
 import type { Context } from "ponder:registry";
-import { pgSchema, integer, text, bigint } from "drizzle-orm/pg-core";
+import { pgSchema, integer, text, bigint, boolean } from "drizzle-orm/pg-core";
 import { type Hex } from "viem";
+import { UPSERT_CHUNK_SIZE } from "../../../constants";
 import { log } from "../logger";
 import {
   type CachedOrderData,
@@ -50,6 +51,17 @@ const composableOrderCache = cowCacheSchema.table("composable_order", {
   executedSellAmount: text("executed_sell_amount"),
   executedBuyAmount: text("executed_buy_amount"),
   fetchedAt: bigint("fetched_at", { mode: "bigint" }).notNull(),
+});
+
+// Per-owner drain state for OwnerBackfillLive (see setup.ts for the DDL and the
+// rationale). Progress is recorded explicitly, never derived from cached rows.
+export const ownerDrain = cowCacheSchema.table("owner_drain", {
+  chainId: integer("chain_id").notNull(),
+  owner: text("owner").notNull(),
+  nextOffset: integer("next_offset").notNull(),
+  fullyDrained: boolean("fully_drained").notNull(),
+  deltaCursor: bigint("delta_cursor", { mode: "number" }),
+  lastAttemptAt: bigint("last_attempt_at", { mode: "number" }),
 });
 
 const orderUidCache = cowCacheSchema.table("order_uid_cache", {
@@ -233,28 +245,120 @@ export async function cacheUidStatuses(
 // keyed by (chain_id, order_uid), so the backfill drains only the delta newer than
 // MAX(creation_date) per owner instead of the full history on each reindex.
 
-/** Newest creation_date already cached for this owner (Unix seconds), or undefined
- *  when nothing is cached — the signal to do a full-history drain. */
-export async function readOwnerBackfillCursor(
+// ─── Owner drain state ────────────────────────────────────────────────────────
+// One row per (chain_id, owner) in cow_cache.owner_drain. All writes are
+// best-effort (logged, swallowed): losing a write only causes harmless overlap —
+// the drain re-fetches a page or re-drains an owner, and every downstream write
+// is an idempotent upsert. Gaps are impossible because state only ever advances
+// after the data it covers has been persisted.
+
+export interface OwnerDrainState {
+  nextOffset: number;
+  fullyDrained: boolean;
+  deltaCursor: number | undefined;
+}
+
+const FRESH_DRAIN_STATE: OwnerDrainState = {
+  nextOffset: 0,
+  fullyDrained: false,
+  deltaCursor: undefined,
+};
+
+/** Drain state for an owner; fresh (offset 0, not drained) when no row exists. */
+export async function readOwnerDrainState(
   context: Context,
   chainId: number,
   owner: Hex,
-): Promise<number | undefined> {
+): Promise<OwnerDrainState> {
   try {
-    const rows = (await context.db.sql
-      .select({ cursor: sql<string | null>`max(${composableOrderCache.creationDate})` })
-      .from(composableOrderCache)
-      .where(
-        and(
-          eq(composableOrderCache.chainId, chainId),
-          eq(composableOrderCache.owner, owner.toLowerCase()),
-        ),
-      )) as { cursor: string | null }[];
-    const raw = rows[0]?.cursor;
-    return raw == null ? undefined : Number(raw);
-  } catch {
-    return undefined; // no cache table / error → full drain
+    const rows = await context.db.sql
+      .select({
+        nextOffset: ownerDrain.nextOffset,
+        fullyDrained: ownerDrain.fullyDrained,
+        deltaCursor: ownerDrain.deltaCursor,
+      })
+      .from(ownerDrain)
+      .where(and(eq(ownerDrain.chainId, chainId), eq(ownerDrain.owner, owner.toLowerCase())))
+      .limit(1);
+    const row = rows[0];
+    if (!row) return FRESH_DRAIN_STATE;
+    return {
+      nextOffset: row.nextOffset,
+      fullyDrained: row.fullyDrained,
+      deltaCursor: row.deltaCursor ?? undefined,
+    };
+  } catch (err) {
+    log("warn", "ob:drainStateReadFailed", { chainId, owner, err: String(err) });
+    return FRESH_DRAIN_STATE; // treat as fresh — worst case re-drains (idempotent)
   }
+}
+
+/** Upsert the owner's drain row applying `set`; inserts a fresh row when absent. */
+async function upsertOwnerDrain(
+  context: Context,
+  chainId: number,
+  owner: Hex,
+  set: Partial<{ nextOffset: number; fullyDrained: boolean; deltaCursor: number; lastAttemptAt: number }>,
+): Promise<void> {
+  try {
+    await context.db.sql
+      .insert(ownerDrain)
+      .values({
+        chainId,
+        owner: owner.toLowerCase(),
+        nextOffset: set.nextOffset ?? 0,
+        fullyDrained: set.fullyDrained ?? false,
+        deltaCursor: set.deltaCursor,
+        lastAttemptAt: set.lastAttemptAt,
+      })
+      .onConflictDoUpdate({
+        target: [ownerDrain.chainId, ownerDrain.owner],
+        set,
+      });
+  } catch (err) {
+    log("warn", "ob:drainStateWriteFailed", { chainId, owner, set: JSON.stringify(set), err: String(err) });
+  }
+}
+
+/** Stamp last_attempt_at at the start of a drain attempt (drives rotation). */
+export async function stampOwnerAttempt(
+  context: Context,
+  chainId: number,
+  owner: Hex,
+): Promise<void> {
+  await upsertOwnerDrain(context, chainId, owner, {
+    lastAttemptAt: Math.floor(Date.now() / 1000),
+  });
+}
+
+/** Advance the full-drain resume offset — call only AFTER the page's rows are persisted. */
+export async function advanceOwnerOffset(
+  context: Context,
+  chainId: number,
+  owner: Hex,
+  nextOffset: number,
+): Promise<void> {
+  await upsertOwnerDrain(context, chainId, owner, { nextOffset });
+}
+
+/** Record the newest creation_date seen at offset 0. Written during the drain but
+ *  only READ once fully_drained — until then it is just a candidate. */
+export async function writeOwnerDeltaCursor(
+  context: Context,
+  chainId: number,
+  owner: Hex,
+  deltaCursor: number,
+): Promise<void> {
+  await upsertOwnerDrain(context, chainId, owner, { deltaCursor });
+}
+
+/** Flip fully_drained after a full pass reached the last page. */
+export async function markOwnerFullyDrained(
+  context: Context,
+  chainId: number,
+  owner: Hex,
+): Promise<void> {
+  await upsertOwnerDrain(context, chainId, owner, { fullyDrained: true });
 }
 
 /** All durably-cached composable rows for an owner. */
@@ -290,15 +394,29 @@ export async function readOwnerComposableCache(
   }
 }
 
-/** Upsert durable composable rows; excluded status/validTo/executed overwrite on conflict. */
+/** Upsert durable composable rows; excluded status/validTo/executed overwrite on conflict.
+ *  Chunked: 13 columns × unbounded rows would hit Postgres' 65,535-bind-param cap on
+ *  whale owners. */
 export async function upsertComposableCache(
   context: Context,
   chainId: number,
   owner: Hex,
   rows: ComposableCacheRow[],
 ): Promise<void> {
-  if (rows.length === 0) return;
   const now = BigInt(Math.floor(Date.now() / 1000));
+  for (let i = 0; i < rows.length; i += UPSERT_CHUNK_SIZE) {
+    await upsertComposableCacheChunk(context, chainId, owner, rows.slice(i, i + UPSERT_CHUNK_SIZE), now);
+  }
+}
+
+async function upsertComposableCacheChunk(
+  context: Context,
+  chainId: number,
+  owner: Hex,
+  rows: ComposableCacheRow[],
+  now: bigint,
+): Promise<void> {
+  if (rows.length === 0) return;
   try {
     await context.db.sql
       .insert(composableOrderCache)

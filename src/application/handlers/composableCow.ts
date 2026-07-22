@@ -43,7 +43,7 @@ import {
   transaction,
 } from "ponder:schema";
 import { encodeAbiParameters, keccak256, type Hex } from "viem";
-import { getOrderTypeFromHandler, isNonDeterministic, type OrderType } from "../../utils/order-types";
+import { getOrderTypeFromHandler, isOwnerBackfillEligible, type OrderType } from "../../utils/order-types";
 import { decodeStaticInput } from "../../decoders/index";
 import { precomputeAndDiscover } from "../helpers/uidPrecompute";
 import { CirclesBackingOrderAbi } from "../../../abis/CirclesBackingOrderAbi";
@@ -227,7 +227,9 @@ async function insertGenerator(
       // OwnerBackfill drain. Deterministic types are fully handled by precompute at
       // creation, and live-created generators are owned by the realtime poller — both
       // are "already backfilled" so they don't gate readiness. See ownerBackfill.ts.
-      historyBackfilled: isLive || !isNonDeterministic(orderType),
+      // Unknown and CowAmmConstantProduct are excluded from the backfill entirely
+      // (OWNER_BACKFILL_EXCLUDED), so they're also born "already backfilled".
+      historyBackfilled: isLive || !isOwnerBackfillEligible(orderType),
     })
     .onConflictDoNothing();
 

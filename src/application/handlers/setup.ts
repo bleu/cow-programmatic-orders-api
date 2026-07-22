@@ -81,6 +81,27 @@ ponder.on("ComposableCow:setup", async ({ context }) => {
       ON cow_cache.composable_order (chain_id, owner)
   `);
 
+  // Per-owner drain state for OwnerBackfillLive. Progress is recorded here explicitly,
+  // never derived from cached rows (deriving a cursor from MAX(creation_date) conflates
+  // "I cached this" with "I cached everything older than this" — a partial drain would
+  // look complete and leave a permanent hole in the owner's history).
+  //   next_offset     — where the initial full drain resumes /account pagination
+  //   fully_drained   — a full pass reached the last page at least once
+  //   delta_cursor    — newest creation_date covered by a complete pass; only read when
+  //                     fully_drained, only advanced by a complete delta pass
+  //   last_attempt_at — stamped at attempt start; drives least-recently-attempted rotation
+  await context.db.sql.execute(sql`
+    CREATE TABLE IF NOT EXISTS cow_cache.owner_drain (
+      chain_id        INTEGER NOT NULL,
+      owner           TEXT NOT NULL,
+      next_offset     INTEGER NOT NULL DEFAULT 0,
+      fully_drained   BOOLEAN NOT NULL DEFAULT FALSE,
+      delta_cursor    BIGINT,
+      last_attempt_at BIGINT,
+      PRIMARY KEY (chain_id, owner)
+    )
+  `);
+
   // Log surviving cache entries — non-zero means cache persisted across restart/resync
   const result = await context.db.sql.execute(
     sql`SELECT COUNT(*)::int AS count FROM cow_cache.order_uid_cache`,

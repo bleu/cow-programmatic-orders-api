@@ -51,20 +51,43 @@ export function withTimeout<T>(
 }
 
 /**
+ * Combine two abort signals into one that fires when either does.
+ * Hand-rolled because `AbortSignal.any` requires Node 20.3+ and the package
+ * engine floor is 18.14.
+ */
+export function anySignal(a: AbortSignal, b: AbortSignal): AbortSignal {
+  const controller = new AbortController();
+  if (a.aborted || b.aborted) {
+    controller.abort();
+  } else {
+    const onAbort = () => controller.abort();
+    a.addEventListener("abort", onAbort, { once: true });
+    b.addEventListener("abort", onAbort, { once: true });
+  }
+  return controller.signal;
+}
+
+/**
  * `fetch` with a hard wall-clock timeout that cancels the underlying socket via
  * `AbortSignal.timeout`. Re-maps the `AbortError` / `TimeoutError` DOMException
  * into our own `TimeoutError` so callers can `instanceof`-check once.
+ *
+ * `signal`, if given, also cancels the request (combined with the timeout) — used
+ * by resumable work (OwnerBackfill) to end its time slice without orphaning an
+ * in-flight request.
  */
 export async function fetchWithTimeout(
   url: string,
   init: RequestInit | undefined,
   timeoutMs: number,
   label: string,
+  signal?: AbortSignal,
 ): Promise<Response> {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
   try {
     return await fetch(url, {
       ...init,
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: signal ? anySignal(signal, timeoutSignal) : timeoutSignal,
     });
   } catch (err) {
     const name = (err as Error | undefined)?.name;

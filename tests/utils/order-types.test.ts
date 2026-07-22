@@ -2,7 +2,10 @@ import { describe, it, expect } from "vitest";
 import {
   DETERMINISTIC_ORDER_TYPE,
   NON_DETERMINISTIC_TYPES,
+  OWNER_BACKFILL_EXCLUDED,
+  OWNER_BACKFILL_TYPES,
   isNonDeterministic,
+  isOwnerBackfillEligible,
   type OrderType,
 } from "../../src/utils/order-types";
 
@@ -59,5 +62,36 @@ describe("NON_DETERMINISTIC_TYPES / isNonDeterministic", () => {
     expect(NON_DETERMINISTIC_TYPES).not.toContain("TWAP");
     expect(NON_DETERMINISTIC_TYPES).not.toContain("StopLoss");
     expect(NON_DETERMINISTIC_TYPES).not.toContain("CirclesBackingOrder");
+  });
+});
+
+describe("OWNER_BACKFILL_TYPES / isOwnerBackfillEligible", () => {
+  it("excludes Unknown and CowAmmConstantProduct (unsupported by the backfill)", () => {
+    expect(OWNER_BACKFILL_TYPES).not.toContain("Unknown");
+    expect(OWNER_BACKFILL_TYPES).not.toContain("CowAmmConstantProduct");
+  });
+
+  it("is exactly the non-deterministic set minus the exclusions (derived, no drift)", () => {
+    const expected = NON_DETERMINISTIC_TYPES.filter(
+      (t) => !OWNER_BACKFILL_EXCLUDED.includes(t),
+    );
+    expect([...OWNER_BACKFILL_TYPES].sort()).toEqual([...expected].sort());
+  });
+
+  it("still contains every drained non-deterministic type", () => {
+    expect(OWNER_BACKFILL_TYPES).toContain("PerpetualSwap");
+    expect(OWNER_BACKFILL_TYPES).toContain("GoodAfterTime");
+    expect(OWNER_BACKFILL_TYPES).toContain("TradeAboveThreshold");
+    expect(OWNER_BACKFILL_TYPES).toContain("SwapOrderHandler");
+    expect(OWNER_BACKFILL_TYPES).toContain("ERC4626CowSwapFeeBurner");
+    expect(OWNER_BACKFILL_TYPES).toContain("CurveCowSwapBurner");
+    expect(OWNER_BACKFILL_TYPES).toContain("BalancerCowSwapFeeBurner");
+  });
+
+  it("isOwnerBackfillEligible is false for excluded and deterministic types, true for drained ones", () => {
+    expect(isOwnerBackfillEligible("Unknown")).toBe(false);
+    expect(isOwnerBackfillEligible("CowAmmConstantProduct")).toBe(false);
+    expect(isOwnerBackfillEligible("TWAP")).toBe(false);
+    expect(isOwnerBackfillEligible("PerpetualSwap")).toBe(true);
   });
 });

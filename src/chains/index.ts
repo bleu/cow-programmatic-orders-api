@@ -41,9 +41,9 @@ export const CHAIN_CONFIGS = {
  * API-only lookups (e.g. orderbook URLs) across all configured chains, not just
  * the actively indexed ones.
  */
-export const ALL_DEFINED_CHAINS: ChainConfig[] = Object.values(CHAIN_CONFIGS).filter(
-  (c): c is ChainConfig => c !== null,
-);
+export const ALL_DEFINED_CHAINS: ChainConfig[] = Object.values(
+  CHAIN_CONFIGS
+).filter((c): c is ChainConfig => c !== null);
 
 /**
  * ACTIVE_CHAINS — the chains this indexer instance actually processes.
