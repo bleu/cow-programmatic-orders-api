@@ -27,6 +27,8 @@ export const discreteOrderDocs: DocMap = {
     "Actual sell amount filled after settlement. Null before the order is fulfilled.",
   "discreteOrder.executedBuyAmount":
     "Actual buy amount received after settlement. Null before the order is fulfilled.",
+  "discreteOrder.executedFee":
+    "Actual fee taken from the order surplus at settlement (orderbook executedFee, reported in the sell token for sell orders). Null until execution data is available.",
   "discreteOrder.promotedAt":
     "Unix timestamp (seconds) when CandidateConfirmer promoted this row from candidateDiscreteOrder. Null means the row was created directly without going through the candidate stage (TWAP/StopLoss precomputation at creation time, or OwnerBackfill). Non-null means this order was first discovered on-chain by OrderDiscoveryPoller or UID precomputation, held as a candidate until the orderbook API confirmed it (or until it expired).",
   "discreteOrder.updatedAtBlock":

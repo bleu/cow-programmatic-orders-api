@@ -13,6 +13,13 @@
  *   This is rare for EIP-1271 composable orders, which follow the on-chain
  *   cancellation path via ComposableCoW.remove().
  *
+ * KNOWN LIMITATION — Settlement reorg gap (tracked as COW-1183):
+ *   Terminal statuses live in cow_cache outside Ponder's reorg journal and are
+ *   never re-fetched. TWAP parent totals remain consistent with discreteOrder,
+ *   but both can retain a settlement that reorged out until terminal-status
+ *   caching gains a finality-aware policy. Never re-fetching also means cache
+ *   rows written before a column existed (e.g. executed_fee) stay null.
+ *
  * This module is a thin barrel: the implementation lives in ./orderbook/*
  * (types, http, cache, processing, client). It re-exports the public API so
  * existing import paths keep working.

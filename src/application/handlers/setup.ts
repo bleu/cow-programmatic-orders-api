@@ -33,6 +33,7 @@ ponder.on("ComposableCow:setup", async ({ context }) => {
       fetched_at            BIGINT NOT NULL,
       executed_sell_amount   TEXT,
       executed_buy_amount    TEXT,
+      executed_fee    TEXT,
       kind                  TEXT,
       receiver              TEXT,
       sell_amount           TEXT,
@@ -46,6 +47,7 @@ ponder.on("ComposableCow:setup", async ({ context }) => {
   await context.db.sql.execute(sql`ALTER TABLE cow_cache.order_uid_cache ADD COLUMN IF NOT EXISTS receiver TEXT`);
   await context.db.sql.execute(sql`ALTER TABLE cow_cache.order_uid_cache ADD COLUMN IF NOT EXISTS sell_amount TEXT`);
   await context.db.sql.execute(sql`ALTER TABLE cow_cache.order_uid_cache ADD COLUMN IF NOT EXISTS buy_amount TEXT`);
+  await context.db.sql.execute(sql`ALTER TABLE cow_cache.order_uid_cache ADD COLUMN IF NOT EXISTS executed_fee TEXT`);
 
   // The flash-loan enrichment now lives in order_uid_cache — drop the short-lived
   // dedicated table if a prior build created it.
@@ -72,10 +74,12 @@ ponder.on("ComposableCow:setup", async ({ context }) => {
       creation_date         BIGINT NOT NULL,
       executed_sell_amount   TEXT,
       executed_buy_amount    TEXT,
+      executed_fee    TEXT,
       fetched_at            BIGINT NOT NULL,
       PRIMARY KEY (chain_id, order_uid)
     )
   `);
+  await context.db.sql.execute(sql`ALTER TABLE cow_cache.composable_order ADD COLUMN IF NOT EXISTS executed_fee TEXT`);
   await context.db.sql.execute(sql`
     CREATE INDEX IF NOT EXISTS composable_order_owner_idx
       ON cow_cache.composable_order (chain_id, owner)

@@ -24,6 +24,7 @@ import { fetchOrderStatusByUids } from "./orderbookClient";
 import { type OrderType, DETERMINISTIC_ORDER_TYPE } from "../../utils/order-types";
 import { log } from "./logger";
 import { MAX_TWAP_PRECOMPUTE_PARTS } from "../../constants";
+import { refreshTwapExecutedTotals } from "./executedAmounts";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -124,6 +125,7 @@ export async function precomputeAndDiscover(
         creationDate: blockTimestamp,
         executedSellAmount: statusInfo?.executedSellAmount ?? null,
         executedBuyAmount: statusInfo?.executedBuyAmount ?? null,
+        executedFee: statusInfo?.executedFee ?? null,
         updatedAtBlock: blockNumber,
       });
     } else {
@@ -157,6 +159,12 @@ export async function precomputeAndDiscover(
         set: {
           status: sql`excluded.status`,
           validTo: sql`excluded.valid_to`,
+          // Status lookups can be served from cow_cache with null executed amounts
+          // ("null when served from cache") — coalesce so a cached null never erases
+          // values already written by OrderStatusTracker or OwnerBackfill.
+          executedSellAmount: sql`coalesce(excluded.executed_sell_amount, ${discreteOrder.executedSellAmount})`,
+          executedBuyAmount: sql`coalesce(excluded.executed_buy_amount, ${discreteOrder.executedBuyAmount})`,
+          executedFee: sql`coalesce(excluded.executed_fee, ${discreteOrder.executedFee})`,
           updatedAtBlock: sql`excluded.updated_at_block`,
         },
       });
@@ -167,6 +175,10 @@ export async function precomputeAndDiscover(
       .insert(candidateDiscreteOrder)
       .values(candidateRows.slice(i, i + CHUNK))
       .onConflictDoNothing();
+  }
+
+  if (discreteRows.length > 0) {
+    await refreshTwapExecutedTotals(context, chainId, [generatorEventId]);
   }
 
   const allTerminal = precomputed.every((o) => {

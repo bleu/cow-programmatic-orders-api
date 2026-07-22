@@ -104,6 +104,7 @@ export async function filterAndProcess(
       creationDate: BigInt(Math.floor(new Date(order.creationDate).getTime() / 1000)),
       executedSellAmount: order.executedSellAmount,
       executedBuyAmount: order.executedBuyAmount,
+      executedFee: order.executedFee,
     });
   }
 
@@ -135,6 +136,7 @@ export async function reconcileOpenCachedRows(
     row.validTo = fresh.validTo;
     row.executedSellAmount = fresh.executedSellAmount;
     row.executedBuyAmount = fresh.executedBuyAmount;
+    row.executedFee = fresh.executedFee;
     if (TERMINAL_STATUSES.has(fresh.status)) newlyTerminal.push(row);
   }
 
@@ -188,6 +190,7 @@ export async function remapToCurrentGenerators(
       creationDate: row.creationDate,
       executedSellAmount: row.executedSellAmount,
       executedBuyAmount: row.executedBuyAmount,
+      executedFee: row.executedFee,
     });
   }
   return results;
