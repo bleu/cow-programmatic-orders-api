@@ -29,6 +29,7 @@ import {
 import { TimeoutError, withTimeout } from "../withTimeout";
 import { bumpGeneratorsUpdatedAt } from "../updatedAtBlock";
 import { log } from "../logger";
+import { refreshGeneratorExecutedAmounts } from "../executedAmounts";
 import { fetchAccountOrders, fetchOrdersByUids } from "./http";
 import {
   advanceOwnerOffset,
@@ -276,6 +277,7 @@ export async function upsertDiscreteOrders(
         creationDate: order.creationDate,
         executedSellAmount: order.executedSellAmount,
         executedBuyAmount: order.executedBuyAmount,
+        executedFeeAmount: order.executedFeeAmount,
         updatedAtBlock: blockNumber,
       })))
       .onConflictDoUpdate({
@@ -285,6 +287,7 @@ export async function upsertDiscreteOrders(
           validTo: sql`excluded.valid_to`,
           executedSellAmount: sql`excluded.executed_sell_amount`,
           executedBuyAmount: sql`excluded.executed_buy_amount`,
+          executedFeeAmount: sql`excluded.executed_fee_amount`,
           updatedAtBlock: sql`excluded.updated_at_block`,
         },
       });
@@ -293,6 +296,7 @@ export async function upsertDiscreteOrders(
   }
 
   await bumpGeneratorsUpdatedAt(context, chainId, changedGeneratorIds, blockNumber);
+  await refreshGeneratorExecutedAmounts(context, chainId, changedGeneratorIds);
   return changedCount;
 }
 
@@ -324,6 +328,7 @@ export async function fetchOrderStatusByUids(
         status: cachedData.status,
         executedSellAmount: cachedData.executedSellAmount,
         executedBuyAmount: cachedData.executedBuyAmount,
+        executedFeeAmount: cachedData.executedFeeAmount,
       });
     } else {
       toFetch.push(uid);
@@ -356,6 +361,7 @@ export async function fetchOrderStatusByUids(
         status: order.status,
         executedSellAmount: order.executedSellAmount,
         executedBuyAmount: order.executedBuyAmount,
+        executedFeeAmount: order.executedFeeAmount,
       });
       if (TERMINAL_STATUSES.has(order.status)) {
         newTerminal.push({
@@ -371,6 +377,7 @@ export async function fetchOrderStatusByUids(
           creationDate: 0n,
           executedSellAmount: order.executedSellAmount,
           executedBuyAmount: order.executedBuyAmount,
+          executedFeeAmount: order.executedFeeAmount,
         });
       }
     }
@@ -403,6 +410,7 @@ export async function fetchOwnerOrderStatuses(
       status: order.status,
       executedSellAmount: order.executedSellAmount,
       executedBuyAmount: order.executedBuyAmount,
+      executedFeeAmount: order.executedFeeAmount,
     });
   }
   return result;
