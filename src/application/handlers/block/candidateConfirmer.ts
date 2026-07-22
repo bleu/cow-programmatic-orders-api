@@ -89,9 +89,10 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
       // Chunked to avoid PostgreSQL bind-message parameter limits on large cascades.
       // preflightKnown counts API hits, not rows actually written.
       const CASCADE_CHUNK_SIZE = 500;
+      const cascadedGeneratorIds: string[] = [];
       for (let i = 0; i < orphanCandidates.length; i += CASCADE_CHUNK_SIZE) {
         const chunk = orphanCandidates.slice(i, i + CASCADE_CHUNK_SIZE);
-        await context.db.sql
+        const insertedRows = await context.db.sql
           .insert(discreteOrder)
           .values(
             chunk.map((c) => {
@@ -113,7 +114,9 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
               };
             }),
           )
-          .onConflictDoNothing();
+          .onConflictDoNothing()
+          .returning({ generatorId: discreteOrder.conditionalOrderGeneratorId });
+        cascadedGeneratorIds.push(...insertedRows.map((r) => r.generatorId));
 
         await context.db.sql
           .delete(candidateDiscreteOrder)
@@ -128,10 +131,12 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
           );
       }
 
+      // returning() only yields rows actually inserted — conflicts (UIDs already
+      // promoted with a terminal status) are no-ops and must not bump the cursor.
       await bumpGeneratorsUpdatedAt(
         context,
         chainId,
-        orphanCandidates.map((c) => c.generatorId),
+        cascadedGeneratorIds,
         event.block.number,
       );
 
@@ -338,15 +343,16 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
       };
     });
 
-    await context.db.sql
+    const insertedStaleRows = await context.db.sql
       .insert(discreteOrder)
       .values(staleRows)
-      .onConflictDoNothing();
+      .onConflictDoNothing()
+      .returning({ generatorId: discreteOrder.conditionalOrderGeneratorId });
 
     await bumpGeneratorsUpdatedAt(
       context,
       chainId,
-      staleRows.map((r) => r.conditionalOrderGeneratorId),
+      insertedStaleRows.map((r) => r.generatorId),
       event.block.number,
     );
 

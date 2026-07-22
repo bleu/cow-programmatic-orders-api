@@ -14,7 +14,7 @@
  *   cancellation path via ComposableCoW.remove().
  */
 
-import { sql } from "ponder";
+import { and, eq, inArray, sql } from "ponder";
 import {
   discreteOrder,
 } from "ponder:schema";
@@ -111,6 +111,7 @@ export async function fetchComposableOrders(
  * Upsert composable orders into the discrete_order table.
  * Uses onConflictDoUpdate so the API's authoritative status overwrites
  * the block handler's initial "open".
+ * Returns the number of rows actually inserted or changed, not the input size.
  */
 export async function upsertDiscreteOrders(
   context: Context,
@@ -119,10 +120,42 @@ export async function upsertDiscreteOrders(
   blockNumber: bigint,
 ): Promise<number> {
   if (orders.length === 0) return 0;
+
+  // Skip no-op writes: OwnerBackfill retries partially-drained owners, so the
+  // same pages get re-upserted. Without this filter every retry would bump
+  // updatedAtBlock on untouched rows and their parent generators, making
+  // cursor-synced clients re-fetch data that never changed. Compare only the
+  // fields the upsert below can change.
+  const existingRows = await context.db.sql
+    .select({
+      orderUid: discreteOrder.orderUid,
+      status: discreteOrder.status,
+      validTo: discreteOrder.validTo,
+      executedSellAmount: discreteOrder.executedSellAmount,
+      executedBuyAmount: discreteOrder.executedBuyAmount,
+    })
+    .from(discreteOrder)
+    .where(
+      and(
+        eq(discreteOrder.chainId, chainId),
+        inArray(discreteOrder.orderUid, orders.map((order) => order.uid)),
+      ),
+    );
+  const existingByUid = new Map(existingRows.map((row) => [row.orderUid, row]));
+  const changedOrders = orders.filter((order) => {
+    const existing = existingByUid.get(order.uid);
+    return !existing ||
+      existing.status !== order.status ||
+      existing.validTo !== order.validTo ||
+      existing.executedSellAmount !== order.executedSellAmount ||
+      existing.executedBuyAmount !== order.executedBuyAmount;
+  });
+  if (changedOrders.length === 0) return 0;
+
   // One multi-row upsert instead of N individual roundtrips.
   await context.db.sql
     .insert(discreteOrder)
-    .values(orders.map((order) => ({
+    .values(changedOrders.map((order) => ({
       orderUid: order.uid,
       chainId,
       conditionalOrderGeneratorId: order.generatorId,
@@ -149,10 +182,10 @@ export async function upsertDiscreteOrders(
   await bumpGeneratorsUpdatedAt(
     context,
     chainId,
-    orders.map((order) => order.generatorId),
+    changedOrders.map((order) => order.generatorId),
     blockNumber,
   );
-  return orders.length;
+  return changedOrders.length;
 }
 
 /**
