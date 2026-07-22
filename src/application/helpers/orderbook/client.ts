@@ -24,20 +24,25 @@ import { ORDERBOOK_API_URLS } from "../../../data";
 import {
   ORDERBOOK_HTTP_TIMEOUT_MS,
   SIGNING_SCHEME_EIP1271,
+  UPSERT_CHUNK_SIZE,
 } from "../../../constants";
 import { TimeoutError, withTimeout } from "../withTimeout";
 import { bumpGeneratorsUpdatedAt } from "../updatedAtBlock";
 import { log } from "../logger";
 import { fetchAccountOrders, fetchOrdersByUids } from "./http";
 import {
+  advanceOwnerOffset,
   cacheFlashLoanEnrichment,
   cacheUidStatuses,
   getCachedFlashLoanEnrichment,
   getCachedUidStatuses,
-  readOwnerBackfillCursor,
+  markOwnerFullyDrained,
   readOwnerComposableCache,
+  readOwnerDrainState,
   toCacheRow,
   upsertComposableCache,
+  writeOwnerDeltaCursor,
+  type OwnerDrainState,
 } from "./cache";
 import {
   filterAndProcess,
@@ -55,62 +60,162 @@ import {
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
+/** Outcome of one bounded drain attempt for an owner. */
+export interface OwnerDrainResult {
+  /** Orders upserted into discreteOrder during this slice. */
+  discovered: number;
+  /** True once the owner's history is fully covered — the caller may flip
+   *  historyBackfilled. False means "made progress, continue on a later firing". */
+  complete: boolean;
+}
+
+/** Unix seconds of an orderbook order's ISO creationDate. */
+function creationSeconds(order: OrderbookOrder): number {
+  return Math.floor(new Date(order.creationDate).getTime() / 1000);
+}
+
 /**
- * Fetch composable orders for an owner, using per-UID cache for terminal orders.
- * Incremental drain: Ponder rebuilds the onchain discreteOrder table
- * from scratch on every schema-hash redeploy, so a naive implementation re-fetches
- * an owner's entire history each deploy. Instead the full composable-order rows are
- * kept in the durable cow_cache.composable_order table (survives reindex), and only
- * the delta newer than MAX(creation_date) is fetched from the orderbook:
+ * Run one bounded, resumable drain slice for an owner. All progress is recorded
+ * in cow_cache.owner_drain (see setup.ts), so a slice ended by the abort signal
+ * or a rate limit is never wasted — the next attempt continues where it stopped.
  *
- * 1. cursor = newest creation_date already cached for this owner (undefined = full drain)
- * 2. Fetch /account/{owner}/orders newest-first, stopping once older than the cursor
- * 3. Decode → filter to composable → match to generators, then persist the delta
- * 4. Rebuild the full owner set from the durable cache (delta + all older rows)
- * 5. Re-check any still-open cached rows via by_uids so statuses don't go stale
- * 6. Re-map generator_hash → the current generator eventId (changes each reindex)
+ * Two modes, keyed on owner_drain.fully_drained:
+ * - Full drain (initial, or after the durable cache was lost): resume the
+ *   /account/{owner}/orders pagination at next_offset, persisting page-by-page.
+ * - Delta (owner fully drained before, e.g. a redeploy): fetch only orders newer
+ *   than delta_cursor, then rebuild the owner's set from the durable cache.
  */
-export async function fetchComposableOrders(
+export async function drainOwnerSlice(
   context: Context,
   chainId: number,
   owner: Hex,
-): Promise<{ orders: ComposableOrder[]; complete: boolean }> {
+  blockNumber: bigint,
+  signal?: AbortSignal,
+): Promise<OwnerDrainResult> {
   const apiBaseUrl = ORDERBOOK_API_URLS[chainId];
   if (!apiBaseUrl) {
     log("warn", "ob:noApiUrl", { chainId });
-    return { orders: [], complete: false };
+    return { discovered: 0, complete: false };
   }
 
-  // Only fetch orders newer than what we've already durably cached for this owner.
-  const cursor = await readOwnerBackfillCursor(context, chainId, owner);
-  log("info", "ob:fetch", { owner, chainId, since: cursor ?? null });
+  const state = await readOwnerDrainState(context, chainId, owner);
+  return state.fullyDrained
+    ? drainOwnerDelta(context, chainId, owner, apiBaseUrl, state, blockNumber, signal)
+    : drainOwnerFull(context, chainId, owner, apiBaseUrl, state, blockNumber, signal);
+}
 
-  // complete=false (pagination cut short by rate limit / timeout) means the caller must
-  // NOT mark the owner backfilled — it stays eligible and is retried on a later block.
-  const { orders: deltaApiOrders, complete } = await fetchAccountOrders(apiBaseUrl, owner, 0, SIGNING_SCHEME_EIP1271, PAGE_LIMIT, cursor);
+/** Full-history drain: resumable page-by-page ingestion, then one completion pass. */
+async function drainOwnerFull(
+  context: Context,
+  chainId: number,
+  owner: Hex,
+  apiBaseUrl: string,
+  state: OwnerDrainState,
+  blockNumber: bigint,
+  signal?: AbortSignal,
+): Promise<OwnerDrainResult> {
+  log("info", "ob:fullDrain", { owner, chainId, startOffset: state.nextOffset });
+
+  let discovered = 0;
+  const onPage = async (pageOrders: OrderbookOrder[], nextOffset: number): Promise<void> => {
+    const matched = await filterAndProcess(context, chainId, pageOrders);
+    await upsertComposableCache(context, chainId, owner, matched.map(toCacheRow));
+    discovered += await upsertDiscreteOrders(context, chainId, matched, blockNumber);
+
+    // The first order of the offset-0 page is the newest order at drain start: the
+    // delta-cursor candidate. Orders created mid-drain are newer, so a later delta
+    // pass picks them up. Written before the offset advance so it can never be skipped.
+    if (nextOffset === pageOrders.length && pageOrders[0]) {
+      await writeOwnerDeltaCursor(context, chainId, owner, creationSeconds(pageOrders[0]));
+    }
+
+    // Advance the resume point only now that the page's rows are persisted.
+    await advanceOwnerOffset(context, chainId, owner, nextOffset);
+  };
+
+  const { complete } = await fetchAccountOrders(
+    apiBaseUrl, owner, 0, SIGNING_SCHEME_EIP1271, PAGE_LIMIT, undefined,
+    { signal, startOffset: state.nextOffset, onPage },
+  );
+
+  if (!complete) {
+    log("info", "ob:fullDrainPaused", { owner, chainId, discovered, aborted: signal?.aborted ?? false });
+    return { discovered, complete: false };
+  }
+
+  // Reached the last page — materialize the complete set once. The durable cache can
+  // hold rows this pass never saw (orders aged out of the API, cached by a prior
+  // deployment), so rebuild from cache, refresh open statuses, re-map generators.
+  const cachedRows = await readOwnerComposableCache(context, chainId, owner);
+  const reconciled = await reconcileOpenCachedRows(context, chainId, owner, apiBaseUrl, cachedRows, signal);
+  const results = await remapToCurrentGenerators(context, chainId, reconciled);
+  // Counts only rows the reconcile actually changed — page upserts above already
+  // counted the rest.
+  discovered += await upsertDiscreteOrders(context, chainId, results, blockNumber);
+
+  // If the slice deadline hit during the reconcile, statuses may be stale — keep the
+  // owner eligible; the next attempt resumes at the tail (one page) and retries
+  // completion with a fresh slice.
+  if (signal?.aborted) {
+    log("info", "ob:fullDrainPaused", { owner, chainId, discovered, aborted: true, at: "completion" });
+    return { discovered, complete: false };
+  }
+
+  await markOwnerFullyDrained(context, chainId, owner);
+  log("info", "ob:fullDrainDone", { owner, chainId, discovered, total: results.length });
+  return { discovered, complete: true };
+}
+
+/** Delta drain: fetch only orders newer than delta_cursor, rebuild from the cache.
+ *  The cursor advances ONLY on a complete pass — an incomplete delta re-fetches the
+ *  same window later (overlap, never a gap). */
+async function drainOwnerDelta(
+  context: Context,
+  chainId: number,
+  owner: Hex,
+  apiBaseUrl: string,
+  state: OwnerDrainState,
+  blockNumber: bigint,
+  signal?: AbortSignal,
+): Promise<OwnerDrainResult> {
+  log("info", "ob:deltaDrain", { owner, chainId, since: state.deltaCursor ?? null });
+
+  const { orders: deltaApiOrders, complete } = await fetchAccountOrders(
+    apiBaseUrl, owner, 0, SIGNING_SCHEME_EIP1271, PAGE_LIMIT, state.deltaCursor,
+    { signal },
+  );
+  if (!complete) {
+    log("warn", "ob:deltaDrainIncomplete", { owner, chainId, aborted: signal?.aborted ?? false });
+    return { discovered: 0, complete: false };
+  }
+
   const delta = await filterAndProcess(context, chainId, deltaApiOrders);
-
-  // Persist the delta (account-endpoint status is the live status) into the durable cache.
   await upsertComposableCache(context, chainId, owner, delta.map(toCacheRow));
 
   // Rebuild the full owner set from the durable cache (delta + everything older).
   const cachedRows = await readOwnerComposableCache(context, chainId, owner);
-
-  // Re-check any still-open cached rows — long-lived orders that terminated below the
-  // cursor since a prior drain would otherwise keep a stale "open" status forever.
-  const reconciled = await reconcileOpenCachedRows(context, chainId, owner, apiBaseUrl, cachedRows);
-
-  // The per-deployment generator eventId changes each reindex; re-map by the stable hash.
+  const reconciled = await reconcileOpenCachedRows(context, chainId, owner, apiBaseUrl, cachedRows, signal);
   const results = await remapToCurrentGenerators(context, chainId, reconciled);
+  const discovered = await upsertDiscreteOrders(context, chainId, results, blockNumber);
 
-  log("info", "ob:fetchResult", { owner, chainId, since: cursor ?? null, delta: delta.length, total: results.length, complete });
-  return { orders: results, complete };
+  if (signal?.aborted) {
+    log("warn", "ob:deltaDrainIncomplete", { owner, chainId, aborted: true, at: "reconcile" });
+    return { discovered, complete: false };
+  }
+
+  // Newest raw order in the delta (pages are newest-first) becomes the next cursor.
+  const newest = deltaApiOrders[0];
+  if (newest) await writeOwnerDeltaCursor(context, chainId, owner, creationSeconds(newest));
+
+  log("info", "ob:deltaDrainDone", { owner, chainId, since: state.deltaCursor ?? null, delta: delta.length, total: results.length, discovered });
+  return { discovered, complete: true };
 }
 
 /**
  * Upsert composable orders into the discrete_order table.
  * Uses onConflictDoUpdate so the API's authoritative status overwrites
- * the block handler's initial "open".
+ * the block handler's initial "open". Chunked to stay clear of Postgres'
+ * 65,535-bind-param statement cap on whale owners.
  * Returns the number of rows actually inserted or changed, not the input size.
  */
 export async function upsertDiscreteOrders(
@@ -121,71 +226,74 @@ export async function upsertDiscreteOrders(
 ): Promise<number> {
   if (orders.length === 0) return 0;
 
-  // Skip no-op writes: OwnerBackfill retries partially-drained owners, so the
-  // same pages get re-upserted. Without this filter every retry would bump
-  // updatedAtBlock on untouched rows and their parent generators, making
-  // cursor-synced clients re-fetch data that never changed. Compare only the
-  // fields the upsert below can change.
-  const existingRows = await context.db.sql
-    .select({
-      orderUid: discreteOrder.orderUid,
-      status: discreteOrder.status,
-      validTo: discreteOrder.validTo,
-      executedSellAmount: discreteOrder.executedSellAmount,
-      executedBuyAmount: discreteOrder.executedBuyAmount,
-    })
-    .from(discreteOrder)
-    .where(
-      and(
-        eq(discreteOrder.chainId, chainId),
-        inArray(discreteOrder.orderUid, orders.map((order) => order.uid)),
-      ),
-    );
-  const existingByUid = new Map(existingRows.map((row) => [row.orderUid, row]));
-  const changedOrders = orders.filter((order) => {
-    const existing = existingByUid.get(order.uid);
-    return !existing ||
-      existing.status !== order.status ||
-      existing.validTo !== order.validTo ||
-      existing.executedSellAmount !== order.executedSellAmount ||
-      existing.executedBuyAmount !== order.executedBuyAmount;
-  });
-  if (changedOrders.length === 0) return 0;
+  let changedCount = 0;
+  const changedGeneratorIds: string[] = [];
+  for (let i = 0; i < orders.length; i += UPSERT_CHUNK_SIZE) {
+    const chunk = orders.slice(i, i + UPSERT_CHUNK_SIZE);
 
-  // One multi-row upsert instead of N individual roundtrips.
-  await context.db.sql
-    .insert(discreteOrder)
-    .values(changedOrders.map((order) => ({
-      orderUid: order.uid,
-      chainId,
-      conditionalOrderGeneratorId: order.generatorId,
-      status: order.status,
-      sellAmount: order.sellAmount,
-      buyAmount: order.buyAmount,
-      feeAmount: order.feeAmount,
-      validTo: order.validTo,
-      creationDate: order.creationDate,
-      executedSellAmount: order.executedSellAmount,
-      executedBuyAmount: order.executedBuyAmount,
-      updatedAtBlock: blockNumber,
-    })))
-    .onConflictDoUpdate({
-      target: [discreteOrder.chainId, discreteOrder.orderUid],
-      set: {
-        status: sql`excluded.status`,
-        validTo: sql`excluded.valid_to`,
-        executedSellAmount: sql`excluded.executed_sell_amount`,
-        executedBuyAmount: sql`excluded.executed_buy_amount`,
-        updatedAtBlock: sql`excluded.updated_at_block`,
-      },
+    // Skip no-op writes: resumed drain slices and delta rebuilds re-upsert pages
+    // already persisted. Without this filter every retry would bump updatedAtBlock
+    // on untouched rows and their parent generators, making cursor-synced clients
+    // re-fetch data that never changed. Compare only the fields the upsert below
+    // can change.
+    const existingRows = await context.db.sql
+      .select({
+        orderUid: discreteOrder.orderUid,
+        status: discreteOrder.status,
+        validTo: discreteOrder.validTo,
+        executedSellAmount: discreteOrder.executedSellAmount,
+        executedBuyAmount: discreteOrder.executedBuyAmount,
+      })
+      .from(discreteOrder)
+      .where(
+        and(
+          eq(discreteOrder.chainId, chainId),
+          inArray(discreteOrder.orderUid, chunk.map((order) => order.uid)),
+        ),
+      );
+    const existingByUid = new Map(existingRows.map((row) => [row.orderUid, row]));
+    const changedOrders = chunk.filter((order) => {
+      const existing = existingByUid.get(order.uid);
+      return !existing ||
+        existing.status !== order.status ||
+        existing.validTo !== order.validTo ||
+        existing.executedSellAmount !== order.executedSellAmount ||
+        existing.executedBuyAmount !== order.executedBuyAmount;
     });
-  await bumpGeneratorsUpdatedAt(
-    context,
-    chainId,
-    changedOrders.map((order) => order.generatorId),
-    blockNumber,
-  );
-  return changedOrders.length;
+    if (changedOrders.length === 0) continue;
+
+    await context.db.sql
+      .insert(discreteOrder)
+      .values(changedOrders.map((order) => ({
+        orderUid: order.uid,
+        chainId,
+        conditionalOrderGeneratorId: order.generatorId,
+        status: order.status,
+        sellAmount: order.sellAmount,
+        buyAmount: order.buyAmount,
+        feeAmount: order.feeAmount,
+        validTo: order.validTo,
+        creationDate: order.creationDate,
+        executedSellAmount: order.executedSellAmount,
+        executedBuyAmount: order.executedBuyAmount,
+        updatedAtBlock: blockNumber,
+      })))
+      .onConflictDoUpdate({
+        target: [discreteOrder.chainId, discreteOrder.orderUid],
+        set: {
+          status: sql`excluded.status`,
+          validTo: sql`excluded.valid_to`,
+          executedSellAmount: sql`excluded.executed_sell_amount`,
+          executedBuyAmount: sql`excluded.executed_buy_amount`,
+          updatedAtBlock: sql`excluded.updated_at_block`,
+        },
+      });
+    changedCount += changedOrders.length;
+    changedGeneratorIds.push(...changedOrders.map((order) => order.generatorId));
+  }
+
+  await bumpGeneratorsUpdatedAt(context, chainId, changedGeneratorIds, blockNumber);
+  return changedCount;
 }
 
 /**

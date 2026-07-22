@@ -118,10 +118,31 @@ export function isNonDeterministic(orderType: OrderType): boolean {
 /**
  * Non-deterministic order types, derived from DETERMINISTIC_ORDER_TYPE so the set is
  * exhaustive and never drifts from the canonical classification. These are the types
- * whose discrete-order UIDs can't be precomputed at creation, so their historical
- * orders are discovered by OwnerBackfill and gate readiness. Used for the
- * historyBackfilled creation-time flag and OwnerBackfill's eligibility query.
+ * whose discrete-order UIDs can't be precomputed at creation.
  */
 export const NON_DETERMINISTIC_TYPES: readonly OrderType[] = (
   Object.keys(DETERMINISTIC_ORDER_TYPE) as OrderType[]
 ).filter((t) => !DETERMINISTIC_ORDER_TYPE[t]);
+
+// Order types whose owners are never drained by OwnerBackfill:
+// - Unknown: unrecognized handler, unsupported by definition.
+// - CowAmmConstantProduct: CoW AMM migrated out of ComposableCoW; no longer supported.
+// Generators of these types are still stored (rows and enum values unchanged) but are
+// created with historyBackfilled = true and excluded from the drain + /readyz queries.
+export const OWNER_BACKFILL_EXCLUDED: readonly OrderType[] = [
+  "Unknown",
+  "CowAmmConstantProduct",
+];
+
+/**
+ * Non-deterministic types the owner backfill actually drains. Their historical orders
+ * are discovered by OwnerBackfill and gate readiness. Used for the historyBackfilled
+ * creation-time flag, OwnerBackfill's eligibility query, and the /readyz pending count.
+ */
+export const OWNER_BACKFILL_TYPES: readonly OrderType[] =
+  NON_DETERMINISTIC_TYPES.filter((t) => !OWNER_BACKFILL_EXCLUDED.includes(t));
+
+/** True when this generator needs an OwnerBackfill drain if created during historical sync. */
+export function isOwnerBackfillEligible(orderType: OrderType): boolean {
+  return OWNER_BACKFILL_TYPES.includes(orderType);
+}

@@ -26,7 +26,7 @@ export const conditionalOrderGeneratorDocs: DocMap = {
   "conditionalOrderGenerator.hash":
     "keccak256(abi.encode(handler, salt, staticInput)). Matches the on-chain singleOrders(owner, hash) key.",
   "conditionalOrderGenerator.orderType":
-    "One of TWAP, StopLoss, PerpetualSwap, GoodAfterTime, TradeAboveThreshold, CirclesBackingOrder, SwapOrderHandler, ERC4626CowSwapFeeBurner, or Unknown. Derived from the handler address. decodedParams is populated for every value except Unknown (see decodeError for the failure case). Shapes for TWAP, StopLoss, PerpetualSwap, GoodAfterTime, and TradeAboveThreshold are documented in docs/supported-order-types.md; shapes for CirclesBackingOrder, SwapOrderHandler, and ERC4626CowSwapFeeBurner are defined by the decoders in src/decoders/.",
+    "One of TWAP, StopLoss, PerpetualSwap, GoodAfterTime, TradeAboveThreshold, CirclesBackingOrder, SwapOrderHandler, ERC4626CowSwapFeeBurner, or Unknown. Derived from the handler address. decodedParams is populated for every value except Unknown (see decodeError for the failure case). Shapes for TWAP, StopLoss, PerpetualSwap, GoodAfterTime, and TradeAboveThreshold are documented in docs/supported-order-types.md; shapes for CirclesBackingOrder, SwapOrderHandler, and ERC4626CowSwapFeeBurner are defined by the decoders in src/decoders/. Unknown and CowAmmConstantProduct generators are stored for completeness, but their discrete-order history is not backfilled.",
   "conditionalOrderGenerator.status":
     "Active, Cancelled, or Completed. Starts Active. Moves to Cancelled when removed from the contract; moves to Completed when no more discrete orders can be produced.",
   "conditionalOrderGenerator.decodedParams":
