@@ -79,6 +79,7 @@ function makeWrappedOrder(uid: string, status: "open" | "fulfilled" | "expired" 
       signature: "0x",
       executedSellAmount: status === "fulfilled" ? "1000000000000000000" : "0",
       executedBuyAmount: status === "fulfilled" ? "2000000000000000000" : "0",
+      executedFeeAmount: status === "fulfilled" ? "1000000000000000" : "0",
     },
   };
 }
@@ -88,6 +89,7 @@ interface OrderStub {
   status: string;
   executedSellAmount: string;
   executedBuyAmount: string;
+  executedFeeAmount: string;
   sellAmount?: string;
   buyAmount?: string;
   feeAmount?: string;
@@ -108,6 +110,7 @@ function makeOrderStub(overrides: Partial<OrderStub> & Pick<OrderStub, "uid" | "
     signature: "0x",
     executedSellAmount: "0",
     executedBuyAmount: "0",
+    executedFeeAmount: "0",
     ...overrides,
   };
 }
@@ -163,6 +166,7 @@ describe("fetchOrderStatusByUids", () => {
       const info = result.get(UID_A);
       expect(info?.executedSellAmount).toBe("1000000000000000000");
       expect(info?.executedBuyAmount).toBe("2000000000000000000");
+      expect(info?.executedFeeAmount).toBe("1000000000000000");
     } finally {
       await close();
     }
@@ -326,16 +330,19 @@ describe("fetchOwnerOrderStatuses", () => {
           status: "fulfilled",
           executedSellAmount: "500",
           executedBuyAmount: "1000",
+          executedFeeAmount: "0",
         });
         expect(result.get("0xuid2")).toEqual({
           status: "open",
           executedSellAmount: "0",
           executedBuyAmount: "0",
+          executedFeeAmount: "0",
         });
         expect(result.get("0xuid3")).toEqual({
           status: "expired",
           executedSellAmount: "250",
           executedBuyAmount: "500",
+          executedFeeAmount: "0",
         });
       });
     } finally {
@@ -350,6 +357,7 @@ describe("fetchOwnerOrderStatuses", () => {
         status: "cancelled",
         executedSellAmount: null,
         executedBuyAmount: null,
+        executedFeeAmount: null,
         sellAmount: "1000",
         buyAmount: "2000",
         feeAmount: "0",
@@ -374,6 +382,7 @@ describe("fetchOwnerOrderStatuses", () => {
           status: "cancelled",
           executedSellAmount: null,
           executedBuyAmount: null,
+          executedFeeAmount: null,
         });
       });
     } finally {
@@ -432,6 +441,7 @@ describe("fetchOwnerOrderStatuses", () => {
           status: "fulfilled",
           executedSellAmount: "999",
           executedBuyAmount: "888",
+          executedFeeAmount: "0",
         });
       });
     } finally {
@@ -570,7 +580,7 @@ describe("fetchComposableOrders — rebuild from durable cache", () => {
         status: "fulfilled",
         sellAmount: "1000",
         buyAmount: "2000",
-        feeAmount: "0",
+        feeAmount: "17",
         validTo: 9999999999,
         creationDate: 1700000000n,
         executedSellAmount: "1000",
@@ -591,6 +601,7 @@ describe("fetchComposableOrders — rebuild from durable cache", () => {
         expect(orders[0]!.uid).toBe("0xcached-order");
         expect(orders[0]!.generatorId).toBe("gen-current");
         expect(orders[0]!.status).toBe("fulfilled");
+        expect(orders[0]!.executedFeeAmount).toBe("17");
       });
     } finally {
       await close();

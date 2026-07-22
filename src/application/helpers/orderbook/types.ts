@@ -18,13 +18,14 @@ export interface OrderbookOrder {
   signature: string;
   executedSellAmount: string;
   executedBuyAmount: string;
+  executedFeeAmount: string;
 }
 
 /** Processed composable order stored in cache and returned to callers.
  *  Shares field types with the discreteOrder schema for the DB-mapped fields. */
 export type ComposableOrder = Pick<
   typeof discreteOrder.$inferInsert,
-  "status" | "sellAmount" | "buyAmount" | "feeAmount" | "validTo" | "executedSellAmount" | "executedBuyAmount"
+  "status" | "sellAmount" | "buyAmount" | "feeAmount" | "validTo" | "executedSellAmount" | "executedBuyAmount" | "executedFeeAmount"
 > & {
   uid: string;
   generatorId: string;
@@ -38,6 +39,7 @@ export interface OrderStatusInfo {
   status: string;
   executedSellAmount: string | null;  // null when served from cache
   executedBuyAmount: string | null;
+  executedFeeAmount: string | null;
 }
 
 /** CoW-order fields used to enrich a flash-loan order, from the orderbook. */
@@ -63,6 +65,7 @@ export interface ComposableCacheRow {
   creationDate: bigint;
   executedSellAmount: string | null;
   executedBuyAmount: string | null;
+  executedFeeAmount: string | null;
 }
 
 /** Cached order data returned by getCachedUidStatuses. */
@@ -70,6 +73,7 @@ export interface CachedOrderData {
   status: string;
   executedSellAmount: string | null;
   executedBuyAmount: string | null;
+  executedFeeAmount: string | null;
 }
 
 export const TERMINAL_STATUSES = new Set(["fulfilled", "expired", "cancelled"]);

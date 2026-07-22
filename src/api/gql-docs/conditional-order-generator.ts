@@ -47,6 +47,12 @@ export const conditionalOrderGeneratorDocs: DocMap = {
     "For orders returning PollTryAtEpoch, the epoch to wait for before the next poll. Unix seconds (UTC), decimal string (BigInt scalar). See docs/api-reference.md#timestamp-fields.",
   "conditionalOrderGenerator.historyBackfilled":
     "Whether OwnerBackfill has drained this generator's full /account order history from the CoW Orderbook. Applies to non-deterministic types (PerpetualSwap, GoodAfterTime, etc.) whose discrete orders cannot be precomputed. Internal one-time bootstrap flag.",
+  "conditionalOrderGenerator.executedSellAmount":
+    "Total sell amount executed across this generator's discrete orders, as a decimal string in raw token units.",
+  "conditionalOrderGenerator.executedBuyAmount":
+    "Total buy amount executed across this generator's discrete orders, as a decimal string in raw token units.",
+  "conditionalOrderGenerator.executedFeeAmount":
+    "Total fee executed across this generator's discrete orders, as a decimal string in raw token units.",
   "conditionalOrderGenerator.transaction":
     "The transaction that emitted the ConditionalOrderCreated event. Joined on (chainId, txHash).",
   "conditionalOrderGenerator.discreteOrders":

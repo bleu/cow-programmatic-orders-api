@@ -99,6 +99,9 @@ export const conditionalOrderGenerator = onchainTable(
     nextCheckTimestamp: t.bigint(),        // for PollTryAtEpoch — store epoch directly
     consecutiveTryNextBlock: t.integer().notNull().default(0),  // Backoff counter for stuck generators
     historyBackfilled: t.boolean().notNull().default(false),    // OwnerBackfill has drained this generator's full /account history
+    executedSellAmount: t.text().notNull().default("0"),       // aggregate across discrete orders
+    executedBuyAmount: t.text().notNull().default("0"),
+    executedFeeAmount: t.text().notNull().default("0"),
   }),
   (table) => ({
     pk: primaryKey({ columns: [table.chainId, table.eventId] }),
@@ -134,6 +137,7 @@ export const discreteOrder = onchainTable(
     creationDate: t.bigint().notNull(),               // block timestamp (seconds)
     executedSellAmount: t.text(),                     // actual executed amount (from API, post-settlement)
     executedBuyAmount: t.text(),                      // actual executed amount (from API, post-settlement)
+    executedFeeAmount: t.text(),                      // actual executed fee (from API, post-settlement)
     promotedAt: t.bigint(),                           // block timestamp when CandidateConfirmer promoted from candidate; null = created directly (precompute or OwnerBackfill)
   }),
   (table) => ({

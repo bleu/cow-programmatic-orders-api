@@ -5,6 +5,7 @@ import { type SupportedChainId } from "../../../data";
 import { DEFAULT_MAX_DISCRETE_ORDERS_PER_BLOCK } from "../../../constants";
 import { fetchOrderStatusByUids } from "../../helpers/orderbookClient";
 import { log } from "../../helpers/logger";
+import { refreshGeneratorExecutedAmounts } from "../../helpers/executedAmounts";
 
 const VALID_DISCRETE_STATUSES = new Set(["fulfilled", "unfilled", "expired", "cancelled"]);
 
@@ -71,6 +72,9 @@ ponder.on("OrderStatusTracker:block", async ({ event, context }) => {
         creationDate: order.creationDate,
         executedSellAmount: info.executedSellAmount ?? null,
         executedBuyAmount: info.executedBuyAmount ?? null,
+        executedFeeAmount:
+          info.executedFeeAmount ??
+          (info.status === "fulfilled" ? order.feeAmount : null),
         promotedAt: order.promotedAt,
       });
     }
@@ -87,8 +91,15 @@ ponder.on("OrderStatusTracker:block", async ({ event, context }) => {
             status: sql`excluded.status`,
             executedSellAmount: sql`excluded.executed_sell_amount`,
             executedBuyAmount: sql`excluded.executed_buy_amount`,
+            executedFeeAmount: sql`excluded.executed_fee_amount`,
           },
         });
+
+      await refreshGeneratorExecutedAmounts(
+        context,
+        chainId,
+        rowsToUpdate.map((row) => row.conditionalOrderGeneratorId),
+      );
 
       log("info", "OrderStatusTracker:DONE", { block: String(event.block.number), chainId, open: openOrders.length, updated: rowsToUpdate.length });
     }
@@ -139,4 +150,3 @@ ponder.on("OrderStatusTracker:block", async ({ event, context }) => {
       ),
     );
 });
-
