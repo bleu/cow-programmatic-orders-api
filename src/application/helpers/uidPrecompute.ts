@@ -24,7 +24,7 @@ import { fetchOrderStatusByUids } from "./orderbookClient";
 import { type OrderType, DETERMINISTIC_ORDER_TYPE } from "../../utils/order-types";
 import { log } from "./logger";
 import { MAX_TWAP_PRECOMPUTE_PARTS } from "../../constants";
-import { refreshGeneratorExecutedAmounts } from "./executedAmounts";
+import { refreshTwapExecutedTotals } from "./executedAmounts";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -125,9 +125,7 @@ export async function precomputeAndDiscover(
         creationDate: blockTimestamp,
         executedSellAmount: statusInfo?.executedSellAmount ?? null,
         executedBuyAmount: statusInfo?.executedBuyAmount ?? null,
-        executedFeeAmount:
-          statusInfo?.executedFeeAmount ??
-          (apiStatus === "fulfilled" ? order.feeAmount : null),
+        executedFee: statusInfo?.executedFee ?? null,
         updatedAtBlock: blockNumber,
       });
     } else {
@@ -161,9 +159,12 @@ export async function precomputeAndDiscover(
         set: {
           status: sql`excluded.status`,
           validTo: sql`excluded.valid_to`,
-          executedSellAmount: sql`excluded.executed_sell_amount`,
-          executedBuyAmount: sql`excluded.executed_buy_amount`,
-          executedFeeAmount: sql`excluded.executed_fee_amount`,
+          // Status lookups can be served from cow_cache with null executed amounts
+          // ("null when served from cache") — coalesce so a cached null never erases
+          // values already written by OrderStatusTracker or OwnerBackfill.
+          executedSellAmount: sql`coalesce(excluded.executed_sell_amount, ${discreteOrder.executedSellAmount})`,
+          executedBuyAmount: sql`coalesce(excluded.executed_buy_amount, ${discreteOrder.executedBuyAmount})`,
+          executedFee: sql`coalesce(excluded.executed_fee, ${discreteOrder.executedFee})`,
           updatedAtBlock: sql`excluded.updated_at_block`,
         },
       });
@@ -177,7 +178,7 @@ export async function precomputeAndDiscover(
   }
 
   if (discreteRows.length > 0) {
-    await refreshGeneratorExecutedAmounts(context, chainId, [generatorEventId]);
+    await refreshTwapExecutedTotals(context, chainId, [generatorEventId]);
   }
 
   const allTerminal = precomputed.every((o) => {

@@ -87,7 +87,7 @@ function makeWrappedOrder(uid: string, status: "open" | "fulfilled" | "expired" 
       signature: "0x",
       executedSellAmount: status === "fulfilled" ? "1000000000000000000" : "0",
       executedBuyAmount: status === "fulfilled" ? "2000000000000000000" : "0",
-      executedFeeAmount: status === "fulfilled" ? "1000000000000000" : "0",
+      executedFee: status === "fulfilled" ? "1000000000000000" : "0",
     },
   };
 }
@@ -97,7 +97,7 @@ interface OrderStub {
   status: string;
   executedSellAmount: string;
   executedBuyAmount: string;
-  executedFeeAmount: string;
+  executedFee: string;
   sellAmount?: string;
   buyAmount?: string;
   feeAmount?: string;
@@ -118,7 +118,7 @@ function makeOrderStub(overrides: Partial<OrderStub> & Pick<OrderStub, "uid" | "
     signature: "0x",
     executedSellAmount: "0",
     executedBuyAmount: "0",
-    executedFeeAmount: "0",
+    executedFee: "0",
     ...overrides,
   };
 }
@@ -174,7 +174,7 @@ describe("fetchOrderStatusByUids", () => {
       const info = result.get(UID_A);
       expect(info?.executedSellAmount).toBe("1000000000000000000");
       expect(info?.executedBuyAmount).toBe("2000000000000000000");
-      expect(info?.executedFeeAmount).toBe("1000000000000000");
+      expect(info?.executedFee).toBe("1000000000000000");
     } finally {
       await close();
     }
@@ -338,19 +338,19 @@ describe("fetchOwnerOrderStatuses", () => {
           status: "fulfilled",
           executedSellAmount: "500",
           executedBuyAmount: "1000",
-          executedFeeAmount: "0",
+          executedFee: "0",
         });
         expect(result.get("0xuid2")).toEqual({
           status: "open",
           executedSellAmount: "0",
           executedBuyAmount: "0",
-          executedFeeAmount: "0",
+          executedFee: "0",
         });
         expect(result.get("0xuid3")).toEqual({
           status: "expired",
           executedSellAmount: "250",
           executedBuyAmount: "500",
-          executedFeeAmount: "0",
+          executedFee: "0",
         });
       });
     } finally {
@@ -365,7 +365,7 @@ describe("fetchOwnerOrderStatuses", () => {
         status: "cancelled",
         executedSellAmount: null,
         executedBuyAmount: null,
-        executedFeeAmount: null,
+        executedFee: null,
         sellAmount: "1000",
         buyAmount: "2000",
         feeAmount: "0",
@@ -390,7 +390,7 @@ describe("fetchOwnerOrderStatuses", () => {
           status: "cancelled",
           executedSellAmount: null,
           executedBuyAmount: null,
-          executedFeeAmount: null,
+          executedFee: null,
         });
       });
     } finally {
@@ -449,7 +449,7 @@ describe("fetchOwnerOrderStatuses", () => {
           status: "fulfilled",
           executedSellAmount: "999",
           executedBuyAmount: "888",
-          executedFeeAmount: "0",
+          executedFee: "0",
         });
       });
     } finally {
@@ -717,7 +717,7 @@ describe("drainOwnerSlice — delta mode (fully drained owner)", () => {
 
     const { ctx, inserted } = makeDrainContext({
       drainState: { nextOffset: 0, fullyDrained: true, deltaCursor: 1700000000 },
-      cacheRows: [{ ...CACHE_ROWS[0]!, feeAmount: "17" }],
+      cacheRows: [{ ...CACHE_ROWS[0]!, executedFee: "17" }],
       // eventId differs from any prior deployment — the row is keyed by the stable hash.
       generators: [{ eventId: "gen-current", hash: GEN_HASH }],
     });
@@ -731,7 +731,7 @@ describe("drainOwnerSlice — delta mode (fully drained owner)", () => {
         expect(row).toBeDefined();
         expect(row!.conditionalOrderGeneratorId).toBe("gen-current");
         expect(row!.status).toBe("fulfilled");
-        expect(row!.executedFeeAmount).toBe("17");
+        expect(row!.executedFee).toBe("17");
       });
     } finally {
       await close();

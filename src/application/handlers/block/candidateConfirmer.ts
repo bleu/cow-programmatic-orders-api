@@ -12,7 +12,7 @@ import { withTimeout } from "../../helpers/withTimeout";
 import { bumpGeneratorsUpdatedAt } from "../../helpers/updatedAtBlock";
 import { log } from "../../helpers/logger";
 import { type DiscreteStatus } from "./shared";
-import { refreshGeneratorExecutedAmounts } from "../../helpers/executedAmounts";
+import { refreshTwapExecutedTotals } from "../../helpers/executedAmounts";
 
 // ─── CandidateConfirmer ──────────────────────────────────────────────────────
 // Checks if candidate discrete orders exist on the Orderbook API.
@@ -110,9 +110,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
                 creationDate: c.creationDate,
                 executedSellAmount: apiEntry?.executedSellAmount ?? null,
                 executedBuyAmount: apiEntry?.executedBuyAmount ?? null,
-                executedFeeAmount:
-                  apiEntry?.executedFeeAmount ??
-                  (apiEntry?.status === "fulfilled" ? c.feeAmount : null),
+                executedFee: apiEntry?.executedFee ?? null,
                 promotedAt: event.block.timestamp,
                 updatedAtBlock: event.block.number,
               };
@@ -144,7 +142,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
         event.block.number,
       );
 
-      await refreshGeneratorExecutedAmounts(
+      await refreshTwapExecutedTotals(
         context,
         chainId,
         orphanCandidates.map((candidate) => candidate.generatorId),
@@ -218,9 +216,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
       creationDate: candidate.creationDate,
       executedSellAmount: orderbookEntry.executedSellAmount,
       executedBuyAmount: orderbookEntry.executedBuyAmount,
-      executedFeeAmount:
-        orderbookEntry.executedFeeAmount ??
-        (orderbookEntry.status === "fulfilled" ? candidate.feeAmount : null),
+      executedFee: orderbookEntry.executedFee ?? null,
       promotedAt: event.block.timestamp,
       updatedAtBlock: event.block.number,
     });
@@ -238,7 +234,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
           status: sql`excluded.status`,
           executedSellAmount: sql`excluded.executed_sell_amount`,
           executedBuyAmount: sql`excluded.executed_buy_amount`,
-          executedFeeAmount: sql`excluded.executed_fee_amount`,
+          executedFee: sql`excluded.executed_fee`,
           promotedAt: sql`excluded.promoted_at`,
           updatedAtBlock: sql`excluded.updated_at_block`,
         },
@@ -352,9 +348,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
         creationDate: c.creationDate,
         executedSellAmount: entry?.executedSellAmount ?? null,
         executedBuyAmount: entry?.executedBuyAmount ?? null,
-        executedFeeAmount:
-          entry?.executedFeeAmount ??
-          (entry?.status === "fulfilled" ? c.feeAmount : null),
+        executedFee: entry?.executedFee ?? null,
         promotedAt: event.block.timestamp,
         updatedAtBlock: event.block.number,
       };
@@ -384,7 +378,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
   }
 
   if (confirmed > 0 || stale.length > 0) {
-    await refreshGeneratorExecutedAmounts(context, chainId, [
+    await refreshTwapExecutedTotals(context, chainId, [
       ...rowsToUpsert.map((row) => row.conditionalOrderGeneratorId),
       ...stale.map((candidate) => candidate.generatorId),
     ]);

@@ -2,13 +2,17 @@ import { describe, expect, it, vi } from "vitest";
 import type { Context } from "ponder:registry";
 
 vi.mock("ponder:schema", () => ({
-  conditionalOrderGenerator: {},
+  conditionalOrderGenerator: {
+    eventId: "eventId",
+    chainId: "chainId",
+    orderType: "orderType",
+  },
   discreteOrder: {
     conditionalOrderGeneratorId: "conditionalOrderGeneratorId",
     chainId: "chainId",
     executedSellAmount: "executedSellAmount",
     executedBuyAmount: "executedBuyAmount",
-    executedFeeAmount: "executedFeeAmount",
+    executedFee: "executedFee",
   },
 }));
 
@@ -19,18 +23,26 @@ vi.mock("ponder", () => ({
   sql: vi.fn(),
 }));
 
-import { refreshGeneratorExecutedAmounts } from "../../src/application/helpers/executedAmounts";
+import { refreshTwapExecutedTotals } from "../../src/application/helpers/executedAmounts";
 
+/** Fake context: the first select resolves the generator-type lookup, the
+ *  second (with .groupBy) resolves the per-generator aggregate. */
 function makeContext(
-  rows: {
+  generators: { eventId: string; orderType: string }[],
+  totals: {
     generatorId: string;
     executedSellAmount: string;
     executedBuyAmount: string;
-    executedFeeAmount: string;
+    executedFee: string;
   }[],
 ) {
-  const groupBy = vi.fn().mockResolvedValue(rows);
-  const where = vi.fn(() => ({ groupBy }));
+  let selectCalls = 0;
+  const groupBy = vi.fn().mockResolvedValue(totals);
+  const where = vi.fn(() => {
+    selectCalls++;
+    if (selectCalls === 1) return Promise.resolve(generators);
+    return { groupBy };
+  });
   const from = vi.fn(() => ({ where }));
   const select = vi.fn(() => ({ from }));
   const set = vi.fn().mockResolvedValue(undefined);
@@ -44,42 +56,64 @@ function makeContext(
   };
 }
 
-describe("refreshGeneratorExecutedAmounts", () => {
-  it("updates each parent once and resets parents without parts", async () => {
-    const { context, update, set } = makeContext([
-      {
-        generatorId: "generator-a",
-        executedSellAmount: "100",
-        executedBuyAmount: "90",
-        executedFeeAmount: "2",
-      },
-    ]);
+describe("refreshTwapExecutedTotals", () => {
+  it("writes totals for TWAP parents and zeros for TWAP parents without parts", async () => {
+    const { context, update, set } = makeContext(
+      [
+        { eventId: "generator-a", orderType: "TWAP" },
+        { eventId: "generator-b", orderType: "TWAP" },
+      ],
+      [
+        {
+          generatorId: "generator-a",
+          executedSellAmount: "100",
+          executedBuyAmount: "90",
+          executedFee: "2",
+        },
+      ],
+    );
 
-    await refreshGeneratorExecutedAmounts(context, 100, [
+    await refreshTwapExecutedTotals(context, 100, [
       "generator-a",
       "generator-a",
       "generator-b",
     ]);
 
     expect(update).toHaveBeenCalledTimes(2);
-    expect(update).toHaveBeenNthCalledWith(1, {}, { chainId: 100, eventId: "generator-a" });
-    expect(update).toHaveBeenNthCalledWith(2, {}, { chainId: 100, eventId: "generator-b" });
+    expect(update).toHaveBeenNthCalledWith(1, expect.anything(), { chainId: 100, eventId: "generator-a" });
+    expect(update).toHaveBeenNthCalledWith(2, expect.anything(), { chainId: 100, eventId: "generator-b" });
     expect(set).toHaveBeenNthCalledWith(1, {
-      executedSellAmount: "100",
-      executedBuyAmount: "90",
-      executedFeeAmount: "2",
+      additionalData: {
+        executedSellAmount: "100",
+        executedBuyAmount: "90",
+        executedFee: "2",
+      },
     });
     expect(set).toHaveBeenNthCalledWith(2, {
-      executedSellAmount: "0",
-      executedBuyAmount: "0",
-      executedFeeAmount: "0",
+      additionalData: {
+        executedSellAmount: "0",
+        executedBuyAmount: "0",
+        executedFee: "0",
+      },
     });
   });
 
-  it("does nothing without affected parents", async () => {
-    const { context, select, update } = makeContext([]);
+  it("skips non-TWAP parents entirely", async () => {
+    const { context, select, update } = makeContext(
+      [{ eventId: "generator-swap", orderType: "PerpetualSwap" }],
+      [],
+    );
 
-    await refreshGeneratorExecutedAmounts(context, 100, []);
+    await refreshTwapExecutedTotals(context, 100, ["generator-swap"]);
+
+    expect(select).toHaveBeenCalledTimes(1); // type lookup only, no aggregate
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("does nothing without affected parents", async () => {
+    const { context, select, update } = makeContext([], []);
+
+    await refreshTwapExecutedTotals(context, 100, []);
 
     expect(select).not.toHaveBeenCalled();
     expect(update).not.toHaveBeenCalled();

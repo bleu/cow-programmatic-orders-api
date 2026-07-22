@@ -25,7 +25,7 @@ export function toCacheRow(o: ComposableOrder): ComposableCacheRow {
     creationDate: o.creationDate,
     executedSellAmount: o.executedSellAmount ?? null,
     executedBuyAmount: o.executedBuyAmount ?? null,
-    executedFeeAmount: o.executedFeeAmount ?? null,
+    executedFee: o.executedFee ?? null,
   };
 }
 
@@ -51,7 +51,7 @@ const composableOrderCache = cowCacheSchema.table("composable_order", {
   creationDate: bigint("creation_date", { mode: "bigint" }).notNull(),
   executedSellAmount: text("executed_sell_amount"),
   executedBuyAmount: text("executed_buy_amount"),
-  executedFeeAmount: text("executed_fee_amount"),
+  executedFee: text("executed_fee"),
   fetchedAt: bigint("fetched_at", { mode: "bigint" }).notNull(),
 });
 
@@ -73,7 +73,7 @@ const orderUidCache = cowCacheSchema.table("order_uid_cache", {
   fetchedAt: integer("fetched_at").notNull(),
   executedSellAmount: text("executed_sell_amount"),
   executedBuyAmount: text("executed_buy_amount"),
-  executedFeeAmount: text("executed_fee_amount"),
+  executedFee: text("executed_fee"),
   kind: text("kind"),
   receiver: text("receiver"),
   sellAmount: text("sell_amount"),
@@ -186,7 +186,7 @@ export async function getCachedUidStatuses(
           status: orderUidCache.status,
           executedSellAmount: orderUidCache.executedSellAmount,
           executedBuyAmount: orderUidCache.executedBuyAmount,
-          executedFeeAmount: orderUidCache.executedFeeAmount,
+          executedFee: orderUidCache.executedFee,
         })
         .from(orderUidCache)
         .where(
@@ -200,7 +200,7 @@ export async function getCachedUidStatuses(
           status: row.status,
           executedSellAmount: row.executedSellAmount,
           executedBuyAmount: row.executedBuyAmount,
-          executedFeeAmount: row.executedFeeAmount,
+          executedFee: row.executedFee,
         });
       }
     }
@@ -230,7 +230,7 @@ export async function cacheUidStatuses(
         fetchedAt: now,
         executedSellAmount: order.executedSellAmount,
         executedBuyAmount: order.executedBuyAmount,
-        executedFeeAmount: order.executedFeeAmount,
+        executedFee: order.executedFee,
       })))
       .onConflictDoUpdate({
         target: [orderUidCache.chainId, orderUidCache.orderUid],
@@ -239,7 +239,7 @@ export async function cacheUidStatuses(
           fetchedAt: now,
           executedSellAmount: sql`excluded.executed_sell_amount`,
           executedBuyAmount: sql`excluded.executed_buy_amount`,
-          executedFeeAmount: sql`excluded.executed_fee_amount`,
+          executedFee: sql`excluded.executed_fee`,
         },
       });
   } catch {
@@ -388,7 +388,7 @@ export async function readOwnerComposableCache(
         creationDate: composableOrderCache.creationDate,
         executedSellAmount: composableOrderCache.executedSellAmount,
         executedBuyAmount: composableOrderCache.executedBuyAmount,
-        executedFeeAmount: composableOrderCache.executedFeeAmount,
+        executedFee: composableOrderCache.executedFee,
       })
       .from(composableOrderCache)
       .where(
@@ -442,7 +442,7 @@ async function upsertComposableCacheChunk(
         creationDate: r.creationDate,
         executedSellAmount: r.executedSellAmount,
         executedBuyAmount: r.executedBuyAmount,
-        executedFeeAmount: r.executedFeeAmount,
+        executedFee: r.executedFee,
         fetchedAt: now,
       })))
       .onConflictDoUpdate({
@@ -452,7 +452,7 @@ async function upsertComposableCacheChunk(
           validTo: sql`excluded.valid_to`,
           executedSellAmount: sql`excluded.executed_sell_amount`,
           executedBuyAmount: sql`excluded.executed_buy_amount`,
-          executedFeeAmount: sql`excluded.executed_fee_amount`,
+          executedFee: sql`excluded.executed_fee`,
           fetchedAt: now,
         },
       });
