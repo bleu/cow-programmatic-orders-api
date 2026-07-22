@@ -40,6 +40,8 @@ Every `fetch`, `context.client.multicall`, `context.client.readContract`, or oth
 
 Rationale: Ponder 0.16 wraps every block in a single DB transaction (`node_modules/.../ponder/src/runtime/multichain.ts:363,639`) and offers no API to leave/re-enter. An unbounded external call in a handler holds the TX across the network round-trip; on a slow peer, Postgres terminates the connection and Ponder retries the full block 9× before shutting the process down. Tuning knobs live in `src/constants.ts` (`ORDERBOOK_HTTP_TIMEOUT_MS`, `BLOCK_HANDLER_RPC_TIMEOUT_MS`, `BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS`).
 
+For **resumable** work (the owner backfill is the reference), prefer an `AbortController` deadline over a bare `withTimeout` race: `withTimeout` abandons the promise but the underlying work keeps running (a zombie that still hits the API and the DB), while an abort signal threaded down to `fetch` (via `fetchWithTimeout`'s `signal` param) tears the request down at the socket. Pair it with page-by-page persistence of progress so a deadline just ends the slice — the next firing resumes instead of restarting. See `drainOwnerSlice` + `cow_cache.owner_drain`.
+
 ---
 
 ## Extending this doc

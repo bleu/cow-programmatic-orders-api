@@ -1,6 +1,6 @@
 import { ponder, type Context, type Event } from "ponder:registry";
 import { conditionalOrderGenerator } from "ponder:schema";
-import { and, eq, inArray } from "ponder";
+import { and, eq, inArray, sql } from "ponder";
 import type { Hex } from "viem";
 import { type SupportedChainId } from "../../../data";
 import {
@@ -8,14 +8,11 @@ import {
   DEFAULT_MAX_OWNERS_BACKFILL_PER_BLOCK,
   DEFAULT_OWNER_BACKFILL_CONCURRENCY,
 } from "../../../constants";
-import {
-  fetchComposableOrders,
-  upsertDiscreteOrders,
-} from "../../helpers/orderbookClient";
-import { TimeoutError, withTimeout } from "../../helpers/withTimeout";
+import { drainOwnerSlice } from "../../helpers/orderbookClient";
+import { ownerDrain, stampOwnerAttempt } from "../../helpers/orderbook/cache";
 import { mapWithConcurrency } from "../../helpers/concurrency";
 import { log } from "../../helpers/logger";
-import { NON_DETERMINISTIC_TYPES } from "../../../utils/order-types";
+import { OWNER_BACKFILL_TYPES } from "../../../utils/order-types";
 
 // ─── OwnerBackfill ───────────────────────────────────────────────────────────
 // Discovers historical discrete orders for non-deterministic generators (the realtime
@@ -28,6 +25,14 @@ import { NON_DETERMINISTIC_TYPES } from "../../../utils/order-types";
 // (they would otherwise slow Ponder's path to the tip). Every eligible owner — including
 // those created during the event backfill — is drained here once sync reaches "latest".
 //
+// Each owner attempt is a bounded, RESUMABLE slice: an AbortController ends the attempt
+// at BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS (tearing down the in-flight request — no zombie
+// fetches), and progress is persisted page-by-page in cow_cache.owner_drain, so the next
+// attempt continues from the stored offset instead of re-fetching from scratch. Owners
+// are picked least-recently-attempted first (never-attempted first), so a slow owner
+// can't monopolize the batch and starve the rest. See drainOwnerSlice for the two drain
+// modes (resumable full drain vs post-redeploy delta).
+//
 // Readiness is gated on the drain completing (see /readyz), so promotion never ships an
 // indexer with history still missing.
 //
@@ -35,6 +40,9 @@ import { NON_DETERMINISTIC_TYPES } from "../../../utils/order-types";
 // that never need a drain (deterministic types, and generators created live) — see
 // composableCow.ts. So the only false rows are non-deterministic historical generators,
 // which this handler flips to true once their owner is fully drained.
+//
+// Unknown and CowAmmConstantProduct generators are stored but never drained here —
+// see OWNER_BACKFILL_EXCLUDED in utils/order-types.ts.
 
 function resolveOwnerCap(chainId: number): number {
   const raw = Number(process.env[`MAX_OWNERS_BACKFILL_PER_BLOCK_${chainId}`]);
@@ -50,11 +58,12 @@ function resolveOwnerConcurrency(chainId: number): number {
     : DEFAULT_OWNER_BACKFILL_CONCURRENCY;
 }
 
-// Drain one owner's full history: fetch (timeout-bounded), upsert discovered orders,
-// and — only on a full drain — flip historyBackfilled. Returns the per-owner tallies
-// so the concurrent caller can aggregate. A per-owner timeout is swallowed (the owner
-// stays eligible and is retried next firing); any other error propagates to abort the
-// batch (the block handler is idempotent, so the block simply retries).
+// Run one drain slice for an owner: stamp the attempt (rotation), give the slice a hard
+// deadline via AbortController, and — only when the owner's history is fully covered —
+// flip historyBackfilled. An incomplete slice needs no special handling: its pages are
+// already persisted along with the resume offset, and the owner stays eligible for a
+// later firing. Errors propagate to abort the batch (the block handler is idempotent,
+// so the block simply retries).
 async function drainOwner(
   context: Context,
   chainId: SupportedChainId,
@@ -62,38 +71,27 @@ async function drainOwner(
   owner: Hex,
   ownerGeneratorIds: Map<Hex, string[]>
 ): Promise<{ discovered: number; drained: number }> {
-  try {
-    const { orders, complete } = await withTimeout(
-      fetchComposableOrders(context, chainId, owner),
-      BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
-      `OwnerBackfill:owner:${owner}`
-    );
-    const discovered = await upsertDiscreteOrders(context, chainId, orders);
+  await stampOwnerAttempt(context, chainId, owner);
 
-    // Only flip the flag when the owner's history was drained in full. A partial
-    // drain (rate limit / timeout) leaves the owner eligible → retried next block.
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(), BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS);
+  try {
+    const { discovered, complete } = await drainOwnerSlice(context, chainId, owner, controller.signal);
+
     if (complete) {
       await markOwnerHistoryBackfilled(context, chainId, owner, ownerGeneratorIds);
       return { discovered, drained: 1 };
     }
 
-    log("warn", "OwnerBackfill:owner_incomplete", {
+    log("info", "OwnerBackfill:owner_paused", {
       block: String(currentBlock),
       chainId,
       owner,
+      aborted: controller.signal.aborted,
     });
     return { discovered, drained: 0 };
-  } catch (err) {
-    if (err instanceof TimeoutError) {
-      log("warn", "OwnerBackfill:owner_timeout", {
-        block: String(currentBlock),
-        chainId,
-        owner,
-        timeoutMs: BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS,
-      });
-      return { discovered: 0, drained: 0 }; // leave eligible — retried next block
-    }
-    throw err;
+  } finally {
+    clearTimeout(deadline);
   }
 }
 
@@ -108,18 +106,31 @@ async function drainOwnerBatch(
   const eligibleWhere = and(
     eq(conditionalOrderGenerator.chainId, chainId),
     eq(conditionalOrderGenerator.status, "Active"),
-    inArray(conditionalOrderGenerator.orderType, [...NON_DETERMINISTIC_TYPES]),
+    inArray(conditionalOrderGenerator.orderType, [...OWNER_BACKFILL_TYPES]),
     eq(conditionalOrderGenerator.historyBackfilled, false)
   );
 
-  // Take up to `cap` distinct owners this block; ordering by owner keeps progress
-  // deterministic and lets already-drained owners fall out of the set.
+  // Take up to `cap` distinct owners this block, least-recently-attempted first
+  // (never-attempted first) so a repeatedly slow owner rotates to the back of the
+  // queue instead of occupying every batch. lastAttemptAt must appear in the DISTINCT
+  // select list for Postgres to allow ordering by it; it is constant per owner, so it
+  // introduces no duplicate owners.
   const ownerRows = (await context.db.sql
-    .selectDistinct({ owner: conditionalOrderGenerator.owner })
+    .selectDistinct({
+      owner: conditionalOrderGenerator.owner,
+      lastAttemptAt: ownerDrain.lastAttemptAt,
+    })
     .from(conditionalOrderGenerator)
+    .leftJoin(
+      ownerDrain,
+      and(
+        eq(ownerDrain.chainId, conditionalOrderGenerator.chainId),
+        eq(ownerDrain.owner, conditionalOrderGenerator.owner)
+      )
+    )
     .where(eligibleWhere)
-    .orderBy(conditionalOrderGenerator.owner)
-    .limit(cap)) as { owner: Hex }[];
+    .orderBy(sql`${ownerDrain.lastAttemptAt} ASC NULLS FIRST`, conditionalOrderGenerator.owner)
+    .limit(cap)) as { owner: Hex; lastAttemptAt: number | null }[];
 
   if (ownerRows.length === 0) return; // nothing pending — cheap no-op every block
 

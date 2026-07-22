@@ -19,11 +19,12 @@
  */
 
 export {
-  fetchComposableOrders,
+  drainOwnerSlice,
   upsertDiscreteOrders,
   fetchOrderStatusByUids,
   fetchOwnerOrderStatuses,
   fetchFlashLoanEnrichmentByUids,
+  type OwnerDrainResult,
 } from "./orderbook/client";
 export { OrderbookUnavailableError, fetchAccountOrders } from "./orderbook/http";
 export type {

@@ -28,7 +28,20 @@ export class OrderbookUnavailableError extends Error {
   }
 }
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+/** setTimeout as a promise; resolves early (without error) when `signal` aborts. */
+const sleep = (ms: number, signal?: AbortSignal): Promise<void> =>
+  new Promise((resolve) => {
+    if (signal?.aborted) return resolve();
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 
 /** Parse an orderbook order's ISO creationDate into Unix seconds. */
 function orderCreationSeconds(order: OrderbookOrder): number {
@@ -59,10 +72,13 @@ async function fetchOrderbook(
   url: string,
   init: RequestInit | undefined,
   endpoint: string,
+  signal?: AbortSignal,
 ): Promise<Response> {
   let spent = 0;
   for (let attempt = 0; ; attempt++) {
-    const response = await fetchWithTimeout(url, init, ORDERBOOK_HTTP_TIMEOUT_MS, endpoint);
+    // An abort (slice deadline) surfaces as TimeoutError from fetchWithTimeout, so
+    // callers handle both "request too slow" and "slice over" through one path.
+    const response = await fetchWithTimeout(url, init, ORDERBOOK_HTTP_TIMEOUT_MS, endpoint, signal);
     if (response.ok) return response;
 
     const retryable = response.status === 429 || response.status >= 500;
@@ -81,9 +97,24 @@ async function fetchOrderbook(
     }
 
     log("warn", "ob:retry", { endpoint, status: response.status, attempt: attempt + 1, delayMs: delay, retryAfterMs });
-    await sleep(delay);
+    await sleep(delay, signal);
+    if (signal?.aborted) throw new TimeoutError(`${endpoint}:aborted`, 0);
     spent += delay;
   }
+}
+
+/** Resumable-pagination options for fetchAccountOrders. */
+export interface AccountFetchOpts {
+  /** Cancels pagination between pages and tears down the in-flight request. */
+  signal?: AbortSignal;
+  /** Resume pagination here instead of 0. New orders inserted at the top since the
+   *  offset was recorded only shift older orders to HIGHER offsets, so resuming can
+   *  re-fetch a few already-seen orders (harmless — upserts are idempotent) but can
+   *  never skip any. */
+  startOffset?: number;
+  /** Called after each page with that page's fresh orders and the offset to resume
+   *  from next (i.e. past this page). Lets the caller persist progress page-by-page. */
+  onPage?: (orders: OrderbookOrder[], nextOffset: number) => Promise<void>;
 }
 
 /** Fetch orders for an owner with pagination. maxPages limits how many pages are fetched (0 = unlimited).
@@ -95,7 +126,11 @@ async function fetchOrderbook(
  *  API returns orders newest-first (creationDate DESC), so once a page contains an
  *  order strictly older than the cursor, everything beyond it is already known and
  *  pagination stops. Orders at or after the cursor are kept (the boundary is
- *  re-included so ties at exactly the cursor second are never dropped). */
+ *  re-included so ties at exactly the cursor second are never dropped).
+ *
+ *  Returns nextOffset — the resume point past the last fully-processed page. On
+ *  complete=false (error / abort mid-history) the caller persists it and a later
+ *  attempt continues from there via opts.startOffset. */
 export async function fetchAccountOrders(
   apiBaseUrl: string,
   owner: Hex,
@@ -103,33 +138,35 @@ export async function fetchAccountOrders(
   signingScheme?: string,
   pageSize = PAGE_LIMIT,
   sinceCreationDate?: number,
-): Promise<{ orders: OrderbookOrder[]; complete: boolean }> {
+  opts: AccountFetchOpts = {},
+): Promise<{ orders: OrderbookOrder[]; complete: boolean; nextOffset: number }> {
   const allOrders: OrderbookOrder[] = [];
-  let offset = 0;
+  let offset = opts.startOffset ?? 0;
   let pagesFetched = 0;
-  // complete=false means pagination was cut short by an error (rate limit / timeout /
-  // network) — the caller must NOT treat the result as the owner's full history.
+  // complete=false means pagination was cut short (rate limit / timeout / abort) —
+  // the caller must NOT treat the result as the owner's full history.
   let complete = false;
 
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
+  while (!opts.signal?.aborted) {
     const params = new URLSearchParams({ limit: String(pageSize), offset: String(offset) });
     if (signingScheme) params.set("signingScheme", signingScheme);
     const url = `${apiBaseUrl}/api/v1/account/${owner}/orders?${params.toString()}`;
     try {
-      const response = await fetchOrderbook(url, undefined, "ob:account");
+      const response = await fetchOrderbook(url, undefined, "ob:account", opts.signal);
       const page = (await response.json()) as OrderbookOrder[];
 
+      let fresh = page;
+      let crossedCursor = false;
       if (sinceCreationDate !== undefined) {
         // DESC order → orders at/after the cursor form a prefix of the page.
-        const fresh = page.filter((o) => orderCreationSeconds(o) >= sinceCreationDate);
-        allOrders.push(...fresh);
-        if (fresh.length < page.length) { complete = true; break; } // crossed the cursor — older orders already cached
-      } else {
-        allOrders.push(...page);
+        fresh = page.filter((o) => orderCreationSeconds(o) >= sinceCreationDate);
+        crossedCursor = fresh.length < page.length; // older orders already cached
       }
+      allOrders.push(...fresh);
+      if (opts.onPage && fresh.length > 0) await opts.onPage(fresh, offset + page.length);
 
       pagesFetched++;
+      if (crossedCursor) { complete = true; break; }
       if (page.length < pageSize) { complete = true; break; } // last page
       if (maxPages > 0 && pagesFetched >= maxPages) { complete = true; break; } // page cap reached
       offset += page.length;
@@ -139,7 +176,7 @@ export async function fetchAccountOrders(
         break;
       }
       if (err instanceof TimeoutError) {
-        log("warn", "ob:accountTimeout", { owner, offset, after: ORDERBOOK_HTTP_TIMEOUT_MS });
+        log("warn", "ob:accountTimeout", { owner, offset, aborted: opts.signal?.aborted ?? false, after: ORDERBOOK_HTTP_TIMEOUT_MS });
         break;
       }
       log("warn", "ob:accountFetchFailed", { owner, err: String(err) });
@@ -147,7 +184,7 @@ export async function fetchAccountOrders(
     }
   }
 
-  return { orders: allOrders, complete };
+  return { orders: allOrders, complete, nextOffset: offset };
 }
 
 /** Batch-fetch orders by UID to refresh status of open orders.
@@ -156,6 +193,7 @@ export async function fetchAccountOrders(
 export async function fetchOrdersByUids(
   apiBaseUrl: string,
   uids: string[],
+  signal?: AbortSignal,
 ): Promise<OrderbookOrder[]> {
   if (uids.length === 0) return [];
 
@@ -176,6 +214,7 @@ export async function fetchOrdersByUids(
             body: JSON.stringify(chunk),
           },
           "ob:byUids",
+          signal,
         );
         const raw = (await response.json()) as { order: OrderbookOrder }[];
         return raw.flatMap((item) => (item?.order != null ? [item.order] : []));

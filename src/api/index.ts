@@ -6,7 +6,7 @@ import { and, count, eq, inArray } from "drizzle-orm";
 import { swaggerUI } from "@hono/swagger-ui";
 import { apiRouter } from "./router";
 import { gqlDocsMiddleware } from "./gql-docs";
-import { NON_DETERMINISTIC_TYPES } from "../utils/order-types";
+import { OWNER_BACKFILL_TYPES } from "../utils/order-types";
 
 const app = new Hono();
 
@@ -47,7 +47,7 @@ app.get("/readyz", async (c) => {
       and(
         eq(schema.conditionalOrderGenerator.status, "Active"),
         eq(schema.conditionalOrderGenerator.historyBackfilled, false),
-        inArray(schema.conditionalOrderGenerator.orderType, [...NON_DETERMINISTIC_TYPES]),
+        inArray(schema.conditionalOrderGenerator.orderType, [...OWNER_BACKFILL_TYPES]),
       ),
     );
   const pending = Number(rows[0]?.pending ?? 0);

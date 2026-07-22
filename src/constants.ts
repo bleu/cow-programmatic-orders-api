@@ -94,9 +94,10 @@ export const BLOCK_HANDLER_RPC_TIMEOUT_MS = 15_000;
 export const SETTLEMENT_INNER_RPC_TIMEOUT_MS = 5_000;
 
 /**
- * Hard wall-clock cap for the whole per-owner bootstrap fetch in OwnerBackfill
- * (account pagination + by_uids refresh). An owner that exceeds this is left
- * eligible (historyBackfilled stays false) and retried on a later OwnerBackfill block.
+ * Wall-clock slice for one per-owner drain attempt in OwnerBackfill. The attempt's
+ * AbortController fires at this deadline, tearing down the in-flight request; pages
+ * already fetched are persisted with the resume offset, so hitting the deadline is
+ * not a failure — the owner just continues from where it stopped on a later firing.
  */
 export const BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS = 30_000;
 
@@ -105,15 +106,14 @@ export const BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS = 30_000;
  * firing. Bounds the transaction size and the per-block orderbook request rate so
  * the historical drain spreads across live-sync blocks instead of one burst.
  *
- * The drain runs inline on the realtime indexing path. Owner fetches now run
+ * The drain runs inline on the realtime indexing path. Owner fetches run
  * concurrently (see DEFAULT_OWNER_BACKFILL_CONCURRENCY), so the per-firing wall-clock
  * is roughly ceil(cap / concurrency) × BOOTSTRAP_OWNER_FETCH_TIMEOUT_MS rather than
- * cap × timeout — but keep the cap modest so a single firing can't stall event
- * indexing when the orderbook API is slow.
+ * cap × timeout — keep cap = concurrency so a firing stays ~one slice.
  *
  * Override per chain with env var MAX_OWNERS_BACKFILL_PER_BLOCK_<chainId>.
  */
-export const DEFAULT_MAX_OWNERS_BACKFILL_PER_BLOCK = 10;
+export const DEFAULT_MAX_OWNERS_BACKFILL_PER_BLOCK = 20;
 
 /**
  * How many owner history fetches OwnerBackfill runs concurrently within a single
@@ -123,7 +123,14 @@ export const DEFAULT_MAX_OWNERS_BACKFILL_PER_BLOCK = 10;
  *
  * Override per chain with env var MAX_OWNERS_BACKFILL_CONCURRENCY_<chainId>.
  */
-export const DEFAULT_OWNER_BACKFILL_CONCURRENCY = 10;
+export const DEFAULT_OWNER_BACKFILL_CONCURRENCY = 20;
+
+/**
+ * Rows per multi-row INSERT statement. Postgres caps bind parameters at 65,535
+ * per statement; composable-order rows carry ~13 columns, so an unchunked upsert
+ * breaks somewhere past ~5k rows. 1,000 keeps every statement far from the limit.
+ */
+export const UPSERT_CHUNK_SIZE = 1_000;
 
 /**
  * Maximum number of TWAP parts that precomputeOrderUids will attempt to enumerate.

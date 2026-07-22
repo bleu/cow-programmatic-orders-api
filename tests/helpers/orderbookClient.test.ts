@@ -19,8 +19,16 @@ vi.mock("ponder", () => ({
 }));
 
 import * as data from "../../src/data";
-import { ORDERBOOK_MAX_RETRIES } from "../../src/constants";
-import { fetchAccountOrders, fetchComposableOrders, fetchFlashLoanEnrichmentByUids, fetchOrderStatusByUids, fetchOwnerOrderStatuses } from "../../src/application/helpers/orderbookClient";
+import { ORDERBOOK_MAX_RETRIES, UPSERT_CHUNK_SIZE } from "../../src/constants";
+import {
+  drainOwnerSlice,
+  fetchAccountOrders,
+  fetchFlashLoanEnrichmentByUids,
+  fetchOrderStatusByUids,
+  fetchOwnerOrderStatuses,
+  upsertDiscreteOrders,
+  type ComposableOrder,
+} from "../../src/application/helpers/orderbookClient";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -481,19 +489,58 @@ describe("fetchOwnerOrderStatuses", () => {
   });
 });
 
-// ─── fetchComposableOrders full-history drain tests ───────────────────────────
+// ─── drainOwnerSlice tests ────────────────────────────────────────────────────
 
-describe("fetchComposableOrders — full-history drain", () => {
+/** Fake Ponder context for drainOwnerSlice: serves drain state / cache rows /
+ *  generator lookups by projection shape, and records every inserted row so tests
+ *  can assert what was persisted (drain-state writes and discreteOrder upserts). */
+function makeDrainContext(opts: {
+  drainState?: { nextOffset: number; fullyDrained: boolean; deltaCursor: number | null };
+  cacheRows?: Record<string, unknown>[];
+  generators?: { eventId: string; hash: string; orderType?: string }[];
+} = {}) {
+  const inserted: Record<string, unknown>[] = [];
+  let insertStatements = 0;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const select = (proj: any) => ({
+    from: () => ({
+      where: () => {
+        let rows: unknown[];
+        if (proj.nextOffset !== undefined) rows = opts.drainState ? [opts.drainState] : [];
+        else if (proj.eventId !== undefined) rows = opts.generators ?? [];
+        else rows = opts.cacheRows ?? [];
+        return Object.assign(Promise.resolve(rows), { limit: () => Promise.resolve(rows) });
+      },
+    }),
+  });
+  const insert = () => ({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    values: (vals: any) => {
+      const record = async () => {
+        insertStatements++;
+        inserted.push(...(Array.isArray(vals) ? vals : [vals]));
+      };
+      return { onConflictDoUpdate: record, onConflictDoNothing: record };
+    },
+  });
+  return {
+    ctx: { db: { sql: { select, insert } } } as unknown as Context,
+    inserted,
+    statementCount: () => insertStatements,
+  };
+}
+
+describe("drainOwnerSlice — full-history drain", () => {
   const DRAIN_OWNER = "0x3333333333333333333333333333333333333333" as Hex;
 
-  it("paginates the full account history at limit=1000, past the old 100-order cap", async () => {
+  it("paginates the full account history at limit=1000 and reports complete", async () => {
     const receivedOffsets: number[] = [];
     const receivedLimits = new Set<string>();
 
     // 3 pages of the account endpoint: 1000 + 1000 + 500 = 2500 orders,
     // mimicking a large-history owner. All are non-composable (signature "0x"
     // decodes to null), so they filter out and no generator lookup is needed —
-    // but fetchAccountOrders still drains every page first.
+    // but the drain still pages through every one of them.
     const { url, close } = await startServer((req, res) => {
       const parsed = new URL(req.url ?? "/", "http://127.0.0.1");
       const offset = parseInt(parsed.searchParams.get("offset") ?? "0", 10);
@@ -510,13 +557,112 @@ describe("fetchComposableOrders — full-history drain", () => {
 
     try {
       await withFakeApi(TEST_CHAIN_ID, url, async () => {
-        await fetchComposableOrders(makeContext(), TEST_CHAIN_ID, DRAIN_OWNER);
+        const { ctx, inserted } = makeDrainContext();
+        const { complete } = await drainOwnerSlice(ctx, TEST_CHAIN_ID, DRAIN_OWNER);
 
-        // Old behavior capped at 4 pages × 25 = offsets 0,25,50,75 — never past 100.
         expect(receivedOffsets).toContain(0);
         expect(receivedOffsets).toContain(1000);
         expect(receivedOffsets).toContain(2000);
         expect(receivedLimits).toEqual(new Set(["1000"]));
+        expect(complete).toBe(true);
+        expect(inserted.some((r) => r.fullyDrained === true)).toBe(true);
+      });
+    } finally {
+      await close();
+    }
+  });
+
+  it("records the resume offset on an interrupted drain and does NOT report complete (silent-hole regression)", async () => {
+    // Page 0 succeeds; page at offset 1000 always 500s. Before the resumable drain,
+    // this partial fetch advanced the derived cursor and the retry falsely reported
+    // complete — permanently skipping everything below the partial slice.
+    const { url, close } = await startServer((req, res) => {
+      const parsed = new URL(req.url ?? "/", "http://127.0.0.1");
+      const offset = parseInt(parsed.searchParams.get("offset") ?? "0", 10);
+      if (offset === 0) {
+        const orders = Array.from({ length: 1000 }, (_, i) =>
+          makeOrderStub({ uid: `0xorder${i}`, status: "open", creationDate: toIso(5000 - i) }),
+        );
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(orders));
+        return;
+      }
+      res.writeHead(500);
+      res.end("boom");
+    });
+
+    try {
+      await withFakeApi(TEST_CHAIN_ID, url, async () => {
+        const { ctx, inserted } = makeDrainContext();
+        const { complete } = await drainOwnerSlice(ctx, TEST_CHAIN_ID, DRAIN_OWNER);
+
+        expect(complete).toBe(false);
+        // Progress banked: resume offset persisted, delta-cursor candidate recorded…
+        expect(inserted.some((r) => r.nextOffset === 1000)).toBe(true);
+        expect(inserted.some((r) => r.deltaCursor === 5000)).toBe(true);
+        // …but the owner is NOT marked fully drained.
+        expect(inserted.some((r) => r.fullyDrained === true)).toBe(false);
+      });
+    } finally {
+      await close();
+    }
+  });
+
+  it("resumes pagination at the stored offset instead of offset 0", async () => {
+    const receivedOffsets: number[] = [];
+    const { url, close } = await startServer((req, res) => {
+      const parsed = new URL(req.url ?? "/", "http://127.0.0.1");
+      const offset = parseInt(parsed.searchParams.get("offset") ?? "0", 10);
+      receivedOffsets.push(offset);
+      // The tail: a final short page.
+      const orders = Array.from({ length: 5 }, (_, i) =>
+        makeOrderStub({ uid: `0xtail${i}`, status: "open" }),
+      );
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(orders));
+    });
+
+    try {
+      await withFakeApi(TEST_CHAIN_ID, url, async () => {
+        const { ctx, inserted } = makeDrainContext({
+          drainState: { nextOffset: 1000, fullyDrained: false, deltaCursor: 5000 },
+        });
+        const { complete } = await drainOwnerSlice(ctx, TEST_CHAIN_ID, DRAIN_OWNER);
+
+        expect(receivedOffsets).toEqual([1000]); // never re-fetched from 0
+        expect(complete).toBe(true);
+        expect(inserted.some((r) => r.fullyDrained === true)).toBe(true);
+      });
+    } finally {
+      await close();
+    }
+  });
+
+  it("ends the slice at the abort signal without reporting complete", async () => {
+    const receivedOffsets: number[] = [];
+    const { url, close } = await startServer((req, res) => {
+      const parsed = new URL(req.url ?? "/", "http://127.0.0.1");
+      receivedOffsets.push(parseInt(parsed.searchParams.get("offset") ?? "0", 10));
+      const orders = Array.from({ length: 1000 }, (_, i) =>
+        makeOrderStub({ uid: `0xabort${i}`, status: "open" }),
+      );
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(orders));
+    });
+
+    try {
+      await withFakeApi(TEST_CHAIN_ID, url, async () => {
+        const { ctx, inserted } = makeDrainContext();
+        const controller = new AbortController();
+        // Abort as soon as the first page lands (the drain-state write for it).
+        const origPush = inserted.push.bind(inserted);
+        inserted.push = (...rows) => { controller.abort(); return origPush(...rows); };
+
+        const { complete } = await drainOwnerSlice(ctx, TEST_CHAIN_ID, DRAIN_OWNER, controller.signal);
+
+        expect(complete).toBe(false);
+        expect(receivedOffsets).toEqual([0]); // no further pages after the abort
+        expect(inserted.some((r) => r.fullyDrained === true)).toBe(false);
       });
     } finally {
       await close();
@@ -524,77 +670,185 @@ describe("fetchComposableOrders — full-history drain", () => {
   });
 });
 
-// ─── fetchComposableOrders durable-cache rebuild test ─────────────────────────
+// ─── drainOwnerSlice delta-mode tests ─────────────────────────────────────────
 
-describe("fetchComposableOrders — rebuild from durable cache", () => {
+describe("drainOwnerSlice — delta mode (fully drained owner)", () => {
   const OWNER = "0x2222222222222222222222222222222222222222" as Hex;
   const GEN_HASH = `0x${"cc".repeat(32)}`;
 
-  // Simulates a post-reindex deploy: discreteOrder is empty, but cow_cache.composable_order
-  // still holds the owner's history and the orderbook has nothing new past the cursor.
-  function makeIncrementalContext(opts: {
-    cursor: string;
-    cacheRows: Record<string, unknown>[];
-    generators: { eventId: string; hash: string }[];
-  }) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const select = (proj: any) => ({
-      from: () => ({
-        where: async () => {
-          if (proj.cursor !== undefined) return [{ cursor: opts.cursor }];
-          if (proj.eventId !== undefined) return opts.generators;
-          return opts.cacheRows;
-        },
-      }),
-    });
-    return {
-      db: { sql: {
-        select,
-        insert: () => ({ values: () => ({ onConflictDoUpdate: async () => {} }) }),
-      } },
-    } as unknown as Context;
-  }
+  const CACHE_ROWS = [
+    {
+      orderUid: "0xcached-order",
+      generatorHash: GEN_HASH,
+      orderType: "PerpetualSwap",
+      status: "fulfilled",
+      sellAmount: "1000",
+      buyAmount: "2000",
+      feeAmount: "0",
+      validTo: 9999999999,
+      creationDate: 1700000000n,
+      executedSellAmount: "1000",
+      executedBuyAmount: "2000",
+    },
+  ];
 
-  it("returns the cached history re-mapped to the current generator eventId when no new orders exist", async () => {
-    // Orderbook returns nothing newer than the cursor.
+  it("rebuilds the cached history re-mapped to the current generator when no new orders exist", async () => {
+    // Simulates a post-reindex deploy: discreteOrder is empty, but the durable cache
+    // still holds the owner's history and the orderbook has nothing new past the cursor.
     const { url, close } = await startServer((_req, res) => {
       res.writeHead(200, { "content-type": "application/json" });
       res.end("[]");
     });
 
-    const cacheRows = [
-      {
-        orderUid: "0xcached-order",
-        generatorHash: GEN_HASH,
-        orderType: "PerpetualSwap",
-        status: "fulfilled",
-        sellAmount: "1000",
-        buyAmount: "2000",
-        feeAmount: "0",
-        validTo: 9999999999,
-        creationDate: 1700000000n,
-        executedSellAmount: "1000",
-        executedBuyAmount: "2000",
-      },
-    ];
-    const ctx = makeIncrementalContext({
-      cursor: "1700000000",
-      cacheRows,
+    const { ctx, inserted } = makeDrainContext({
+      drainState: { nextOffset: 0, fullyDrained: true, deltaCursor: 1700000000 },
+      cacheRows: CACHE_ROWS,
       // eventId differs from any prior deployment — the row is keyed by the stable hash.
       generators: [{ eventId: "gen-current", hash: GEN_HASH }],
     });
 
     try {
       await withFakeApi(TEST_CHAIN_ID, url, async () => {
-        const { orders } = await fetchComposableOrders(ctx, TEST_CHAIN_ID, OWNER);
-        expect(orders).toHaveLength(1);
-        expect(orders[0]!.uid).toBe("0xcached-order");
-        expect(orders[0]!.generatorId).toBe("gen-current");
-        expect(orders[0]!.status).toBe("fulfilled");
+        const { discovered, complete } = await drainOwnerSlice(ctx, TEST_CHAIN_ID, OWNER);
+        expect(complete).toBe(true);
+        expect(discovered).toBe(1);
+        const row = inserted.find((r) => r.orderUid === "0xcached-order");
+        expect(row).toBeDefined();
+        expect(row!.conditionalOrderGeneratorId).toBe("gen-current");
+        expect(row!.status).toBe("fulfilled");
       });
     } finally {
       await close();
     }
+  });
+
+  it("does NOT advance the delta cursor when the delta fetch is cut short (silent-hole regression)", async () => {
+    // Page 0 of the delta is full (everything newer than the cursor), page 1 fails.
+    // The cursor must stay put so the whole window is re-fetched later — advancing it
+    // would permanently skip the unfetched middle of the delta.
+    const { url, close } = await startServer((req, res) => {
+      const parsed = new URL(req.url ?? "/", "http://127.0.0.1");
+      const offset = parseInt(parsed.searchParams.get("offset") ?? "0", 10);
+      if (offset === 0) {
+        const orders = Array.from({ length: 1000 }, (_, i) =>
+          makeOrderStub({ uid: `0xdelta${i}`, status: "open", creationDate: toIso(2_000_000_000 - i) }),
+        );
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(orders));
+        return;
+      }
+      res.writeHead(500);
+      res.end("boom");
+    });
+
+    const { ctx, inserted } = makeDrainContext({
+      drainState: { nextOffset: 0, fullyDrained: true, deltaCursor: 1700000000 },
+      cacheRows: CACHE_ROWS,
+      generators: [{ eventId: "gen-current", hash: GEN_HASH }],
+    });
+
+    try {
+      await withFakeApi(TEST_CHAIN_ID, url, async () => {
+        const { complete } = await drainOwnerSlice(ctx, TEST_CHAIN_ID, OWNER);
+        expect(complete).toBe(false);
+        expect(inserted.some((r) => r.deltaCursor !== undefined && r.deltaCursor !== null)).toBe(false);
+      });
+    } finally {
+      await close();
+    }
+  });
+});
+
+// ─── fetchAccountOrders resume / onPage tests ─────────────────────────────────
+
+describe("fetchAccountOrders — resumable pagination", () => {
+  const OWNER = "0x4444444444444444444444444444444444444444" as Hex;
+
+  it("starts at opts.startOffset and reports per-page progress via onPage", async () => {
+    const pages: Record<number, OrderStub[]> = {
+      2: [makeOrderStub({ uid: "0xr1", status: "open" }), makeOrderStub({ uid: "0xr2", status: "open" })],
+      4: [makeOrderStub({ uid: "0xr3", status: "open" })],
+    };
+    const receivedOffsets: number[] = [];
+    const { url, close } = await startServer((req, res) => {
+      const parsed = new URL(req.url ?? "/", "http://127.0.0.1");
+      const offset = parseInt(parsed.searchParams.get("offset") ?? "0", 10);
+      receivedOffsets.push(offset);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(pages[offset] ?? []));
+    });
+
+    const pageCalls: { uids: string[]; nextOffset: number }[] = [];
+    try {
+      const { complete } = await fetchAccountOrders(url, OWNER, 0, undefined, 2, undefined, {
+        startOffset: 2,
+        onPage: async (orders, nextOffset) => {
+          pageCalls.push({ uids: orders.map((o) => o.uid), nextOffset });
+        },
+      });
+      expect(receivedOffsets).toEqual([2, 4]); // resumed — offset 0 never re-fetched
+      expect(pageCalls).toEqual([
+        { uids: ["0xr1", "0xr2"], nextOffset: 4 },
+        { uids: ["0xr3"], nextOffset: 5 },
+      ]);
+      expect(complete).toBe(true);
+    } finally {
+      await close();
+    }
+  });
+
+  it("stops between pages when the signal aborts, reporting complete=false", async () => {
+    const receivedOffsets: number[] = [];
+    const { url, close } = await startServer((req, res) => {
+      const parsed = new URL(req.url ?? "/", "http://127.0.0.1");
+      receivedOffsets.push(parseInt(parsed.searchParams.get("offset") ?? "0", 10));
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify([
+        makeOrderStub({ uid: "0xs1", status: "open" }),
+        makeOrderStub({ uid: "0xs2", status: "open" }),
+      ]));
+    });
+
+    const controller = new AbortController();
+    try {
+      const { complete, nextOffset } = await fetchAccountOrders(url, OWNER, 0, undefined, 2, undefined, {
+        signal: controller.signal,
+        onPage: async () => controller.abort(), // slice deadline hits mid-drain
+      });
+      expect(receivedOffsets).toEqual([0]); // no request after the abort
+      expect(complete).toBe(false);
+      expect(nextOffset).toBe(2); // resume point past the persisted page
+    } finally {
+      await close();
+    }
+  });
+});
+
+// ─── upsertDiscreteOrders chunking test ───────────────────────────────────────
+
+describe("upsertDiscreteOrders — chunking", () => {
+  it("splits large upserts into UPSERT_CHUNK_SIZE statements (bind-param cap)", async () => {
+    const orders: ComposableOrder[] = Array.from({ length: 2 * UPSERT_CHUNK_SIZE + 500 }, (_, i) => ({
+      uid: `0xchunk${i}`,
+      status: "open",
+      generatorId: "gen-1",
+      generatorHash: "0xhash",
+      orderType: "PerpetualSwap",
+      sellAmount: "1",
+      buyAmount: "2",
+      feeAmount: "0",
+      validTo: 9999999999,
+      creationDate: 1700000000n,
+      executedSellAmount: "0",
+      executedBuyAmount: "0",
+    }));
+
+    const { ctx, inserted, statementCount } = makeDrainContext();
+    const count = await upsertDiscreteOrders(ctx, TEST_CHAIN_ID, orders);
+
+    expect(count).toBe(orders.length);
+    expect(inserted).toHaveLength(orders.length);
+    expect(statementCount()).toBe(3); // 1000 + 1000 + 500
   });
 });
 

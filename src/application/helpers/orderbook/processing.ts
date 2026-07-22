@@ -25,8 +25,9 @@ export async function filterAndProcess(
   chainId: number,
   apiOrders: OrderbookOrder[],
 ): Promise<ComposableOrder[]> {
-  const results: ComposableOrder[] = [];
-
+  // Pure-CPU pass first: decode signatures and reproduce the param hash stored in
+  // conditionalOrderGenerator.hash.
+  const candidates: { order: OrderbookOrder; paramHash: Hex }[] = [];
   for (const order of apiOrders) {
     if (order.signingScheme !== SIGNING_SCHEME_EIP1271) continue;
     if (order.status === "presignaturePending") continue;
@@ -36,7 +37,6 @@ export async function filterAndProcess(
 
     if (!COMPOSABLE_COW_HANDLER_ADDRESSES.has(decoded.handler)) continue;
 
-    // Reproduce the same hash stored in conditionalOrderGenerator.hash
     const paramHash = keccak256(
       encodeAbiParameters(
         [
@@ -52,33 +52,44 @@ export async function filterAndProcess(
         [{ handler: decoded.handler, salt: decoded.salt, staticInput: decoded.staticInput }],
       ),
     );
+    candidates.push({ order, paramHash });
+  }
+  if (candidates.length === 0) return [];
 
-    // Find the generator — there should be exactly one per (chainId, hash).
-    // Uses context.db.sql (raw SQL) because Ponder ORM has no non-PK findMany.
-    // Wrapped in try-catch: in multichain realtime mode a shared-qb race can cause
-    // a SAVEPOINT error here; skipping the order is safe — it's retried next block.
-    let generators: { eventId: string; orderType: OrderType }[];
-    try {
-      generators = (await context.db.sql
+  // Resolve generators with one batched query per 500 hashes instead of a SELECT per
+  // order. Uses context.db.sql (raw SQL) because Ponder ORM has no non-PK findMany.
+  // Wrapped in try-catch: in multichain realtime mode a shared-qb race can cause a
+  // SAVEPOINT error here; skipping the batch is safe — it's retried on a later block.
+  const generatorByHash = new Map<string, { eventId: string; orderType: OrderType }>();
+  const hashes = [...new Set(candidates.map((c) => c.paramHash))];
+  try {
+    const batchSize = 500;
+    for (let i = 0; i < hashes.length; i += batchSize) {
+      const rows = (await context.db.sql
         .select({
           eventId: conditionalOrderGenerator.eventId,
           orderType: conditionalOrderGenerator.orderType,
+          hash: conditionalOrderGenerator.hash,
         })
         .from(conditionalOrderGenerator)
         .where(
           and(
             eq(conditionalOrderGenerator.chainId, chainId),
-            eq(conditionalOrderGenerator.hash, paramHash),
+            inArray(conditionalOrderGenerator.hash, hashes.slice(i, i + batchSize)),
           ),
-        )
-        .limit(1)) as { eventId: string; orderType: OrderType }[];
-    } catch {
-      continue;
+        )) as { eventId: string; orderType: OrderType; hash: string }[];
+      for (const row of rows) {
+        generatorByHash.set(row.hash, { eventId: row.eventId, orderType: row.orderType });
+      }
     }
+  } catch {
+    return [];
+  }
 
-    if (generators.length === 0) continue;
-
-    const generator = generators[0]!;
+  const results: ComposableOrder[] = [];
+  for (const { order, paramHash } of candidates) {
+    const generator = generatorByHash.get(paramHash);
+    if (!generator) continue;
 
     results.push({
       uid: order.uid,
@@ -107,11 +118,12 @@ export async function reconcileOpenCachedRows(
   owner: Hex,
   apiBaseUrl: string,
   rows: ComposableCacheRow[],
+  signal?: AbortSignal,
 ): Promise<ComposableCacheRow[]> {
   const openUids = rows.filter((r) => !TERMINAL_STATUSES.has(r.status)).map((r) => r.orderUid);
   if (openUids.length === 0) return rows;
 
-  const refreshed = await fetchOrdersByUids(apiBaseUrl, openUids);
+  const refreshed = await fetchOrdersByUids(apiBaseUrl, openUids, signal);
   if (refreshed.length === 0) return rows;
   const byUid = new Map(refreshed.map((o) => [o.uid, o]));
 
