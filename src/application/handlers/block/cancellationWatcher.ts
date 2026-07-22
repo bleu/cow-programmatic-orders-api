@@ -128,6 +128,7 @@ ponder.on("CancellationWatcher:block", async ({ event, context }) => {
         .update(conditionalOrderGenerator)
         .set({
           status: "Cancelled",
+          updatedAtBlock: currentBlock,
           lastCheckBlock: currentBlock,
           lastPollResult: "cancelled:removeMapping",
           nextCheckBlock: null,
@@ -160,4 +161,3 @@ ponder.on("CancellationWatcher:block", async ({ event, context }) => {
 
   log("info", "CancellationWatcher:DONE", { block: String(currentBlock), chainId, due: dueGenerators.length, cancelled: cancelledCount, stillActive: stillActiveCount, errors: errorCount });
 });
-

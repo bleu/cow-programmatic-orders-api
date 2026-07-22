@@ -5,6 +5,7 @@ import { type SupportedChainId } from "../../../data";
 import { DEFAULT_MAX_DISCRETE_ORDERS_PER_BLOCK } from "../../../constants";
 import { fetchOrderStatusByUids } from "../../helpers/orderbookClient";
 import { log } from "../../helpers/logger";
+import { updateGeneratorWatermarks } from "../../helpers/changeWatermark";
 
 const VALID_DISCRETE_STATUSES = new Set(["fulfilled", "unfilled", "expired", "cancelled"]);
 
@@ -28,6 +29,8 @@ ponder.on("OrderStatusTracker:block", async ({ event, context }) => {
       feeAmount: discreteOrder.feeAmount,
       validTo: discreteOrder.validTo,
       creationDate: discreteOrder.creationDate,
+      executedSellAmount: discreteOrder.executedSellAmount,
+      executedBuyAmount: discreteOrder.executedBuyAmount,
       promotedAt: discreteOrder.promotedAt,
     })
     .from(discreteOrder)
@@ -46,6 +49,8 @@ ponder.on("OrderStatusTracker:block", async ({ event, context }) => {
     feeAmount: string;
     validTo: number | null;
     creationDate: bigint;
+    executedSellAmount: string | null;
+    executedBuyAmount: string | null;
     promotedAt: bigint | null;
   }[];
 
@@ -59,6 +64,13 @@ ponder.on("OrderStatusTracker:block", async ({ event, context }) => {
     for (const order of openOrders) {
       const info = statuses.get(order.orderUid);
       if (!info || !VALID_DISCRETE_STATUSES.has(info.status)) continue;
+      const executedSellAmount = info.executedSellAmount ?? null;
+      const executedBuyAmount = info.executedBuyAmount ?? null;
+      if (
+        info.status === "open" &&
+        executedSellAmount === order.executedSellAmount &&
+        executedBuyAmount === order.executedBuyAmount
+      ) continue;
       rowsToUpdate.push({
         orderUid: order.orderUid,
         chainId,
@@ -69,9 +81,10 @@ ponder.on("OrderStatusTracker:block", async ({ event, context }) => {
         feeAmount: order.feeAmount,
         validTo: order.validTo,
         creationDate: order.creationDate,
-        executedSellAmount: info.executedSellAmount ?? null,
-        executedBuyAmount: info.executedBuyAmount ?? null,
+        executedSellAmount,
+        executedBuyAmount,
         promotedAt: order.promotedAt,
+        updatedAtBlock: event.block.number,
       });
     }
 
@@ -87,8 +100,15 @@ ponder.on("OrderStatusTracker:block", async ({ event, context }) => {
             status: sql`excluded.status`,
             executedSellAmount: sql`excluded.executed_sell_amount`,
             executedBuyAmount: sql`excluded.executed_buy_amount`,
+            updatedAtBlock: sql`excluded.updated_at_block`,
           },
         });
+      await updateGeneratorWatermarks(
+        context,
+        chainId,
+        rowsToUpdate.map(({ conditionalOrderGeneratorId }) => conditionalOrderGeneratorId),
+        event.block.number,
+      );
 
       log("info", "OrderStatusTracker:DONE", { block: String(event.block.number), chainId, open: openOrders.length, updated: rowsToUpdate.length });
     }
@@ -112,9 +132,9 @@ ponder.on("OrderStatusTracker:block", async ({ event, context }) => {
   ).map((g) => g.id);
 
   if (cancelledGeneratorIds.length > 0) {
-    await context.db.sql
+    const cancelledRows = await context.db.sql
       .update(discreteOrder)
-      .set({ status: "cancelled" })
+      .set({ status: "cancelled", updatedAtBlock: event.block.number })
       .where(
         and(
           eq(discreteOrder.chainId, chainId),
@@ -124,19 +144,36 @@ ponder.on("OrderStatusTracker:block", async ({ event, context }) => {
             cancelledGeneratorIds,
           ),
         ),
-      );
+      )
+      .returning({
+        generatorId: discreteOrder.conditionalOrderGeneratorId,
+      });
+    await updateGeneratorWatermarks(
+      context,
+      chainId,
+      cancelledRows.map(({ generatorId }) => generatorId),
+      event.block.number,
+    );
   }
 
   // Expire orders past validTo
-  await context.db.sql
+  const expiredRows = await context.db.sql
     .update(discreteOrder)
-    .set({ status: "expired" })
+    .set({ status: "expired", updatedAtBlock: event.block.number })
     .where(
       and(
         eq(discreteOrder.chainId, chainId),
         eq(discreteOrder.status, "open"),
         lte(discreteOrder.validTo, Number(currentTimestamp)),
       ),
-    );
+    )
+    .returning({
+      generatorId: discreteOrder.conditionalOrderGeneratorId,
+    });
+  await updateGeneratorWatermarks(
+    context,
+    chainId,
+    expiredRows.map(({ generatorId }) => generatorId),
+    event.block.number,
+  );
 });
-

@@ -222,6 +222,7 @@ async function insertGenerator(
       decodedParams,
       decodeError,
       txHash: event.transaction.hash,
+      updatedAtBlock: event.block.number,
       nextCheckBlock: event.block.number,
       // Only non-deterministic generators created during historical backfill need an
       // OwnerBackfill drain. Deterministic types are fully handled by precompute at
@@ -245,7 +246,8 @@ ponder.on(
     // Fetches status from API by UID, upserts discrete orders, and
     // deactivates the generator if all orders are already terminal.
     await precomputeAndDiscover(
-      context, chainId, event.id, ownerAddress, orderType, decodedParams, event.block.timestamp,
+      context, chainId, event.id, ownerAddress, orderType, decodedParams,
+      event.block.number, event.block.timestamp,
     );
   },
 );
@@ -260,7 +262,8 @@ ponder.on(
     const { ownerAddress, chainId, decodedParams, orderType } = await insertGenerator(event, context, true);
 
     await precomputeAndDiscover(
-      context, chainId, event.id, ownerAddress, orderType, decodedParams, event.block.timestamp,
+      context, chainId, event.id, ownerAddress, orderType, decodedParams,
+      event.block.number, event.block.timestamp,
     );
   },
 );

@@ -34,6 +34,26 @@ High-level map of what's queryable:
 
 For schema details (columns, indexes, relations), see [architecture.md](./architecture.md).
 
+### Incremental reads
+
+`conditionalOrderGenerator.updatedAtBlock` and `discreteOrder.updatedAtBlock`
+are change watermarks for API-visible data. A discrete-order change also
+advances its parent generator to the same block. Internal polling bookkeeping
+does not advance either watermark. GraphQL exposes these `t.bigint()` fields as
+decimal strings.
+
+Use one block cursor. Query parents by `chainId`, `resolvedOwner`, and
+`updatedAtBlock_gte`, ordered by `updatedAtBlock` ascending. Then query only
+those parents' discrete orders with the same watermark. Fully paginate both
+responses and merge by `(chainId, eventId)` and `(chainId, orderUid)`. Advance
+the cursor to one block after the highest parent `updatedAtBlock`; keep it
+unchanged when the response is empty. Starting at block `0` provides the initial
+full read through the same path.
+
+The indexed filter combinations are `(chainId, resolvedOwner, updatedAtBlock)`
+for parents and `(chainId, conditionalOrderGeneratorId, updatedAtBlock)` for
+discrete orders.
+
 ## REST endpoints
 
 Custom endpoints mounted at `/api`, documented in Swagger UI at `/docs`:

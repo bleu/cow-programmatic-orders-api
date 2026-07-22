@@ -35,6 +35,8 @@ export const conditionalOrderGeneratorDocs: DocMap = {
     '"invalid_static_input" when decoding failed, otherwise null.',
   "conditionalOrderGenerator.txHash":
     "Transaction hash where this order was created.",
+  "conditionalOrderGenerator.updatedAtBlock":
+    "Indexer block where this generator or one of its discrete orders was inserted or last observed to change. Does not advance for internal polling bookkeeping. Decimal string (BigInt scalar). Use updatedAtBlock_gte for incremental reads.",
   "conditionalOrderGenerator.allCandidatesKnown":
     "Whether all possible discrete orders for this generator have been discovered. True for deterministic types (TWAP, StopLoss) after UID precomputation.",
   "conditionalOrderGenerator.nextCheckBlock":

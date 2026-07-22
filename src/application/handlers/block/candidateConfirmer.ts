@@ -10,6 +10,7 @@ import {
 import { fetchOrderStatusByUids, fetchOwnerOrderStatuses } from "../../helpers/orderbookClient";
 import { withTimeout } from "../../helpers/withTimeout";
 import { log } from "../../helpers/logger";
+import { updateGeneratorWatermarks } from "../../helpers/changeWatermark";
 import { type DiscreteStatus } from "./shared";
 
 // ─── CandidateConfirmer ──────────────────────────────────────────────────────
@@ -90,7 +91,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
       const CASCADE_CHUNK_SIZE = 500;
       for (let i = 0; i < orphanCandidates.length; i += CASCADE_CHUNK_SIZE) {
         const chunk = orphanCandidates.slice(i, i + CASCADE_CHUNK_SIZE);
-        await context.db.sql
+        const insertedRows = await context.db.sql
           .insert(discreteOrder)
           .values(
             chunk.map((c) => {
@@ -108,10 +109,21 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
                 executedSellAmount: apiEntry?.executedSellAmount ?? null,
                 executedBuyAmount: apiEntry?.executedBuyAmount ?? null,
                 promotedAt: event.block.timestamp,
+                updatedAtBlock: event.block.number,
               };
             }),
           )
-          .onConflictDoNothing();
+          .onConflictDoNothing()
+          .returning({
+            generatorId: discreteOrder.conditionalOrderGeneratorId,
+          });
+
+        await updateGeneratorWatermarks(
+          context,
+          chainId,
+          insertedRows.map(({ generatorId }) => generatorId),
+          event.block.number,
+        );
 
         await context.db.sql
           .delete(candidateDiscreteOrder)
@@ -195,6 +207,7 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
       executedSellAmount: orderbookEntry.executedSellAmount,
       executedBuyAmount: orderbookEntry.executedBuyAmount,
       promotedAt: event.block.timestamp,
+      updatedAtBlock: event.block.number,
     });
     confirmedUids.push(candidate.orderUid);
   }
@@ -211,8 +224,15 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
           executedSellAmount: sql`excluded.executed_sell_amount`,
           executedBuyAmount: sql`excluded.executed_buy_amount`,
           promotedAt: sql`excluded.promoted_at`,
+          updatedAtBlock: sql`excluded.updated_at_block`,
         },
       });
+    await updateGeneratorWatermarks(
+      context,
+      chainId,
+      rowsToUpsert.map(({ conditionalOrderGeneratorId }) => conditionalOrderGeneratorId),
+      event.block.number,
+    );
   }
 
   const confirmed = rowsToUpsert.length;
@@ -316,13 +336,24 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
         executedSellAmount: entry?.executedSellAmount ?? null,
         executedBuyAmount: entry?.executedBuyAmount ?? null,
         promotedAt: event.block.timestamp,
+        updatedAtBlock: event.block.number,
       };
     });
 
-    await context.db.sql
+    const insertedRows = await context.db.sql
       .insert(discreteOrder)
       .values(staleRows)
-      .onConflictDoNothing();
+      .onConflictDoNothing()
+      .returning({
+        generatorId: discreteOrder.conditionalOrderGeneratorId,
+      });
+
+    await updateGeneratorWatermarks(
+      context,
+      chainId,
+      insertedRows.map(({ generatorId }) => generatorId),
+      event.block.number,
+    );
 
     await context.db.sql
       .delete(candidateDiscreteOrder)
@@ -338,4 +369,3 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
     log("info", "CandidateConfirmer:DONE", { block: String(event.block.number), chainId, candidates: unconfirmed.length, confirmed, expired: stale.length });
   }
 });
-

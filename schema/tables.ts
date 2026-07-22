@@ -92,6 +92,7 @@ export const conditionalOrderGenerator = onchainTable(
     decodedParams: t.json(),               // null if unknown type or decode failed
     decodeError: t.text(),                 // "invalid_static_input" | null
     txHash: t.hex().notNull(),             // FK -> transaction.hash
+    updatedAtBlock: t.bigint().notNull(),  // latest block where this row or a discrete order changed
     allCandidatesKnown: t.boolean().notNull().default(false),
     nextCheckBlock: t.bigint(),            // block handler scheduling
     lastCheckBlock: t.bigint(),
@@ -107,6 +108,8 @@ export const conditionalOrderGenerator = onchainTable(
     hashIdx: index().on(table.hash),
     chainOwnerIdx: index().on(table.chainId, table.owner),
     resolvedOwnerIdx: index().on(table.resolvedOwner),
+    resolvedOwnerUpdatedAtBlockIdx: index("generator_resolved_owner_updated_at_block_idx")
+      .on(table.chainId, table.resolvedOwner, table.updatedAtBlock),
     ownerAddressTypeIdx: index().on(table.ownerAddressType),
     // OrderDiscoveryPoller + CancellationWatcher: per-block SELECT with
     // chainId + status + allCandidatesKnown equality filters, ORDER BY lastCheckBlock.
@@ -135,11 +138,14 @@ export const discreteOrder = onchainTable(
     executedSellAmount: t.text(),                     // actual executed amount (from API, post-settlement)
     executedBuyAmount: t.text(),                      // actual executed amount (from API, post-settlement)
     promotedAt: t.bigint(),                           // block timestamp when CandidateConfirmer promoted from candidate; null = created directly (precompute or OwnerBackfill)
+    updatedAtBlock: t.bigint().notNull(),              // latest block where an API-visible change was observed
   }),
   (table) => ({
     pk: primaryKey({ columns: [table.chainId, table.orderUid] }),
     generatorIdx: index("discrete_order_generator_idx")
       .on(table.chainId, table.conditionalOrderGeneratorId),
+    generatorUpdatedAtBlockIdx: index("discrete_order_generator_updated_at_block_idx")
+      .on(table.chainId, table.conditionalOrderGeneratorId, table.updatedAtBlock),
     // OrderStatusTracker: per-block SELECT with chainId + status='open', ORDER BY promotedAt.
     discreteOrderStatusIdx: index("discrete_order_status_idx")
       .on(table.chainId, table.status, table.promotedAt),

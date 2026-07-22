@@ -14,7 +14,7 @@
  *   cancellation path via ComposableCoW.remove().
  */
 
-import { sql } from "ponder";
+import { and, eq, inArray, sql } from "ponder";
 import {
   discreteOrder,
 } from "ponder:schema";
@@ -27,6 +27,7 @@ import {
 } from "../../../constants";
 import { TimeoutError, withTimeout } from "../withTimeout";
 import { log } from "../logger";
+import { updateGeneratorWatermarks } from "../changeWatermark";
 import { fetchAccountOrders, fetchOrdersByUids } from "./http";
 import {
   cacheFlashLoanEnrichment,
@@ -115,12 +116,40 @@ export async function upsertDiscreteOrders(
   context: Context,
   chainId: number,
   orders: ComposableOrder[],
+  updatedAtBlock: bigint,
 ): Promise<number> {
   if (orders.length === 0) return 0;
+
+  const existingRows = await context.db.sql
+    .select({
+      orderUid: discreteOrder.orderUid,
+      status: discreteOrder.status,
+      validTo: discreteOrder.validTo,
+      executedSellAmount: discreteOrder.executedSellAmount,
+      executedBuyAmount: discreteOrder.executedBuyAmount,
+    })
+    .from(discreteOrder)
+    .where(
+      and(
+        eq(discreteOrder.chainId, chainId),
+        inArray(discreteOrder.orderUid, orders.map(({ uid }) => uid)),
+      ),
+    );
+  const existingByUid = new Map(existingRows.map((row) => [row.orderUid, row]));
+  const changedOrders = orders.filter((order) => {
+    const existing = existingByUid.get(order.uid);
+    return !existing ||
+      existing.status !== order.status ||
+      existing.validTo !== order.validTo ||
+      existing.executedSellAmount !== order.executedSellAmount ||
+      existing.executedBuyAmount !== order.executedBuyAmount;
+  });
+  if (changedOrders.length === 0) return 0;
+
   // One multi-row upsert instead of N individual roundtrips.
   await context.db.sql
     .insert(discreteOrder)
-    .values(orders.map((order) => ({
+    .values(changedOrders.map((order) => ({
       orderUid: order.uid,
       chainId,
       conditionalOrderGeneratorId: order.generatorId,
@@ -132,6 +161,7 @@ export async function upsertDiscreteOrders(
       creationDate: order.creationDate,
       executedSellAmount: order.executedSellAmount,
       executedBuyAmount: order.executedBuyAmount,
+      updatedAtBlock,
     })))
     .onConflictDoUpdate({
       target: [discreteOrder.chainId, discreteOrder.orderUid],
@@ -140,9 +170,16 @@ export async function upsertDiscreteOrders(
         validTo: sql`excluded.valid_to`,
         executedSellAmount: sql`excluded.executed_sell_amount`,
         executedBuyAmount: sql`excluded.executed_buy_amount`,
+        updatedAtBlock: sql`excluded.updated_at_block`,
       },
     });
-  return orders.length;
+  await updateGeneratorWatermarks(
+    context,
+    chainId,
+    changedOrders.map((order) => order.generatorId),
+    updatedAtBlock,
+  );
+  return changedOrders.length;
 }
 
 /**

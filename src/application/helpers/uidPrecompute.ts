@@ -92,6 +92,7 @@ export async function precomputeAndDiscover(
   owner: Hex,
   orderType: OrderType,
   decodedParams: Record<string, string> | null,
+  blockNumber: bigint,
   blockTimestamp: bigint,
 ): Promise<boolean> {
   const precomputed = precomputeOrderUids(chainId, owner, orderType, decodedParams, blockTimestamp);
@@ -123,6 +124,7 @@ export async function precomputeAndDiscover(
         creationDate: blockTimestamp,
         executedSellAmount: statusInfo?.executedSellAmount ?? null,
         executedBuyAmount: statusInfo?.executedBuyAmount ?? null,
+        updatedAtBlock: blockNumber,
       });
     } else {
       candidateRows.push({
@@ -155,6 +157,7 @@ export async function precomputeAndDiscover(
         set: {
           status: sql`excluded.status`,
           validTo: sql`excluded.valid_to`,
+          updatedAtBlock: sql`excluded.updated_at_block`,
         },
       });
   }
@@ -176,6 +179,7 @@ export async function precomputeAndDiscover(
       .update(conditionalOrderGenerator)
       .set({
         status: "Completed",
+        updatedAtBlock: blockNumber,
         allCandidatesKnown: true,
         lastPollResult: "precompute:allTerminal",
       })
@@ -193,7 +197,7 @@ export async function precomputeAndDiscover(
   // OrderDiscoveryPoller can skip this generator, OrderStatusTracker tracks the open orders.
   await context.db.sql
     .update(conditionalOrderGenerator)
-    .set({ allCandidatesKnown: true })
+    .set({ allCandidatesKnown: true, updatedAtBlock: blockNumber })
     .where(
       and(
         eq(conditionalOrderGenerator.chainId, chainId),

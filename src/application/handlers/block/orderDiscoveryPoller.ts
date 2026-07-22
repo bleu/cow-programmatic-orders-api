@@ -218,6 +218,7 @@ ponder.on("OrderDiscoveryPoller:block", async ({ event, context }) => {
             .update(conditionalOrderGenerator)
             .set({
               status: "Completed",
+              updatedAtBlock: currentBlock,
               lastCheckBlock: currentBlock,
               lastPollResult: `pollNever:${pollResult.reason}`,
               consecutiveTryNextBlock: 0,
@@ -237,6 +238,7 @@ ponder.on("OrderDiscoveryPoller:block", async ({ event, context }) => {
             .update(conditionalOrderGenerator)
             .set({
               status: "Cancelled",
+              updatedAtBlock: currentBlock,
               lastCheckBlock: currentBlock,
               lastPollResult: "cancelled:SingleOrderNotAuthed",
               consecutiveTryNextBlock: 0,

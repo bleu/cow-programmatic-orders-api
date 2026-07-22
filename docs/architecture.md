@@ -95,14 +95,15 @@ Key columns:
 - `decodedParams` -- JSON blob with the decoded staticInput fields, or null if decode failed
 - `decodeError` -- set to `"invalid_static_input"` if decoding threw, otherwise null
 - `status` -- Active, Cancelled, or Completed
+- `updatedAtBlock` -- indexer block where the generator or any of its discrete orders was inserted or last observed to change
 
-PK: `(chainId, eventId)`. Indexed on `owner`, `handler`, `hash`, `chainId+owner`, and `resolvedOwner`.
+PK: `(chainId, eventId)`. Indexed on `owner`, `handler`, `hash`, `chainId+owner`, `resolvedOwner`, and `chainId+resolvedOwner+updatedAtBlock`.
 
 ### discrete_order
 
 Links individual order UIDs (from the CoW Protocol orderbook) back to their parent generator. One generator can produce many discrete orders over its lifetime — a TWAP with 10 parts creates 10 discrete orders. Populated by CandidateConfirmer after confirmation against the orderbook API; status kept current by OrderStatusTracker.
 
-Key columns: `orderUid`, `chainId`, `conditionalOrderGeneratorId` (references `eventId`), `status` (open/fulfilled/unfilled/expired/cancelled), `sellAmount`, `buyAmount`, `executedSellAmount`, `executedBuyAmount`.
+Key columns: `orderUid`, `chainId`, `conditionalOrderGeneratorId` (references `eventId`), `status` (open/fulfilled/unfilled/expired/cancelled), `sellAmount`, `buyAmount`, `executedSellAmount`, `executedBuyAmount`, `updatedAtBlock` (indexer block where public fields were inserted or last observed to change).
 PK: `(chainId, orderUid)`. See [api-reference.md](./api-reference.md) for full field docs.
 
 ### candidate_discrete_order
