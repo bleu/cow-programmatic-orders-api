@@ -172,9 +172,9 @@ describe("fetchOrderStatusByUids", () => {
     try {
       const result = await fetchOrderStatusByUids(makeContext(), TEST_CHAIN_ID, [UID_A]);
       const info = result.get(UID_A);
-      expect(info?.executedSellAmount).toBe("1000000000000000000");
-      expect(info?.executedBuyAmount).toBe("2000000000000000000");
-      expect(info?.executedFee).toBe("1000000000000000");
+      expect(info?.executedSellAmount).toBe(1000000000000000000n);
+      expect(info?.executedBuyAmount).toBe(2000000000000000000n);
+      expect(info?.executedFee).toBe(1000000000000000n);
     } finally {
       await close();
     }
@@ -267,9 +267,9 @@ describe("fetchOrderStatusByUids — stale fulfilled cache entries", () => {
       expect(calls).toBe(1); // stale entry treated as a miss
       expect(result.get(UID_A)).toEqual({
         status: "fulfilled",
-        executedSellAmount: "1000000000000000000",
-        executedBuyAmount: "2000000000000000000",
-        executedFee: "1000000000000000",
+        executedSellAmount: 1000000000000000000n,
+        executedBuyAmount: 2000000000000000000n,
+        executedFee: 1000000000000000n,
       });
     } finally {
       await close();
@@ -289,8 +289,8 @@ describe("fetchOrderStatusByUids — stale fulfilled cache entries", () => {
       const result = await fetchOrderStatusByUids(ctx, TEST_CHAIN_ID, [UID_A]);
       expect(result.get(UID_A)).toEqual({
         status: "fulfilled",
-        executedSellAmount: "1",
-        executedBuyAmount: "2",
+        executedSellAmount: 1n,
+        executedBuyAmount: 2n,
         executedFee: null,
       });
     } finally {
@@ -312,7 +312,7 @@ describe("fetchOrderStatusByUids — stale fulfilled cache entries", () => {
     try {
       const result = await fetchOrderStatusByUids(ctx, TEST_CHAIN_ID, [UID_A]);
       expect(calls).toBe(0); // no network — cache is complete
-      expect(result.get(UID_A)?.executedFee).toBe("3");
+      expect(result.get(UID_A)?.executedFee).toBe(3n);
     } finally {
       await close();
     }
@@ -428,21 +428,21 @@ describe("fetchOwnerOrderStatuses", () => {
 
         expect(result.get("0xuid1")).toEqual({
           status: "fulfilled",
-          executedSellAmount: "500",
-          executedBuyAmount: "1000",
-          executedFee: "0",
+          executedSellAmount: 500n,
+          executedBuyAmount: 1000n,
+          executedFee: 0n,
         });
         expect(result.get("0xuid2")).toEqual({
           status: "open",
-          executedSellAmount: "0",
-          executedBuyAmount: "0",
-          executedFee: "0",
+          executedSellAmount: 0n,
+          executedBuyAmount: 0n,
+          executedFee: 0n,
         });
         expect(result.get("0xuid3")).toEqual({
           status: "expired",
-          executedSellAmount: "250",
-          executedBuyAmount: "500",
-          executedFee: "0",
+          executedSellAmount: 250n,
+          executedBuyAmount: 500n,
+          executedFee: 0n,
         });
       });
     } finally {
@@ -539,9 +539,9 @@ describe("fetchOwnerOrderStatuses", () => {
 
         expect(result.get("0xpage2-0")).toEqual({
           status: "fulfilled",
-          executedSellAmount: "999",
-          executedBuyAmount: "888",
-          executedFee: "0",
+          executedSellAmount: 999n,
+          executedBuyAmount: 888n,
+          executedFee: 0n,
         });
       });
     } finally {
@@ -823,7 +823,7 @@ describe("drainOwnerSlice — delta mode (fully drained owner)", () => {
         expect(row).toBeDefined();
         expect(row!.conditionalOrderGeneratorId).toBe("gen-current");
         expect(row!.status).toBe("fulfilled");
-        expect(row!.executedFee).toBe("17");
+        expect(row!.executedFee).toBe(17n);
       });
     } finally {
       await close();
@@ -947,8 +947,8 @@ describe("upsertDiscreteOrders — chunking", () => {
       feeAmount: "0",
       validTo: 9999999999,
       creationDate: 1700000000n,
-      executedSellAmount: "0",
-      executedBuyAmount: "0",
+      executedSellAmount: 0n,
+      executedBuyAmount: 0n,
     }));
 
     const { ctx, inserted, statementCount } = makeDrainContext();

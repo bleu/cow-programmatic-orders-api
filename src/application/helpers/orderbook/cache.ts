@@ -11,7 +11,8 @@ import {
   type FlashLoanEnrichment,
 } from "./types";
 
-/** Project a freshly-decoded ComposableOrder into the durable-cache row shape. */
+/** Project a freshly-decoded ComposableOrder into the durable-cache row shape.
+ *  The cache tables store amounts as TEXT — bigints convert at this boundary. */
 export function toCacheRow(o: ComposableOrder): ComposableCacheRow {
   return {
     orderUid: o.uid,
@@ -23,9 +24,9 @@ export function toCacheRow(o: ComposableOrder): ComposableCacheRow {
     feeAmount: o.feeAmount,
     validTo: o.validTo ?? null,
     creationDate: o.creationDate,
-    executedSellAmount: o.executedSellAmount ?? null,
-    executedBuyAmount: o.executedBuyAmount ?? null,
-    executedFee: o.executedFee ?? null,
+    executedSellAmount: o.executedSellAmount?.toString() ?? null,
+    executedBuyAmount: o.executedBuyAmount?.toString() ?? null,
+    executedFee: o.executedFee?.toString() ?? null,
   };
 }
 
@@ -228,9 +229,9 @@ export async function cacheUidStatuses(
         orderUid: order.uid,
         status: order.status,
         fetchedAt: now,
-        executedSellAmount: order.executedSellAmount,
-        executedBuyAmount: order.executedBuyAmount,
-        executedFee: order.executedFee,
+        executedSellAmount: order.executedSellAmount?.toString() ?? null,
+        executedBuyAmount: order.executedBuyAmount?.toString() ?? null,
+        executedFee: order.executedFee?.toString() ?? null,
       })))
       .onConflictDoUpdate({
         target: [orderUidCache.chainId, orderUidCache.orderUid],
