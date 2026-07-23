@@ -155,9 +155,9 @@ export const discreteOrder = onchainTable(
     feeAmount: t.text().notNull(),
     validTo: t.integer(),                             // uint32 Unix timestamp — from API or getTradeableOrderWithSignature
     creationDate: t.bigint().notNull(),               // block timestamp (seconds)
-    executedSellAmount: t.text(),                     // actual executed amount (from API, post-settlement)
-    executedBuyAmount: t.text(),                      // actual executed amount (from API, post-settlement)
-    executedFee: t.text(),                            // actual fee taken from surplus (API executedFee; the legacy executedFeeAmount is always "0")
+    executedSellAmount: t.bigint(),                   // actual executed amount (from API, post-settlement)
+    executedBuyAmount: t.bigint(),                    // actual executed amount (from API, post-settlement)
+    executedFee: t.bigint(),                          // actual fee taken from surplus (API executedFee; the legacy executedFeeAmount is always "0")
     promotedAt: t.bigint(),                           // block timestamp when CandidateConfirmer promoted from candidate; null = created directly (precompute or OwnerBackfill)
     // Sync cursor: the indexer's processing block of the last insert or
     // status/executed-amount change. Every change here also bumps the parent

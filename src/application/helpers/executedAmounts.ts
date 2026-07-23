@@ -51,9 +51,9 @@ export async function refreshTwapExecutedTotals(
   const rows = await context.db.sql
     .select({
       generatorId: discreteOrder.conditionalOrderGeneratorId,
-      executedSellAmount: sql<string>`coalesce(sum(${discreteOrder.executedSellAmount}::numeric), 0)::text`.as("executed_sell_amount_sum"),
-      executedBuyAmount: sql<string>`coalesce(sum(${discreteOrder.executedBuyAmount}::numeric), 0)::text`.as("executed_buy_amount_sum"),
-      executedFee: sql<string>`coalesce(sum(${discreteOrder.executedFee}::numeric), 0)::text`.as("executed_fee_sum"),
+      executedSellAmount: sql<string>`coalesce(sum(${discreteOrder.executedSellAmount}), 0)::text`.as("executed_sell_amount_sum"),
+      executedBuyAmount: sql<string>`coalesce(sum(${discreteOrder.executedBuyAmount}), 0)::text`.as("executed_buy_amount_sum"),
+      executedFee: sql<string>`coalesce(sum(${discreteOrder.executedFee}), 0)::text`.as("executed_fee_sum"),
     })
     .from(discreteOrder)
     .where(

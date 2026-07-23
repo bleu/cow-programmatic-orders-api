@@ -53,6 +53,7 @@ import {
 import {
   PAGE_LIMIT,
   TERMINAL_STATUSES,
+  toBigIntOrNull,
   type ComposableOrder,
   type FlashLoanEnrichment,
   type OrderStatusInfo,
@@ -338,9 +339,9 @@ export async function fetchOrderStatusByUids(
     if (cachedData && TERMINAL_STATUSES.has(cachedData.status)) {
       const info: OrderStatusInfo = {
         status: cachedData.status,
-        executedSellAmount: cachedData.executedSellAmount,
-        executedBuyAmount: cachedData.executedBuyAmount,
-        executedFee: cachedData.executedFee,
+        executedSellAmount: toBigIntOrNull(cachedData.executedSellAmount),
+        executedBuyAmount: toBigIntOrNull(cachedData.executedBuyAmount),
+        executedFee: toBigIntOrNull(cachedData.executedFee),
       };
       if (cachedData.status === "fulfilled" && cachedData.executedFee == null) {
         staleFallbacks.set(uid, info);
@@ -380,9 +381,9 @@ export async function fetchOrderStatusByUids(
     for (const order of fetched) {
       result.set(order.uid, {
         status: order.status,
-        executedSellAmount: order.executedSellAmount,
-        executedBuyAmount: order.executedBuyAmount,
-        executedFee: order.executedFee,
+        executedSellAmount: toBigIntOrNull(order.executedSellAmount),
+        executedBuyAmount: toBigIntOrNull(order.executedBuyAmount),
+        executedFee: toBigIntOrNull(order.executedFee),
       });
       if (TERMINAL_STATUSES.has(order.status)) {
         newTerminal.push({
@@ -396,9 +397,9 @@ export async function fetchOrderStatusByUids(
           feeAmount: order.feeAmount,
           validTo: order.validTo,
           creationDate: 0n,
-          executedSellAmount: order.executedSellAmount,
-          executedBuyAmount: order.executedBuyAmount,
-          executedFee: order.executedFee,
+          executedSellAmount: toBigIntOrNull(order.executedSellAmount),
+          executedBuyAmount: toBigIntOrNull(order.executedBuyAmount),
+          executedFee: toBigIntOrNull(order.executedFee),
         });
       }
     }
@@ -436,9 +437,9 @@ export async function fetchOwnerOrderStatuses(
   for (const order of orders) {
     result.set(order.uid, {
       status: order.status,
-      executedSellAmount: order.executedSellAmount,
-      executedBuyAmount: order.executedBuyAmount,
-      executedFee: order.executedFee,
+      executedSellAmount: toBigIntOrNull(order.executedSellAmount),
+      executedBuyAmount: toBigIntOrNull(order.executedBuyAmount),
+      executedFee: toBigIntOrNull(order.executedFee),
     });
   }
   return result;

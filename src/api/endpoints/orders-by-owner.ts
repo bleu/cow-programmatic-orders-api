@@ -98,6 +98,8 @@ export const ordersByOwnerHandler: RouteHandler<
     enrichedOrders = orders.map((o) => ({
       ...o,
       creationDate: o.creationDate.toString(),
+      executedSellAmount: o.executedSellAmount?.toString() ?? null,
+      executedBuyAmount: o.executedBuyAmount?.toString() ?? null,
       generator: generatorById[o.generatorId],
     }));
   }
