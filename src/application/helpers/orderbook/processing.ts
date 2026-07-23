@@ -112,7 +112,11 @@ export async function filterAndProcess(
 }
 
 /** Re-check non-terminal cached rows via by_uids; update status/validTo/executed and
- *  re-persist any that became terminal. Mutates and returns `rows`. */
+ *  re-persist any that became terminal. Mutates and returns `rows`.
+ *  Fulfilled rows with a null executedFee are also re-checked: they were cached
+ *  before the executed_fee column existed and would otherwise stay stale forever
+ *  (terminal rows are never re-fetched). Expired/cancelled rows are left alone —
+ *  nothing was executed, so a null fee there is harmless. */
 export async function reconcileOpenCachedRows(
   context: Context,
   chainId: number,
@@ -121,7 +125,12 @@ export async function reconcileOpenCachedRows(
   rows: ComposableCacheRow[],
   signal?: AbortSignal,
 ): Promise<ComposableCacheRow[]> {
-  const openUids = rows.filter((r) => !TERMINAL_STATUSES.has(r.status)).map((r) => r.orderUid);
+  const openUids = rows
+    .filter((r) =>
+      !TERMINAL_STATUSES.has(r.status) ||
+      (r.status === "fulfilled" && r.executedFee == null),
+    )
+    .map((r) => r.orderUid);
   if (openUids.length === 0) return rows;
 
   const refreshed = await fetchOrdersByUids(apiBaseUrl, openUids, signal);

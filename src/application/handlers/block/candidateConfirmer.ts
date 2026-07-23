@@ -232,9 +232,11 @@ ponder.on("CandidateConfirmer:block", async ({ event, context }) => {
         target: [discreteOrder.chainId, discreteOrder.orderUid],
         set: {
           status: sql`excluded.status`,
-          executedSellAmount: sql`excluded.executed_sell_amount`,
-          executedBuyAmount: sql`excluded.executed_buy_amount`,
-          executedFee: sql`excluded.executed_fee`,
+          // Statuses served from cow_cache can carry null executed amounts —
+          // coalesce so they never erase values from an earlier fresh fetch.
+          executedSellAmount: sql`coalesce(excluded.executed_sell_amount, ${discreteOrder.executedSellAmount})`,
+          executedBuyAmount: sql`coalesce(excluded.executed_buy_amount, ${discreteOrder.executedBuyAmount})`,
+          executedFee: sql`coalesce(excluded.executed_fee, ${discreteOrder.executedFee})`,
           promotedAt: sql`excluded.promoted_at`,
           updatedAtBlock: sql`excluded.updated_at_block`,
         },

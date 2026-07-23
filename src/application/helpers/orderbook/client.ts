@@ -254,14 +254,17 @@ export async function upsertDiscreteOrders(
         ),
       );
     const existingByUid = new Map(existingRows.map((row) => [row.orderUid, row]));
+    // Executed columns compare on the post-coalesce effective value (incoming
+    // null keeps the existing value — see the conflict set below), so a cached
+    // null never marks an already-populated row as changed.
     const changedOrders = chunk.filter((order) => {
       const existing = existingByUid.get(order.uid);
       return !existing ||
         existing.status !== order.status ||
         existing.validTo !== order.validTo ||
-        existing.executedSellAmount !== order.executedSellAmount ||
-        existing.executedBuyAmount !== order.executedBuyAmount ||
-        existing.executedFee !== order.executedFee;
+        (order.executedSellAmount ?? existing.executedSellAmount) !== existing.executedSellAmount ||
+        (order.executedBuyAmount ?? existing.executedBuyAmount) !== existing.executedBuyAmount ||
+        (order.executedFee ?? existing.executedFee) !== existing.executedFee;
     });
     if (changedOrders.length === 0) continue;
 
@@ -287,9 +290,11 @@ export async function upsertDiscreteOrders(
         set: {
           status: sql`excluded.status`,
           validTo: sql`excluded.valid_to`,
-          executedSellAmount: sql`excluded.executed_sell_amount`,
-          executedBuyAmount: sql`excluded.executed_buy_amount`,
-          executedFee: sql`excluded.executed_fee`,
+          // Durable-cache rows from before the executed_fee column carry nulls —
+          // coalesce so they never erase values already written by a fresh fetch.
+          executedSellAmount: sql`coalesce(excluded.executed_sell_amount, ${discreteOrder.executedSellAmount})`,
+          executedBuyAmount: sql`coalesce(excluded.executed_buy_amount, ${discreteOrder.executedBuyAmount})`,
+          executedFee: sql`coalesce(excluded.executed_fee, ${discreteOrder.executedFee})`,
           updatedAtBlock: sql`excluded.updated_at_block`,
         },
       });
@@ -319,19 +324,30 @@ export async function fetchOrderStatusByUids(
   const apiBaseUrl = ORDERBOOK_API_URLS[chainId];
   if (!apiBaseUrl) return result;
 
-  // Check cache first
+  // Check cache first. Fulfilled entries with a null executedFee predate the
+  // executed_fee cache column and would otherwise stay stale forever (terminal
+  // entries are never re-fetched) — treat them as misses, but keep the cached
+  // data as a fallback in case the UID has aged out of /by_uids. Expired and
+  // cancelled entries executed nothing, so a null fee there is left alone.
   const cached = await getCachedUidStatuses(context, chainId, uids);
   const toFetch: string[] = [];
+  const staleFallbacks = new Map<string, OrderStatusInfo>();
 
   for (const uid of uids) {
     const cachedData = cached.get(uid);
     if (cachedData && TERMINAL_STATUSES.has(cachedData.status)) {
-      result.set(uid, {
+      const info: OrderStatusInfo = {
         status: cachedData.status,
         executedSellAmount: cachedData.executedSellAmount,
         executedBuyAmount: cachedData.executedBuyAmount,
         executedFee: cachedData.executedFee,
-      });
+      };
+      if (cachedData.status === "fulfilled" && cachedData.executedFee == null) {
+        staleFallbacks.set(uid, info);
+        toFetch.push(uid);
+      } else {
+        result.set(uid, info);
+      }
     } else {
       toFetch.push(uid);
     }
@@ -351,7 +367,10 @@ export async function fetchOrderStatusByUids(
     } catch (err) {
       if (err instanceof TimeoutError) {
         log("warn", "ob:statusByUidsTimeout", { chainId, toFetch: toFetch.length, after: ORDERBOOK_HTTP_TIMEOUT_MS * 2 });
-        return result; // cache-only map — caller treats missing UIDs as "not on API yet"
+        // Cache-only map — callers treat missing UIDs as "not on API yet".
+        // Stale-but-known entries still answer from cache.
+        for (const [uid, info] of staleFallbacks) result.set(uid, info);
+        return result;
       }
       throw err;
     }
@@ -386,6 +405,13 @@ export async function fetchOrderStatusByUids(
 
     if (newTerminal.length > 0) {
       await cacheUidStatuses(context, chainId, newTerminal);
+    }
+
+    // Stale UIDs the API no longer returns (aged out of /by_uids): answer with
+    // the cached data rather than omitting them, so callers don't mistake a
+    // long-settled order for "not on API yet".
+    for (const [uid, info] of staleFallbacks) {
+      if (!result.has(uid)) result.set(uid, info);
     }
   }
 
