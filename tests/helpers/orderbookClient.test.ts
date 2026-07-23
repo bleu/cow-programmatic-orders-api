@@ -227,6 +227,98 @@ describe("fetchOrderStatusByUids", () => {
   });
 });
 
+// ─── Stale-cache fetch-through (fulfilled entries missing executedFee) ────────
+
+describe("fetchOrderStatusByUids — stale fulfilled cache entries", () => {
+  /** Context stub whose per-UID cache read returns `rows`; cache writes are no-ops. */
+  function makeCacheContext(rows: Record<string, unknown>[]): Context {
+    return {
+      db: {
+        sql: {
+          select: () => ({ from: () => ({ where: async () => rows }) }),
+          insert: () => ({ values: () => ({ onConflictDoUpdate: async () => undefined }) }),
+          execute: async () => [],
+        },
+      },
+    } as unknown as Context;
+  }
+
+  beforeAll(() => {
+    data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = "http://placeholder";
+  });
+
+  afterAll(() => {
+    delete (data.ORDERBOOK_API_URLS as Record<number, string | undefined>)[TEST_CHAIN_ID];
+  });
+
+  it("re-fetches a fulfilled entry cached with a null executedFee (pre-executed_fee column)", async () => {
+    let calls = 0;
+    const { url, close } = await startServer((_req, res) => {
+      calls++;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify([makeWrappedOrder(UID_A, "fulfilled")]));
+    });
+    data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
+    const ctx = makeCacheContext([
+      { orderUid: UID_A, status: "fulfilled", executedSellAmount: "1", executedBuyAmount: "2", executedFee: null },
+    ]);
+    try {
+      const result = await fetchOrderStatusByUids(ctx, TEST_CHAIN_ID, [UID_A]);
+      expect(calls).toBe(1); // stale entry treated as a miss
+      expect(result.get(UID_A)).toEqual({
+        status: "fulfilled",
+        executedSellAmount: "1000000000000000000",
+        executedBuyAmount: "2000000000000000000",
+        executedFee: "1000000000000000",
+      });
+    } finally {
+      await close();
+    }
+  });
+
+  it("falls back to the cached entry when the stale UID no longer appears on the API", async () => {
+    const { url, close } = await startServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end("[]"); // aged out of /by_uids
+    });
+    data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
+    const ctx = makeCacheContext([
+      { orderUid: UID_A, status: "fulfilled", executedSellAmount: "1", executedBuyAmount: "2", executedFee: null },
+    ]);
+    try {
+      const result = await fetchOrderStatusByUids(ctx, TEST_CHAIN_ID, [UID_A]);
+      expect(result.get(UID_A)).toEqual({
+        status: "fulfilled",
+        executedSellAmount: "1",
+        executedBuyAmount: "2",
+        executedFee: null,
+      });
+    } finally {
+      await close();
+    }
+  });
+
+  it("serves fulfilled entries with a concrete executedFee straight from cache", async () => {
+    let calls = 0;
+    const { url, close } = await startServer((_req, res) => {
+      calls++;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end("[]");
+    });
+    data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
+    const ctx = makeCacheContext([
+      { orderUid: UID_A, status: "fulfilled", executedSellAmount: "1", executedBuyAmount: "2", executedFee: "3" },
+    ]);
+    try {
+      const result = await fetchOrderStatusByUids(ctx, TEST_CHAIN_ID, [UID_A]);
+      expect(calls).toBe(0); // no network — cache is complete
+      expect(result.get(UID_A)?.executedFee).toBe("3");
+    } finally {
+      await close();
+    }
+  });
+});
+
 // ─── Resilience: 429 / 5xx handling ───────────────────────────────────────────
 
 /** Capture structured `log()` output — the logger writes warn/error as JSON via console.error. */
