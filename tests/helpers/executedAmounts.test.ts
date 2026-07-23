@@ -20,7 +20,9 @@ vi.mock("ponder", () => ({
   and: vi.fn(),
   eq: vi.fn(),
   inArray: vi.fn(),
-  sql: vi.fn(),
+  // The aggregate fragments call .as(alias) — required so the three sum columns
+  // get distinct names (see refreshTwapExecutedTotals).
+  sql: vi.fn(() => ({ as: vi.fn((alias: string) => ({ alias })) })),
 }));
 
 import { refreshTwapExecutedTotals } from "../../src/application/helpers/executedAmounts";
