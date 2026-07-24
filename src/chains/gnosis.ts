@@ -35,4 +35,5 @@ export const gnosis: ChainConfig = {
   },
   orderbookApiPath: "xdai",
   orderbookPollInterval: 100, // ~20 blocks at 5s/block (prior global cadence)
+  reorgSafetyWindowSeconds: 300, // 5 min — fast finality
 };

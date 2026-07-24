@@ -21,4 +21,5 @@ export const ink: ChainConfig = {
   flashLoan: null, // TODO: set { aaveV3: { router, adapterFactory } } once flash-loan infra is confirmed on Ink
   orderbookApiPath: "ink", // TODO: verify CoW Protocol orderbook URL for Ink
   orderbookPollInterval: 20 * blockTime,
+  reorgSafetyWindowSeconds: 1200, // 20 min — covers L1-reorg derived resets
 };

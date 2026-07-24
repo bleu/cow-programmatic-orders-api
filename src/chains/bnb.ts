@@ -32,4 +32,5 @@ export const bnb: ChainConfig = {
   },
   orderbookApiPath: "bnb", // TODO: verify CoW Protocol orderbook URL for BNB
   orderbookPollInterval: 60, // ~20 blocks at 3s/block (prior global cadence)
+  reorgSafetyWindowSeconds: 900, // 15 min — fast finality plus margin
 };

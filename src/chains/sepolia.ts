@@ -24,4 +24,5 @@ export const sepolia: ChainConfig = {
   flashLoan: null, // TODO: set { aaveV3: { router, adapterFactory } } once flash-loan infra is confirmed on Sepolia
   orderbookApiPath: "sepolia",
   orderbookPollInterval: 20 * blockTime,
+  reorgSafetyWindowSeconds: 300, // 5 min — testnet
 };

@@ -62,6 +62,16 @@ export const ORDERBOOK_API_URLS: Record<number, string> = Object.fromEntries(
 );
 
 /**
+ * Per-chain reorg safety window in seconds, keyed by chain ID.
+ * Derived from each chain's reorgSafetyWindowSeconds — see ChainConfig for the
+ * caching semantics. Partial: fall back to DEFAULT_REORG_SAFETY_WINDOW_SECONDS.
+ */
+export const REORG_SAFETY_WINDOW_SECONDS: Partial<Record<SupportedChainId, number>> =
+  Object.fromEntries(
+    ALL_DEFINED_CHAINS.map((c) => [c.chainId, c.reorgSafetyWindowSeconds]),
+  );
+
+/**
  * Aave V3 adapter factory addresses keyed by chain name.
  * Derived from ACTIVE_CHAINS — only chains with Aave V3 flash-loan infra are included.
  * Used by settlement.ts to resolve per-chain factory addresses at runtime.

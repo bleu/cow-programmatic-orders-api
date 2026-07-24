@@ -32,4 +32,5 @@ export const mainnet: ChainConfig = {
   },
   orderbookApiPath: "mainnet",
   orderbookPollInterval: 240, // ~20 blocks at 12s/block (prior global cadence)
+  reorgSafetyWindowSeconds: 1200, // 20 min — Ethereum finality ~13 min plus margin
 };

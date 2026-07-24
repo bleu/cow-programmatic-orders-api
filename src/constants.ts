@@ -178,3 +178,10 @@ export const FLASH_LOAN_BACKFILL_SLICE_SIZE = 500;
  * Version 1 = rows carrying executed_fee; pre-executed_fee rows migrate to 0.
  */
 export const CACHE_VERSION = 1;
+
+/**
+ * Fallback reorg safety window when a chain has no configured
+ * reorgSafetyWindowSeconds (see REORG_SAFETY_WINDOW_SECONDS in src/data.ts).
+ * Conservative 20 minutes — erring long only extends soft-cache re-polling.
+ */
+export const DEFAULT_REORG_SAFETY_WINDOW_SECONDS = 1200;

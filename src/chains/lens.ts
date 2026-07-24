@@ -24,4 +24,5 @@ export const lens: ChainConfig = {
   flashLoan: null, // TODO: set { aaveV3: { router, adapterFactory } } once flash-loan infra is confirmed on Lens
   orderbookApiPath: "lens", // NOTE: api.cow.fi/lens returns 404 — orderbook not live for Lens yet
   orderbookPollInterval: 20 * blockTime,
+  reorgSafetyWindowSeconds: 1200, // 20 min — covers L1-reorg derived resets
 };

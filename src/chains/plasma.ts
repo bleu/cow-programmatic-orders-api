@@ -32,4 +32,5 @@ export const plasma: ChainConfig = {
   },
   orderbookApiPath: "plasma", // TODO: verify CoW Protocol orderbook URL for Plasma
   orderbookPollInterval: 20, // ~20 blocks at 1s/block (prior global cadence)
+  reorgSafetyWindowSeconds: 1200, // 20 min — covers L1-reorg derived resets
 };
