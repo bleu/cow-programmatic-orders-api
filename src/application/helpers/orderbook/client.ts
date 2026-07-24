@@ -3,15 +3,14 @@
  *
  * Cache strategy (per-UID):
  * - Uses cow_cache.order_uid_cache to store per-UID terminal statuses
- * - Terminal orders (fulfilled/expired/cancelled) are cached and never re-fetched
+ * - Terminal statuses are cached but only trusted permanently once provably
+ *   beyond the chain's reorg window — see ./trust.ts (COW-1183). Soft rows
+ *   keep re-fetching; a fetch that contradicts a cached terminal status
+ *   (reorg revert) deletes the row.
  * - Open/non-cached orders are refreshed via POST /api/v1/orders/by_uids
  * - Cache is invalidated per-owner when ConditionalOrderCreated fires
  *
- * KNOWN LIMITATION — Off-chain cancellation gap:
- *   Orders cancelled via the CoW Orderbook API's DELETE endpoint (off-chain
- *   soft cancel) are NOT detected after they've been cached as terminal.
- *   This is rare for EIP-1271 composable orders, which follow the on-chain
- *   cancellation path via ComposableCoW.remove().
+ * See orderbookClient.ts (the barrel) for the known off-chain cancellation gap.
  */
 
 import { and, eq, inArray, sql } from "ponder";
@@ -20,8 +19,9 @@ import {
 } from "ponder:schema";
 import type { Context } from "ponder:registry";
 import { type Hex } from "viem";
-import { ORDERBOOK_API_URLS } from "../../../data";
+import { ORDERBOOK_API_URLS, REORG_SAFETY_WINDOW_SECONDS, type SupportedChainId } from "../../../data";
 import {
+  DEFAULT_REORG_SAFETY_WINDOW_SECONDS,
   ORDERBOOK_HTTP_TIMEOUT_MS,
   SIGNING_SCHEME_EIP1271,
   UPSERT_CHUNK_SIZE,
@@ -35,6 +35,7 @@ import {
   advanceOwnerOffset,
   cacheFlashLoanEnrichment,
   cacheUidStatuses,
+  deleteUidCacheEntries,
   getCachedFlashLoanEnrichment,
   getCachedUidStatuses,
   markOwnerFullyDrained,
@@ -50,6 +51,7 @@ import {
   reconcileOpenCachedRows,
   remapToCurrentGenerators,
 } from "./processing";
+import { classifyCachedRow } from "./trust";
 import {
   PAGE_LIMIT,
   TERMINAL_STATUSES,
@@ -313,6 +315,12 @@ export async function upsertDiscreteOrders(
  * Returns a Map of uid -> OrderStatusInfo. Executed amounts are null for
  * cached results (the amounts are already stored in discreteOrder from
  * the original fresh fetch).
+ *
+ * Cache reads go through the trust rule (trust.ts): only rows provably beyond
+ * the chain's reorg window are served as final. Soft rows (recently terminal,
+ * or written by an older cache version) are re-fetched, with the cached data
+ * kept as a fallback in case the UID has aged out of /by_uids. A fetch that
+ * contradicts a cached terminal status (reorg revert) deletes the cache row.
  */
 export async function fetchOrderStatusByUids(
   context: Context,
@@ -325,29 +333,30 @@ export async function fetchOrderStatusByUids(
   const apiBaseUrl = ORDERBOOK_API_URLS[chainId];
   if (!apiBaseUrl) return result;
 
-  // Check cache first. Fulfilled entries with a null executedFee predate the
-  // executed_fee cache column and would otherwise stay stale forever (terminal
-  // entries are never re-fetched) — treat them as misses, but keep the cached
-  // data as a fallback in case the UID has aged out of /by_uids. Expired and
-  // cancelled entries executed nothing, so a null fee there is left alone.
+  const window =
+    REORG_SAFETY_WINDOW_SECONDS[chainId as SupportedChainId] ??
+    DEFAULT_REORG_SAFETY_WINDOW_SECONDS;
+  const nowSeconds = Math.floor(Date.now() / 1000);
+
   const cached = await getCachedUidStatuses(context, chainId, uids);
   const toFetch: string[] = [];
   const staleFallbacks = new Map<string, OrderStatusInfo>();
 
   for (const uid of uids) {
     const cachedData = cached.get(uid);
-    if (cachedData && TERMINAL_STATUSES.has(cachedData.status)) {
+    const trust = cachedData ? classifyCachedRow(cachedData, nowSeconds, window) : null;
+    if (cachedData && trust !== null && trust !== "not-terminal") {
       const info: OrderStatusInfo = {
         status: cachedData.status,
         executedSellAmount: toBigIntOrNull(cachedData.executedSellAmount),
         executedBuyAmount: toBigIntOrNull(cachedData.executedBuyAmount),
         executedFee: toBigIntOrNull(cachedData.executedFee),
       };
-      if (cachedData.status === "fulfilled" && cachedData.executedFee == null) {
+      if (trust === "trusted") {
+        result.set(uid, info);
+      } else {
         staleFallbacks.set(uid, info);
         toFetch.push(uid);
-      } else {
-        result.set(uid, info);
       }
     } else {
       toFetch.push(uid);
@@ -377,6 +386,7 @@ export async function fetchOrderStatusByUids(
     }
 
     const newTerminal: ComposableOrder[] = [];
+    const reverted: string[] = [];
 
     for (const order of fetched) {
       result.set(order.uid, {
@@ -385,6 +395,12 @@ export async function fetchOrderStatusByUids(
         executedBuyAmount: toBigIntOrNull(order.executedBuyAmount),
         executedFee: toBigIntOrNull(order.executedFee),
       });
+      // A cached terminal status the API now contradicts was reorged out —
+      // drop the row so the stale fallback can't be served again.
+      if (!TERMINAL_STATUSES.has(order.status) && staleFallbacks.has(order.uid)) {
+        reverted.push(order.uid);
+        staleFallbacks.delete(order.uid);
+      }
       if (TERMINAL_STATUSES.has(order.status)) {
         newTerminal.push({
           uid: order.uid,
@@ -406,6 +422,9 @@ export async function fetchOrderStatusByUids(
 
     if (newTerminal.length > 0) {
       await cacheUidStatuses(context, chainId, newTerminal);
+    }
+    if (reverted.length > 0) {
+      await deleteUidCacheEntries(context, chainId, reverted);
     }
 
     // Stale UIDs the API no longer returns (aged out of /by_uids): answer with
@@ -492,7 +511,7 @@ export async function fetchFlashLoanEnrichmentByUids(
     throw err;
   }
 
-  const newlyFetched: { uid: string; enrichment: FlashLoanEnrichment }[] = [];
+  const newlyFetched: { uid: string; enrichment: FlashLoanEnrichment; validTo: number | null }[] = [];
   for (const order of fetched) {
     const enrichment: FlashLoanEnrichment = {
       receiver: order.receiver ? order.receiver.toLowerCase() : null,
@@ -503,7 +522,7 @@ export async function fetchFlashLoanEnrichmentByUids(
       executedBuyAmount: order.executedBuyAmount,
     };
     result.set(order.uid, enrichment);
-    newlyFetched.push({ uid: order.uid, enrichment });
+    newlyFetched.push({ uid: order.uid, enrichment, validTo: order.validTo ?? null });
   }
 
   if (newlyFetched.length > 0) {

@@ -12,7 +12,10 @@ import { log } from "../helpers/logger";
  * with fully qualified names.
  *
  * Cache semantics (enforced by consumers, not here):
- *   - Terminal states (fulfilled/expired/cancelled): cached indefinitely (cannot change)
+ *   - Terminal states (fulfilled/expired/cancelled): cached, but only trusted
+ *     permanently once provably beyond the chain's reorg window — see
+ *     src/application/helpers/orderbook/trust.ts (COW-1183). Until then the
+ *     row is "soft" and keeps being re-fetched, so reorged statuses heal.
  *   - Open orders: not cached — always re-fetched
  */
 ponder.on("ComposableCow:setup", async ({ context }) => {
@@ -49,6 +52,16 @@ ponder.on("ComposableCow:setup", async ({ context }) => {
   await context.db.sql.execute(sql`ALTER TABLE cow_cache.order_uid_cache ADD COLUMN IF NOT EXISTS buy_amount TEXT`);
   await context.db.sql.execute(sql`ALTER TABLE cow_cache.order_uid_cache ADD COLUMN IF NOT EXISTS executed_fee TEXT`);
 
+  // Reorg-safety / healing columns (COW-1183):
+  //   valid_to       — upper bound on execution time; proves finality once
+  //                    older than the chain's reorg window
+  //   terminal_since — wall-clock first observation of the terminal status;
+  //                    anchors the cooling-off rule for future-validTo orders
+  //   cache_version  — rows below CACHE_VERSION are re-fetched lazily (healing)
+  await context.db.sql.execute(sql`ALTER TABLE cow_cache.order_uid_cache ADD COLUMN IF NOT EXISTS valid_to INTEGER`);
+  await context.db.sql.execute(sql`ALTER TABLE cow_cache.order_uid_cache ADD COLUMN IF NOT EXISTS terminal_since BIGINT`);
+  await context.db.sql.execute(sql`ALTER TABLE cow_cache.order_uid_cache ADD COLUMN IF NOT EXISTS cache_version INTEGER`);
+
   // The flash-loan enrichment now lives in order_uid_cache — drop the short-lived
   // dedicated table if a prior build created it.
   await context.db.sql.execute(sql`DROP TABLE IF EXISTS cow_cache.flash_loan_order_cache`);
@@ -80,6 +93,35 @@ ponder.on("ComposableCow:setup", async ({ context }) => {
     )
   `);
   await context.db.sql.execute(sql`ALTER TABLE cow_cache.composable_order ADD COLUMN IF NOT EXISTS executed_fee TEXT`);
+  await context.db.sql.execute(sql`ALTER TABLE cow_cache.composable_order ADD COLUMN IF NOT EXISTS terminal_since BIGINT`);
+  await context.db.sql.execute(sql`ALTER TABLE cow_cache.composable_order ADD COLUMN IF NOT EXISTS cache_version INTEGER`);
+
+  // One-off idempotent backfill for rows written before the reorg-safety
+  // columns existed. terminal_since ≈ fetched_at is slightly generous (the
+  // status may be older), which only errs toward extra re-polling; truly old
+  // rows are covered by the valid_to fast path anyway. Pre-executed_fee
+  // fulfilled rows get version 0 so the lazy-healing path re-fetches them
+  // (replaces the old executedFee-is-null special case).
+  await context.db.sql.execute(sql`
+    UPDATE cow_cache.order_uid_cache
+    SET terminal_since = fetched_at
+    WHERE terminal_since IS NULL
+  `);
+  await context.db.sql.execute(sql`
+    UPDATE cow_cache.order_uid_cache
+    SET cache_version = CASE WHEN status = 'fulfilled' AND executed_fee IS NULL THEN 0 ELSE 1 END
+    WHERE cache_version IS NULL
+  `);
+  await context.db.sql.execute(sql`
+    UPDATE cow_cache.composable_order
+    SET terminal_since = fetched_at
+    WHERE terminal_since IS NULL AND status IN ('fulfilled', 'expired', 'cancelled')
+  `);
+  await context.db.sql.execute(sql`
+    UPDATE cow_cache.composable_order
+    SET cache_version = CASE WHEN status = 'fulfilled' AND executed_fee IS NULL THEN 0 ELSE 1 END
+    WHERE cache_version IS NULL
+  `);
   await context.db.sql.execute(sql`
     CREATE INDEX IF NOT EXISTS composable_order_owner_idx
       ON cow_cache.composable_order (chain_id, owner)
