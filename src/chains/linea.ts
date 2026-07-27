@@ -32,4 +32,5 @@ export const linea: ChainConfig = {
   },
   orderbookApiPath: "linea", // TODO: verify CoW Protocol orderbook URL for Linea
   orderbookPollInterval: 60, // ~20 blocks at 3s/block (prior global cadence)
+  reorgSafetyWindowSeconds: 1200, // 20 min — covers L1-reorg derived resets
 };

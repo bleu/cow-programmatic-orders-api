@@ -32,4 +32,5 @@ export const arbitrum: ChainConfig = {
   },
   orderbookApiPath: "arbitrum_one",
   orderbookPollInterval: 20, // ~20 blocks at 1s/block (prior global cadence)
+  reorgSafetyWindowSeconds: 1200, // 20 min — covers L1-reorg derived resets
 };

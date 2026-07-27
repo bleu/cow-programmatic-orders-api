@@ -170,3 +170,18 @@ export const MAX_FLASH_LOAN_ENRICHMENT_ATTEMPTS = 10;
  * concurrency (each slice fans out to ceil(size / 50) parallel by_uids requests).
  */
 export const FLASH_LOAN_BACKFILL_SLICE_SIZE = 500;
+
+/**
+ * Version stamp for cow_cache terminal rows. Bump when a cache row gains a
+ * column that older rows must heal (they are then treated as misses and
+ * re-fetched lazily on next read, keeping the stale data as a fallback).
+ * Version 1 = rows carrying executed_fee; pre-executed_fee rows migrate to 0.
+ */
+export const CACHE_VERSION = 1;
+
+/**
+ * Fallback reorg safety window when a chain has no configured
+ * reorgSafetyWindowSeconds (see REORG_SAFETY_WINDOW_SECONDS in src/data.ts).
+ * Conservative 20 minutes — erring long only extends soft-cache re-polling.
+ */
+export const DEFAULT_REORG_SAFETY_WINDOW_SECONDS = 1200;

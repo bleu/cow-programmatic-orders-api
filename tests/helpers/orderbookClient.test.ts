@@ -19,7 +19,7 @@ vi.mock("ponder", () => ({
 }));
 
 import * as data from "../../src/data";
-import { ORDERBOOK_MAX_RETRIES, UPSERT_CHUNK_SIZE } from "../../src/constants";
+import { CACHE_VERSION, ORDERBOOK_MAX_RETRIES, UPSERT_CHUNK_SIZE } from "../../src/constants";
 import {
   drainOwnerSlice,
   fetchAccountOrders,
@@ -227,20 +227,41 @@ describe("fetchOrderStatusByUids", () => {
   });
 });
 
-// ─── Stale-cache fetch-through (fulfilled entries missing executedFee) ────────
+// ─── Cache trust rule (COW-1183): soft rows re-fetch, trusted rows serve ─────
 
-describe("fetchOrderStatusByUids — stale fulfilled cache entries", () => {
-  /** Context stub whose per-UID cache read returns `rows`; cache writes are no-ops. */
-  function makeCacheContext(rows: Record<string, unknown>[]): Context {
-    return {
+describe("fetchOrderStatusByUids — cache trust rule", () => {
+  /** Context stub whose per-UID cache read returns `rows`; cache writes are no-ops.
+   *  Deletions (reorg reverts) are recorded in `deleted`. */
+  function makeCacheContext(rows: Record<string, unknown>[]) {
+    const deleted: unknown[] = [];
+    const ctx = {
       db: {
         sql: {
           select: () => ({ from: () => ({ where: async () => rows }) }),
           insert: () => ({ values: () => ({ onConflictDoUpdate: async () => undefined }) }),
+          delete: () => ({ where: async () => { deleted.push(1); } }),
           execute: async () => [],
         },
       },
     } as unknown as Context;
+    return Object.assign(ctx, { __deleted: deleted });
+  }
+
+  const NOW = Math.floor(Date.now() / 1000);
+  /** A row the trust rule considers final: validTo long past, current version. */
+  function trustedRow(overrides: Record<string, unknown> = {}) {
+    return {
+      orderUid: UID_A,
+      status: "fulfilled",
+      executedSellAmount: "1",
+      executedBuyAmount: "2",
+      executedFee: "3",
+      validTo: NOW - 100 * 24 * 3600,
+      terminalSince: NOW - 100 * 24 * 3600,
+      fetchedAt: NOW - 99 * 24 * 3600,
+      cacheVersion: CACHE_VERSION,
+      ...overrides,
+    };
   }
 
   beforeAll(() => {
@@ -298,7 +319,7 @@ describe("fetchOrderStatusByUids — stale fulfilled cache entries", () => {
     }
   });
 
-  it("serves fulfilled entries with a concrete executedFee straight from cache", async () => {
+  it("serves trusted entries (validTo past the reorg window, current version) straight from cache", async () => {
     let calls = 0;
     const { url, close } = await startServer((_req, res) => {
       calls++;
@@ -306,13 +327,51 @@ describe("fetchOrderStatusByUids — stale fulfilled cache entries", () => {
       res.end("[]");
     });
     data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
+    const ctx = makeCacheContext([trustedRow()]);
+    try {
+      const result = await fetchOrderStatusByUids(ctx, TEST_CHAIN_ID, [UID_A]);
+      expect(calls).toBe(0); // no network — the row is provably final
+      expect(result.get(UID_A)?.executedFee).toBe(3n);
+    } finally {
+      await close();
+    }
+  });
+
+  it("re-fetches a soft terminal entry (still inside the reorg window) even when complete", async () => {
+    let calls = 0;
+    const { url, close } = await startServer((_req, res) => {
+      calls++;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify([makeWrappedOrder(UID_A, "fulfilled")]));
+    });
+    data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
+    // Fulfilled seconds ago with a far-future validTo: a reorg could still
+    // revert it, so the cache must not be trusted yet.
     const ctx = makeCacheContext([
-      { orderUid: UID_A, status: "fulfilled", executedSellAmount: "1", executedBuyAmount: "2", executedFee: "3" },
+      trustedRow({ validTo: NOW + 3600, terminalSince: NOW - 30, fetchedAt: NOW - 30 }),
     ]);
     try {
       const result = await fetchOrderStatusByUids(ctx, TEST_CHAIN_ID, [UID_A]);
-      expect(calls).toBe(0); // no network — cache is complete
-      expect(result.get(UID_A)?.executedFee).toBe(3n);
+      expect(calls).toBe(1); // soft — went to the API
+      expect(result.get(UID_A)?.status).toBe("fulfilled");
+    } finally {
+      await close();
+    }
+  });
+
+  it("deletes the cache row and reports open when the API contradicts a soft terminal entry (reorg revert)", async () => {
+    const { url, close } = await startServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify([makeWrappedOrder(UID_A, "open")]));
+    });
+    data.ORDERBOOK_API_URLS[TEST_CHAIN_ID] = url;
+    const ctx = makeCacheContext([
+      trustedRow({ validTo: NOW + 3600, terminalSince: NOW - 30, fetchedAt: NOW - 30 }),
+    ]);
+    try {
+      const result = await fetchOrderStatusByUids(ctx, TEST_CHAIN_ID, [UID_A]);
+      expect(result.get(UID_A)?.status).toBe("open"); // fresh truth, not the stale fallback
+      expect((ctx as unknown as { __deleted: unknown[] }).__deleted.length).toBe(1);
     } finally {
       await close();
     }
@@ -1174,14 +1233,21 @@ describe("fetchFlashLoanEnrichmentByUids", () => {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify([]));
     });
+    const now = Math.floor(Date.now() / 1000);
     const cachedRow = {
       orderUid: UID_A,
+      status: "fulfilled",
       receiver: "0xcccccccccccccccccccccccccccccccccccccccc",
       kind: "buy",
       sellAmount: "111",
       buyAmount: "222",
       executedSellAmount: "111",
       executedBuyAmount: "220",
+      // Trust-rule fields: only rows past the reorg window are served from cache.
+      validTo: now - 100 * 24 * 3600,
+      terminalSince: now - 100 * 24 * 3600,
+      fetchedAt: now - 99 * 24 * 3600,
+      cacheVersion: CACHE_VERSION,
     };
     const ctx = { db: { sql: { select: () => ({ from: () => ({ where: async () => [cachedRow] }) }) } } } as unknown as Context;
     try {
@@ -1206,7 +1272,7 @@ describe("fetchFlashLoanEnrichmentByUids", () => {
       db: {
         sql: {
           select: () => ({ from: () => ({ where: async () => [] }) }), // empty cache
-          insert: () => ({ values: (vals: Record<string, unknown>[]) => ({ onConflictDoNothing: async () => { inserted.push(...vals); } }) }),
+          insert: () => ({ values: (vals: Record<string, unknown>[]) => ({ onConflictDoUpdate: async () => { inserted.push(...vals); } }) }),
         },
       },
     } as unknown as Context;
@@ -1217,6 +1283,10 @@ describe("fetchFlashLoanEnrichmentByUids", () => {
         expect(inserted[0]!.orderUid).toBe(UID_A);
         expect(inserted[0]!.kind).toBe("sell");
         expect(inserted[0]!.receiver).toBe("0xcccccccccccccccccccccccccccccccccccccccc");
+        // Trust-rule columns stamped on write so the row can harden later.
+        expect(inserted[0]!.validTo).toBe(9_999_999_999);
+        expect(inserted[0]!.cacheVersion).toBe(CACHE_VERSION);
+        expect(typeof inserted[0]!.terminalSince).toBe("number");
       });
     } finally {
       await close();

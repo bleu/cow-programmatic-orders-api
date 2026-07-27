@@ -2,9 +2,12 @@ import { and, eq, inArray, sql } from "ponder";
 import type { Context } from "ponder:registry";
 import { pgSchema, integer, text, bigint, boolean } from "drizzle-orm/pg-core";
 import { type Hex } from "viem";
-import { UPSERT_CHUNK_SIZE } from "../../../constants";
+import { CACHE_VERSION, DEFAULT_REORG_SAFETY_WINDOW_SECONDS, UPSERT_CHUNK_SIZE } from "../../../constants";
+import { REORG_SAFETY_WINDOW_SECONDS, type SupportedChainId } from "../../../data";
 import { log } from "../logger";
+import { classifyCachedRow } from "./trust";
 import {
+  TERMINAL_STATUSES,
   type CachedOrderData,
   type ComposableCacheRow,
   type ComposableOrder,
@@ -54,6 +57,8 @@ const composableOrderCache = cowCacheSchema.table("composable_order", {
   executedBuyAmount: text("executed_buy_amount"),
   executedFee: text("executed_fee"),
   fetchedAt: bigint("fetched_at", { mode: "bigint" }).notNull(),
+  terminalSince: bigint("terminal_since", { mode: "number" }),
+  cacheVersion: integer("cache_version"),
 });
 
 // Per-owner drain state for OwnerBackfillLive (see setup.ts for the DDL and the
@@ -79,9 +84,14 @@ const orderUidCache = cowCacheSchema.table("order_uid_cache", {
   receiver: text("receiver"),
   sellAmount: text("sell_amount"),
   buyAmount: text("buy_amount"),
+  validTo: integer("valid_to"),
+  terminalSince: bigint("terminal_since", { mode: "number" }),
+  cacheVersion: integer("cache_version"),
 });
 
-/** Read cached flash-loan enrichment for a list of UIDs. */
+/** Read cached flash-loan enrichment for a list of UIDs. Only rows the trust
+ *  rule considers final are served — soft rows (recently settled, or written
+ *  by an older cache version) fall through to a fresh fetch that re-caches. */
 export async function getCachedFlashLoanEnrichment(
   context: Context,
   chainId: number,
@@ -89,6 +99,9 @@ export async function getCachedFlashLoanEnrichment(
 ): Promise<Map<string, FlashLoanEnrichment>> {
   const result = new Map<string, FlashLoanEnrichment>();
   if (uids.length === 0) return result;
+  const window =
+    REORG_SAFETY_WINDOW_SECONDS[chainId as SupportedChainId] ?? DEFAULT_REORG_SAFETY_WINDOW_SECONDS;
+  const now = Math.floor(Date.now() / 1000);
 
   try {
     const batchSize = 500;
@@ -97,12 +110,17 @@ export async function getCachedFlashLoanEnrichment(
       const rows = await context.db.sql
         .select({
           orderUid: orderUidCache.orderUid,
+          status: orderUidCache.status,
           receiver: orderUidCache.receiver,
           kind: orderUidCache.kind,
           sellAmount: orderUidCache.sellAmount,
           buyAmount: orderUidCache.buyAmount,
           executedSellAmount: orderUidCache.executedSellAmount,
           executedBuyAmount: orderUidCache.executedBuyAmount,
+          validTo: orderUidCache.validTo,
+          terminalSince: orderUidCache.terminalSince,
+          fetchedAt: orderUidCache.fetchedAt,
+          cacheVersion: orderUidCache.cacheVersion,
         })
         .from(orderUidCache)
         .where(
@@ -115,6 +133,7 @@ export async function getCachedFlashLoanEnrichment(
         // Skip discrete rows that lack enrichment (kind/amounts null). In practice
         // the UID sets are disjoint, so this only guards against accidental overlap.
         if (row.kind == null || row.sellAmount == null || row.buyAmount == null) continue;
+        if (classifyCachedRow(row, now, window) !== "trusted") continue;
         result.set(row.orderUid, {
           receiver: row.receiver,
           kind: row.kind as "sell" | "buy",
@@ -140,15 +159,18 @@ export async function getCachedFlashLoanEnrichment(
 export async function cacheFlashLoanEnrichment(
   context: Context,
   chainId: number,
-  entries: { uid: string; enrichment: FlashLoanEnrichment }[],
+  entries: { uid: string; enrichment: FlashLoanEnrichment; validTo: number | null }[],
 ): Promise<void> {
   if (entries.length === 0) return;
   const now = Math.floor(Date.now() / 1000);
   try {
+    // Upsert (not DoNothing): soft rows are re-fetched until the trust rule
+    // hardens them, and each re-fetch must advance fetched_at (the cooling-off
+    // anchor) and refresh amounts a reorg may have changed.
     await context.db.sql
       .insert(orderUidCache)
       .values(
-        entries.map(({ uid, enrichment }) => ({
+        entries.map(({ uid, enrichment, validTo }) => ({
           chainId,
           orderUid: uid,
           status: "fulfilled",
@@ -159,9 +181,22 @@ export async function cacheFlashLoanEnrichment(
           executedSellAmount: enrichment.executedSellAmount,
           executedBuyAmount: enrichment.executedBuyAmount,
           fetchedAt: now,
+          validTo,
+          terminalSince: now,
+          cacheVersion: CACHE_VERSION,
         })),
       )
-      .onConflictDoNothing();
+      .onConflictDoUpdate({
+        target: [orderUidCache.chainId, orderUidCache.orderUid],
+        set: {
+          executedSellAmount: sql`excluded.executed_sell_amount`,
+          executedBuyAmount: sql`excluded.executed_buy_amount`,
+          fetchedAt: now,
+          validTo: sql`excluded.valid_to`,
+          terminalSince: sql`case when ${orderUidCache.status} = excluded.status then ${orderUidCache.terminalSince} else excluded.terminal_since end`,
+          cacheVersion: sql`excluded.cache_version`,
+        },
+      });
   } catch (err) {
     log("warn", "ob:flashLoanCacheWriteFailed", { chainId, entries: entries.length, err: String(err) });
   }
@@ -188,6 +223,10 @@ export async function getCachedUidStatuses(
           executedSellAmount: orderUidCache.executedSellAmount,
           executedBuyAmount: orderUidCache.executedBuyAmount,
           executedFee: orderUidCache.executedFee,
+          validTo: orderUidCache.validTo,
+          terminalSince: orderUidCache.terminalSince,
+          fetchedAt: orderUidCache.fetchedAt,
+          cacheVersion: orderUidCache.cacheVersion,
         })
         .from(orderUidCache)
         .where(
@@ -202,6 +241,10 @@ export async function getCachedUidStatuses(
           executedSellAmount: row.executedSellAmount,
           executedBuyAmount: row.executedBuyAmount,
           executedFee: row.executedFee,
+          validTo: row.validTo,
+          terminalSince: row.terminalSince,
+          fetchedAt: row.fetchedAt,
+          cacheVersion: row.cacheVersion,
         });
       }
     }
@@ -212,7 +255,9 @@ export async function getCachedUidStatuses(
   return result;
 }
 
-/** Cache terminal statuses and executed amounts for composable orders. */
+/** Cache terminal statuses and executed amounts for composable orders.
+ *  terminal_since survives same-status re-fetches (it anchors the cooling-off
+ *  rule in trust.ts) and resets when the status actually changed. */
 export async function cacheUidStatuses(
   context: Context,
   chainId: number,
@@ -232,6 +277,9 @@ export async function cacheUidStatuses(
         executedSellAmount: order.executedSellAmount?.toString() ?? null,
         executedBuyAmount: order.executedBuyAmount?.toString() ?? null,
         executedFee: order.executedFee?.toString() ?? null,
+        validTo: order.validTo ?? null,
+        terminalSince: now,
+        cacheVersion: CACHE_VERSION,
       })))
       .onConflictDoUpdate({
         target: [orderUidCache.chainId, orderUidCache.orderUid],
@@ -241,10 +289,37 @@ export async function cacheUidStatuses(
           executedSellAmount: sql`excluded.executed_sell_amount`,
           executedBuyAmount: sql`excluded.executed_buy_amount`,
           executedFee: sql`excluded.executed_fee`,
+          validTo: sql`excluded.valid_to`,
+          terminalSince: sql`case when ${orderUidCache.status} = excluded.status then ${orderUidCache.terminalSince} else excluded.terminal_since end`,
+          cacheVersion: sql`excluded.cache_version`,
         },
       });
   } catch {
     // Best-effort cache write
+  }
+}
+
+/** Drop cache rows whose terminal status a fresh fetch just contradicted
+ *  (reorg revert: the API says the order is open again). The next fetch
+ *  re-caches whatever the API settles on. */
+export async function deleteUidCacheEntries(
+  context: Context,
+  chainId: number,
+  uids: string[],
+): Promise<void> {
+  if (uids.length === 0) return;
+  try {
+    await context.db.sql
+      .delete(orderUidCache)
+      .where(
+        and(
+          eq(orderUidCache.chainId, chainId),
+          inArray(orderUidCache.orderUid, uids),
+        ),
+      );
+    log("info", "ob:cacheRevert", { chainId, uids: uids.length });
+  } catch (err) {
+    log("warn", "ob:cacheRevertDeleteFailed", { chainId, uids: uids.length, err: String(err) });
   }
 }
 
@@ -376,7 +451,7 @@ export async function readOwnerComposableCache(
   owner: Hex,
 ): Promise<ComposableCacheRow[]> {
   try {
-    return (await context.db.sql
+    const rows = await context.db.sql
       .select({
         orderUid: composableOrderCache.orderUid,
         generatorHash: composableOrderCache.generatorHash,
@@ -390,6 +465,9 @@ export async function readOwnerComposableCache(
         executedSellAmount: composableOrderCache.executedSellAmount,
         executedBuyAmount: composableOrderCache.executedBuyAmount,
         executedFee: composableOrderCache.executedFee,
+        terminalSince: composableOrderCache.terminalSince,
+        fetchedAt: composableOrderCache.fetchedAt,
+        cacheVersion: composableOrderCache.cacheVersion,
       })
       .from(composableOrderCache)
       .where(
@@ -397,7 +475,12 @@ export async function readOwnerComposableCache(
           eq(composableOrderCache.chainId, chainId),
           eq(composableOrderCache.owner, owner.toLowerCase()),
         ),
-      )) as ComposableCacheRow[];
+      );
+    // fetched_at is a BIGINT column — narrow to number for the trust check.
+    return rows.map((row) => ({
+      ...row,
+      fetchedAt: row.fetchedAt == null ? null : Number(row.fetchedAt),
+    })) as ComposableCacheRow[];
   } catch {
     return [];
   }
@@ -426,6 +509,7 @@ async function upsertComposableCacheChunk(
   now: bigint,
 ): Promise<void> {
   if (rows.length === 0) return;
+  const nowSeconds = Number(now);
   try {
     await context.db.sql
       .insert(composableOrderCache)
@@ -445,6 +529,10 @@ async function upsertComposableCacheChunk(
         executedBuyAmount: r.executedBuyAmount,
         executedFee: r.executedFee,
         fetchedAt: now,
+        // Non-terminal rows carry no cooling-off anchor; a later transition
+        // to terminal stamps it via the conflict CASE below.
+        terminalSince: TERMINAL_STATUSES.has(r.status) ? nowSeconds : null,
+        cacheVersion: CACHE_VERSION,
       })))
       .onConflictDoUpdate({
         target: [composableOrderCache.chainId, composableOrderCache.orderUid],
@@ -455,6 +543,8 @@ async function upsertComposableCacheChunk(
           executedBuyAmount: sql`excluded.executed_buy_amount`,
           executedFee: sql`excluded.executed_fee`,
           fetchedAt: now,
+          terminalSince: sql`case when ${composableOrderCache.status} = excluded.status then ${composableOrderCache.terminalSince} else excluded.terminal_since end`,
+          cacheVersion: sql`excluded.cache_version`,
         },
       });
   } catch (err) {

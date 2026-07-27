@@ -32,4 +32,5 @@ export const avalanche: ChainConfig = {
   },
   orderbookApiPath: "avalanche", // TODO: verify CoW Protocol orderbook URL for Avalanche
   orderbookPollInterval: 40, // ~20 blocks at 2s/block (prior global cadence)
+  reorgSafetyWindowSeconds: 300, // 5 min — sub-second finality plus margin
 };

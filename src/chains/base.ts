@@ -32,4 +32,5 @@ export const base: ChainConfig = {
   },
   orderbookApiPath: "base",
   orderbookPollInterval: 40, // ~20 blocks at 2s/block (prior global cadence)
+  reorgSafetyWindowSeconds: 1200, // 20 min — covers L1-reorg derived resets
 };

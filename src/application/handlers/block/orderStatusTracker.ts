@@ -1,8 +1,11 @@
 import { ponder } from "ponder:registry";
 import { conditionalOrderGenerator, discreteOrder } from "ponder:schema";
-import { and, asc, eq, inArray, lte, sql } from "ponder";
-import { type SupportedChainId } from "../../../data";
-import { DEFAULT_MAX_DISCRETE_ORDERS_PER_BLOCK } from "../../../constants";
+import { and, asc, eq, gte, inArray, isNull, lte, notInArray, or, sql } from "ponder";
+import { REORG_SAFETY_WINDOW_SECONDS, type SupportedChainId } from "../../../data";
+import {
+  DEFAULT_MAX_DISCRETE_ORDERS_PER_BLOCK,
+  DEFAULT_REORG_SAFETY_WINDOW_SECONDS,
+} from "../../../constants";
 import { fetchOrderStatusByUids } from "../../helpers/orderbookClient";
 import { bumpGeneratorsUpdatedAt } from "../../helpers/updatedAtBlock";
 import { log } from "../../helpers/logger";
@@ -115,11 +118,8 @@ ponder.on("OrderStatusTracker:block", async ({ event, context }) => {
     }
   }
 
-  // Parent-cancelled cascade: any open discrete_order whose parent generator
-  // is Cancelled and whose API state is non-terminal (not fulfilled / unfilled
-  // / expired / cancelled) should be cancelled from on-chain truth. The API
-  // loop above already applied API-terminal statuses, so what remains as
-  // status='open' here is exactly the "API silent" set.
+  // Generators cancelled on-chain — used by the soft-terminal re-poll below
+  // (exclusion) and the parent-cancelled cascade after it.
   const cancelledGeneratorIds = (
     await context.db.sql
       .select({ id: conditionalOrderGenerator.eventId })
@@ -132,6 +132,139 @@ ponder.on("OrderStatusTracker:block", async ({ event, context }) => {
       )
   ).map((g) => g.id);
 
+  // ── Soft-terminal re-poll (reorg self-healing — COW-1183) ──────────────────
+  // A terminal status written before a fork block survives Ponder's rollback,
+  // so a reorged-out settlement can leave discreteOrder (and the cow_cache row
+  // behind it) wrong. Terminal rows are therefore re-polled until the trust
+  // rule (orderbook/trust.ts) hardens them: fetchOrderStatusByUids serves
+  // hardened rows straight from cache, so only genuinely soft rows cost HTTP.
+  // Open orders keep priority under the per-block cap. Cascade-cancelled rows
+  // are excluded — their truth is the parent's on-chain Cancelled event
+  // (reorg-safe in Ponder's journal) and the API is silent about them, so
+  // polling would ping-pong them back to open.
+  const softBudget = maxOrdersPerBlock - openOrders.length;
+  if (softBudget > 0) {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const window =
+      REORG_SAFETY_WINDOW_SECONDS[chainId] ?? DEFAULT_REORG_SAFETY_WINDOW_SECONDS;
+
+    // validTo older than the window can't change anymore (fills are impossible
+    // after validTo) — the candidate set is only recently-terminal rows, plus
+    // future/null-validTo ones until their cache entry hardens.
+    const softCandidates = await context.db.sql
+      .select({
+        orderUid: discreteOrder.orderUid,
+        conditionalOrderGeneratorId: discreteOrder.conditionalOrderGeneratorId,
+        status: discreteOrder.status,
+        validTo: discreteOrder.validTo,
+      })
+      .from(discreteOrder)
+      .where(
+        and(
+          eq(discreteOrder.chainId, chainId),
+          inArray(discreteOrder.status, ["fulfilled", "cancelled", "expired"]),
+          or(
+            isNull(discreteOrder.validTo),
+            gte(discreteOrder.validTo, nowSeconds - window),
+          ),
+          ...(cancelledGeneratorIds.length > 0
+            ? [notInArray(discreteOrder.conditionalOrderGeneratorId, cancelledGeneratorIds)]
+            : []),
+        ),
+      )
+      .limit(softBudget) as {
+      orderUid: string;
+      conditionalOrderGeneratorId: string;
+      status: string;
+      validTo: number | null;
+    }[];
+
+    if (softCandidates.length > 0) {
+      const softStatuses = await fetchOrderStatusByUids(
+        context,
+        chainId,
+        softCandidates.map((o) => o.orderUid),
+      );
+
+      type SoftStatusInfo = NonNullable<ReturnType<typeof softStatuses.get>>;
+      const revertedUids: string[] = [];
+      const flipped: { orderUid: string; info: SoftStatusInfo }[] = [];
+      const touchedGeneratorIds: string[] = [];
+
+      for (const order of softCandidates) {
+        const info = softStatuses.get(order.orderUid);
+        if (!info || info.status === order.status) continue;
+        if (info.status === "open") {
+          // Reorg revert — back to open so the normal poll loop re-resolves it.
+          // Skip when validTo already passed: the expiry sweep owns that row.
+          if (order.validTo != null && order.validTo <= Number(currentTimestamp)) continue;
+          revertedUids.push(order.orderUid);
+          touchedGeneratorIds.push(order.conditionalOrderGeneratorId);
+        } else if (VALID_DISCRETE_STATUSES.has(info.status)) {
+          flipped.push({ orderUid: order.orderUid, info });
+          touchedGeneratorIds.push(order.conditionalOrderGeneratorId);
+        }
+      }
+
+      if (revertedUids.length > 0) {
+        // Executed amounts came from the reorged-out settlement — clear them;
+        // a later fill re-populates via the open-order loop.
+        await context.db.sql
+          .update(discreteOrder)
+          .set({
+            status: "open",
+            executedSellAmount: null,
+            executedBuyAmount: null,
+            executedFee: null,
+            updatedAtBlock: event.block.number,
+          })
+          .where(
+            and(
+              eq(discreteOrder.chainId, chainId),
+              inArray(discreteOrder.orderUid, revertedUids),
+            ),
+          );
+      }
+
+      // Per-row updates: flips only happen while a reorg is healing, so this
+      // path is cold. Null amounts (cache-served fallbacks) keep existing
+      // values, mirroring the coalesce semantics of the open-order upsert.
+      for (const { orderUid, info } of flipped) {
+        await context.db.sql
+          .update(discreteOrder)
+          .set({
+            status: info.status as "fulfilled" | "unfilled" | "expired" | "cancelled",
+            ...(info.executedSellAmount != null && { executedSellAmount: info.executedSellAmount }),
+            ...(info.executedBuyAmount != null && { executedBuyAmount: info.executedBuyAmount }),
+            ...(info.executedFee != null && { executedFee: info.executedFee }),
+            updatedAtBlock: event.block.number,
+          })
+          .where(
+            and(
+              eq(discreteOrder.chainId, chainId),
+              eq(discreteOrder.orderUid, orderUid),
+            ),
+          );
+      }
+
+      if (touchedGeneratorIds.length > 0) {
+        await bumpGeneratorsUpdatedAt(context, chainId, touchedGeneratorIds, event.block.number);
+        await refreshTwapExecutedTotals(context, chainId, touchedGeneratorIds);
+        log("info", "OrderStatusTracker:REORG_HEAL", {
+          block: String(event.block.number),
+          chainId,
+          reverted: revertedUids.length,
+          flipped: flipped.length,
+        });
+      }
+    }
+  }
+
+  // Parent-cancelled cascade: any open discrete_order whose parent generator
+  // is Cancelled and whose API state is non-terminal (not fulfilled / unfilled
+  // / expired / cancelled) should be cancelled from on-chain truth. The API
+  // loop above already applied API-terminal statuses, so what remains as
+  // status='open' here is exactly the "API silent" set.
   if (cancelledGeneratorIds.length > 0) {
     const cascaded = await context.db.sql
       .update(discreteOrder)

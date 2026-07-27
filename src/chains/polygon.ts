@@ -32,4 +32,5 @@ export const polygon: ChainConfig = {
   },
   orderbookApiPath: "polygon", // TODO: verify CoW Protocol orderbook URL for Polygon
   orderbookPollInterval: 40, // ~20 blocks at 2s/block (prior global cadence)
+  reorgSafetyWindowSeconds: 900, // 15 min — milestone finality plus margin
 };

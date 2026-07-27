@@ -77,4 +77,15 @@ export interface ChainConfig {
    * Defaults to `20 * blockTime` to preserve the prior 20-block cadence.
    */
   orderbookPollInterval: number;
+
+  /**
+   * Reorg safety window for this chain, in **seconds** (wall-clock).
+   * A terminal orderbook status (fulfilled/expired/cancelled) is only cached
+   * permanently once it is provably older than this window — before that it
+   * is kept "soft" and re-polled, so a status reverted by a reorg heals on
+   * the next poll (see src/application/helpers/orderbook/trust.ts).
+   * Pick the chain's finality time rounded up plus margin; erring long only
+   * keeps orders in an already-batched poll a little longer.
+   */
+  reorgSafetyWindowSeconds: number;
 }
