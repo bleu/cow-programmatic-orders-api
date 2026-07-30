@@ -83,3 +83,7 @@ Use these endpoints to check indexer health without reading logs:
 ## License
 
 Open source.
+
+---
+
+[![Built and maintained by Bleu](https://raw.githubusercontent.com/bleu/.github/main/brand/banner-built-by-bleu.png)](https://bleu.builders)
