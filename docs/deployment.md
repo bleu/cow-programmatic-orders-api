@@ -89,7 +89,7 @@ The deploy services (`postgres-deploy` and `ponder`) live in the root `docker-co
 docker compose --profile deploy up -d
 ```
 
-The `Dockerfile` in the project root builds the Ponder image: two-stage Node 22 Alpine, installs dependencies with `--frozen-lockfile`, exposes port 3000, runs `pnpm start`. The health check hits `/ready` with a 24-hour start period (initial sync takes hours).
+The `Dockerfile` in the project root builds the Ponder image: two-stage Node 22 Alpine, installs dependencies with `--frozen-lockfile`, exposes port 3000, runs `pnpm start`. The health check hits `/readyz` with a 24-hour start period (initial sync takes hours).
 
 ### Kubernetes Probes
 
@@ -99,9 +99,11 @@ The indexer exposes two health endpoints with distinct semantics:
 |----------|----------|-----------------|
 | `/health` | **Liveness** — is the process alive? | Always, once the server starts |
 | `/ready` | Ponder sync — has it reached the chain tip? | Only when historical sync is complete |
-| `/readyz` | **Readiness** — synced **and** owner backfill complete | Ponder synced AND no non-deterministic historical generator still pending |
+| `/readyz` | **Readiness** — synced, keeping up, **and** owner backfill complete | Ponder synced AND every active chain within its staleness budget AND no non-deterministic historical generator still pending |
 
-Use **`/readyz`** as the readiness/promotion probe. Ponder's built-in `/ready` flips as soon as historical sync reaches the tip, and `OwnerBackfillLive` then drains historical discrete orders across the following live-sync blocks. `/readyz` waits for both: it returns 200 only once Ponder is synced **and** `COUNT(historyBackfilled = false) = 0` (it internally checks `/ready` first, so it also can't false-positive on an empty fresh DB). Expect it to report pending during the drain, which begins after `/ready` flips. Ponder reserves the `/ready` path, so `/readyz` is a distinct endpoint served by the app.
+Use **`/readyz`** as the readiness/promotion probe. Ponder's built-in `/ready` flips as soon as historical sync reaches the tip. `/readyz` waits for all three conditions: Ponder synced, no chain lagging the tip, and `COUNT(historyBackfilled = false) = 0`. Expect it to report pending during the drain, which begins after `/ready` flips. Ponder reserves the `/ready` path, so `/readyz` is a distinct endpoint served by the app.
+
+The staleness check reads each chain's newest indexed block from Ponder's `/status` and compares its timestamp against wall-clock time. Anything older than `READINESS_MAX_LAG_SECONDS` (default 300) makes `/readyz` return 503 naming the chain, its newest block, and the measured lag. It deliberately does not call the RPC for the current head, because it wants to be robust to RPC outages.
 
 Map these to different K8s probe types. The specific timing values (`periodSeconds`, `failureThreshold`, `initialDelaySeconds`) depend on your cluster's SLOs; what matters is which path and port to use:
 
@@ -126,7 +128,29 @@ readinessProbe:
 
 A pod in `NotReady` state is not killed — it is simply removed from load-balancer rotation. On a cold start (no existing database), the pod will be `NotReady` for the duration of the historical backfill (hours). That is expected: the old pod (if any) keeps serving traffic during this window, and once the new pod catches up, K8s starts routing to it.
 
-The Docker Compose health check uses `/ready` with a 24-hour start period as a pragmatic fallback for single-container deployments, not as a K8s-style probe.
+The container health check (declared in the `Dockerfile`) uses `/readyz` with a 24-hour start period as a pragmatic fallback for single-container deployments, not as a K8s-style probe. Two things about it are easy to get wrong:
+
+Docker never restarts a container because its health check fails — `restart: unless-stopped` only reacts to the process exiting. A wedged-but-alive indexer stays up. The host's `willfarrell/autoheal` daemon (started with `AUTOHEAL_CONTAINER_LABEL=autoheal`) polls for unhealthy labelled containers and restarts them.
+
+The 24-hour start period exists because a cold start legitimately fails `/readyz` for hours. During the start period a failing check does not mark the container unhealthy; the first success ends it.
+
+### Splitting the API from the Indexer
+
+Today one container does both jobs: `pnpm start` runs `ponder start`, which indexes and serves HTTP in a single process. Every indexer restart therefore takes the API down with it. Ponder supports separating the two. This also useful for horizontal scaling the API side of the application.
+
+`ponder serve` starts the HTTP server without the indexer. Same image, different command: one container keeps running `ponder start`, a second runs `ponder serve` against the same database and schema, and the public route points at the second one.
+
+Four constraints, read off the installed Ponder 0.16.6:
+
+| Aspect | Behaviour under `ponder serve` |
+|--------|-------------------------------|
+| Database | Postgres only |
+| Schema | Must already exist. |
+| `/ready` | Works normally. |
+| `/status` | Works normally. |
+| `ponder_sync_*` metrics | Absent. They are in-memory gauges set only by the indexing runtime (`runtime/realtime.js`, `runtime/historical.js`), which serve mode never runs. |
+
+The RPC diagnostic is skipped in serve mode, but `ponder.config.ts` still executes, so give both containers the same environment rather than trimming the RPC variables from the API one.
 
 ### Structured Logging
 
@@ -192,7 +216,9 @@ A reindex that reuses an existing `ponder_sync` cache (same chain, same start bl
 
 `GET /ready` (Ponder built-in) returns `200` when Ponder has processed all historical blocks up to the tip and the live indexer is running. It does **not** guarantee historical discrete-order data is complete — `OwnerBackfillLive` drains that across live blocks after the tip.
 
-`GET /readyz` (app) returns `200` only when Ponder is synced **and** the owner backfill has finished (no non-deterministic historical generator with `historyBackfilled = false`). This is the promotion gate: it guarantees a newly-promoted pod has the full historical discrete-order set, so blue-green promotion never drops a complete pod for one that's still filling. It returns `503` (with the pending count) while the drain is in progress.
+`GET /readyz` (app) returns `200` only when Ponder is synced, no active chain has fallen behind the tip, **and** the owner backfill has finished (no non-deterministic historical generator with `historyBackfilled = false`). It guarantees a newly-promoted pod has the full historical discrete-order set. It returns `503` (with the pending count) while the drain is in progress.
+
+The staleness condition also makes `/readyz` useful after startup, which `/ready` has a bug. During our tests, we notice that `/ready` latches at 200 once historical sync completes and doesn't go back in case of RPC websocket connection stopped delivering new blocks.
 
 During backfill both return `503`. GraphQL queries are still available but data is incomplete (generators and transactions accumulate; discrete orders fill in as live sync progresses).
 

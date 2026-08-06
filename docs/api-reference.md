@@ -14,7 +14,8 @@ The default local URL is `http://localhost:42069` when using `pnpm dev`. The pro
 | `/docs` | GET | Swagger UI for the REST endpoints. |
 | `/openapi.json` | GET | OpenAPI 3.0 spec for the REST endpoints. |
 | `/health` | GET | Ponder built-in. Returns `200` (empty body) when the process is running. |
-| `/ready` | GET | Ponder built-in. Returns `200` when initial sync is complete; `503` while still syncing. Suitable for K8s readiness probes. |
+| `/ready` | GET | Ponder built-in. Returns `200` when initial sync is complete; `503` while still syncing. Latches at `200` afterwards, so it will not detect a stalled indexer — prefer `/readyz`. |
+| `/readyz` | GET | Application-level readiness. Returns `200` only when Ponder is synced, every active chain's newest block is within `READINESS_MAX_LAG_SECONDS` of now, and the owner backfill has drained. `503` with a plain-text reason otherwise. |
 | `/healthz` | GET | Application-level. Returns `{ "status": "ok" }` when the server is up. Does not reflect indexer sync progress. |
 | `/status` | GET | Sync progress per chain. Returns current indexed block, latest chain block, and a completion percentage. Useful for monitoring backfill progress. |
 | `/metrics` | GET | Prometheus metrics. Exposes Ponder internals (block lag, handler latency, RPC call counts). |

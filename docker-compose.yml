@@ -59,6 +59,14 @@ services:
       # (after drop) it's a no-op; on an existing schema it allows resuming from the
       # last checkpoint rather than wiping and starting over.
       PONDER_EXPERIMENTAL_DB: "platform"
+    # Docker restarts a container when its process exits, never when its healthcheck
+    # fails — a wedged-but-alive indexer would sit there unhealthy forever. The host's
+    # autoheal daemon (willfarrell/autoheal, AUTOHEAL_CONTAINER_LABEL=autoheal) watches
+    # for this label and restarts the container once HEALTHCHECK marks it unhealthy.
+    # Without that daemon running on the host, the label is inert and the healthcheck
+    # only reports; it does not recover.
+    labels:
+      autoheal: "true"
     ports:
       - "${PONDER_EXPOSED_PORT:-40000}:3000"
     depends_on:
