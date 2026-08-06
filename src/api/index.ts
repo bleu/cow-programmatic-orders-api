@@ -7,8 +7,11 @@ import { swaggerUI } from "@hono/swagger-ui";
 import { apiRouter } from "./router";
 import { gqlDocsMiddleware } from "./gql-docs";
 import { OWNER_BACKFILL_TYPES } from "../utils/order-types";
-import { fetchMetricLines, parsePrometheusGauge } from "./prometheus";
-import { describeStaleChains, findStaleChains } from "./freshness";
+import {
+  describeStaleChains,
+  fetchChainStatus,
+  findStaleChains,
+} from "./freshness";
 
 const app = new Hono();
 
@@ -45,11 +48,10 @@ app.get("/readyz", async (c) => {
   if (!synced) return c.text("Historical indexing is not complete.", 503);
 
   // 2. Live indexing still advancing? A dead RPC subscription leaves the process
-  //    healthy and serving while the newest synced block silently ages.
-  const metricLines = await fetchMetricLines(origin);
+  //    healthy and serving while the newest indexed block silently ages. /status
+  //    decodes _ponder_checkpoint, so this reads committed database state.
   const stale = findStaleChains(
-    parsePrometheusGauge(metricLines, "ponder_sync_block_timestamp"),
-    parsePrometheusGauge(metricLines, "ponder_sync_block"),
+    await fetchChainStatus(origin),
     Math.floor(Date.now() / 1000),
   );
   if (stale.length > 0) return c.text(describeStaleChains(stale), 503);

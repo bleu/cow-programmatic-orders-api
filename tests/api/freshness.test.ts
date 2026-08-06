@@ -1,13 +1,15 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   DEFAULT_MAX_LAG_SECONDS,
   describeStaleChains,
+  fetchChainStatus,
   findStaleChains,
   maxLagSecondsFor,
+  type ChainStatus,
 } from "../../src/api/freshness";
 import type { ChainConfig } from "../../src/chains/types";
 
-const NOW = 1_786_003_795;
+const NOW = 1_786_024_484;
 
 // Only the two fields findStaleChains reads.
 const CHAINS = [
@@ -15,17 +17,25 @@ const CHAINS = [
   { name: "gnosis", chainId: 100 },
 ] as unknown as ChainConfig[];
 
-function gauges(entries: Record<string, number>) {
-  return new Map(Object.entries(entries));
+/** Shape copied from a live /status response. */
+function status(
+  entries: Record<string, { number: number; timestamp: number }>,
+): ChainStatus {
+  return Object.fromEntries(
+    Object.entries(entries).map(([chain, block]) => [chain, { block }]),
+  );
 }
 
-const FRESH_TIMESTAMPS = gauges({ mainnet: NOW - 20, gnosis: NOW - 15 });
-const BLOCK_NUMBERS = gauges({ mainnet: 25_694_617, gnosis: 47_582_895 });
+const FRESH = status({
+  mainnet: { number: 25_696_339, timestamp: NOW - 21 },
+  gnosis: { number: 47_586_912, timestamp: NOW - 14 },
+});
 
 afterEach(() => {
   delete process.env.READINESS_MAX_LAG_SECONDS;
   delete process.env.READINESS_MAX_LAG_SECONDS_1;
   delete process.env.READINESS_MAX_LAG_SECONDS_100;
+  vi.unstubAllGlobals();
 });
 
 describe("maxLagSecondsFor", () => {
@@ -48,20 +58,53 @@ describe("maxLagSecondsFor", () => {
   });
 });
 
+describe("fetchChainStatus", () => {
+  it("returns the parsed payload", async () => {
+    const body = {
+      mainnet: { id: 1, block: { number: 25_696_339, timestamp: NOW - 21 } },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve({ ok: true, json: () => Promise.resolve(body) } as Response),
+      ),
+    );
+
+    await expect(fetchChainStatus("http://localhost:3000")).resolves.toEqual(body);
+  });
+
+  it("returns an empty payload on a non-200, so every chain reads as stale", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve({ ok: false } as Response)),
+    );
+
+    await expect(fetchChainStatus("http://localhost:3000")).resolves.toEqual({});
+  });
+
+  it("returns an empty payload when the request throws", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("ECONNREFUSED"))),
+    );
+
+    await expect(fetchChainStatus("http://localhost:3000")).resolves.toEqual({});
+  });
+});
+
 describe("findStaleChains", () => {
   it("reports nothing while every chain is near the tip", () => {
-    expect(
-      findStaleChains(FRESH_TIMESTAMPS, BLOCK_NUMBERS, NOW, CHAINS),
-    ).toEqual([]);
+    expect(findStaleChains(FRESH, NOW, CHAINS)).toEqual([]);
   });
 
   it("flags a chain whose newest block has aged past the budget", () => {
-    // The production failure: sync froze and the block timestamp stopped moving.
-    const timestamps = gauges({ mainnet: NOW - 16_670, gnosis: NOW - 10 });
+    // The production failure: sync froze and the checkpoint stopped moving.
+    const frozen = status({
+      mainnet: { number: 25_694_617, timestamp: NOW - 16_670 },
+      gnosis: { number: 47_586_912, timestamp: NOW - 10 },
+    });
 
-    const stale = findStaleChains(timestamps, BLOCK_NUMBERS, NOW, CHAINS);
-
-    expect(stale).toEqual([
+    expect(findStaleChains(frozen, NOW, CHAINS)).toEqual([
       {
         chain: "mainnet",
         blockNumber: 25_694_617,
@@ -72,22 +115,23 @@ describe("findStaleChains", () => {
   });
 
   it("flags every stalled chain, not just the first", () => {
-    const timestamps = gauges({ mainnet: NOW - 16_670, gnosis: NOW - 16_671 });
+    const frozen = status({
+      mainnet: { number: 25_694_617, timestamp: NOW - 16_670 },
+      gnosis: { number: 47_582_895, timestamp: NOW - 16_671 },
+    });
 
-    expect(
-      findStaleChains(timestamps, BLOCK_NUMBERS, NOW, CHAINS).map((s) => s.chain),
-    ).toEqual(["mainnet", "gnosis"]);
+    expect(findStaleChains(frozen, NOW, CHAINS).map((s) => s.chain)).toEqual([
+      "mainnet",
+      "gnosis",
+    ]);
   });
 
-  it("treats a chain missing from the metrics as stale", () => {
-    const stale = findStaleChains(
-      gauges({ mainnet: NOW - 20 }),
-      gauges({ mainnet: 25_694_617 }),
-      NOW,
-      CHAINS,
-    );
+  it("treats a chain missing from the payload as stale", () => {
+    const partial = status({
+      mainnet: { number: 25_696_339, timestamp: NOW - 21 },
+    });
 
-    expect(stale).toEqual([
+    expect(findStaleChains(partial, NOW, CHAINS)).toEqual([
       {
         chain: "gnosis",
         blockNumber: null,
@@ -97,35 +141,40 @@ describe("findStaleChains", () => {
     ]);
   });
 
-  it("treats an empty metrics scrape as stale rather than fresh", () => {
-    expect(
-      findStaleChains(gauges({}), gauges({}), NOW, CHAINS),
-    ).toHaveLength(2);
+  it("treats an unreachable /status as stale rather than fresh", () => {
+    expect(findStaleChains({}, NOW, CHAINS)).toHaveLength(2);
+  });
+
+  it("treats a malformed entry as stale", () => {
+    const malformed = { mainnet: { block: null }, gnosis: null } as ChainStatus;
+
+    expect(findStaleChains(malformed, NOW, CHAINS)).toHaveLength(2);
   });
 
   it("stays fresh right at the budget and turns stale one second past it", () => {
-    const atBudget = gauges({
-      mainnet: NOW - DEFAULT_MAX_LAG_SECONDS,
-      gnosis: NOW,
+    const atBudget = status({
+      mainnet: { number: 1, timestamp: NOW - DEFAULT_MAX_LAG_SECONDS },
+      gnosis: { number: 2, timestamp: NOW },
     });
-    expect(findStaleChains(atBudget, BLOCK_NUMBERS, NOW, CHAINS)).toEqual([]);
+    expect(findStaleChains(atBudget, NOW, CHAINS)).toEqual([]);
 
-    const pastBudget = gauges({
-      mainnet: NOW - DEFAULT_MAX_LAG_SECONDS - 1,
-      gnosis: NOW,
+    const pastBudget = status({
+      mainnet: { number: 1, timestamp: NOW - DEFAULT_MAX_LAG_SECONDS - 1 },
+      gnosis: { number: 2, timestamp: NOW },
     });
-    expect(
-      findStaleChains(pastBudget, BLOCK_NUMBERS, NOW, CHAINS),
-    ).toHaveLength(1);
+    expect(findStaleChains(pastBudget, NOW, CHAINS)).toHaveLength(1);
   });
 
   it("honours a per-chain budget", () => {
     process.env.READINESS_MAX_LAG_SECONDS_100 = "30";
-    const timestamps = gauges({ mainnet: NOW - 60, gnosis: NOW - 60 });
+    const lagging = status({
+      mainnet: { number: 1, timestamp: NOW - 60 },
+      gnosis: { number: 2, timestamp: NOW - 60 },
+    });
 
-    expect(
-      findStaleChains(timestamps, BLOCK_NUMBERS, NOW, CHAINS).map((s) => s.chain),
-    ).toEqual(["gnosis"]);
+    expect(findStaleChains(lagging, NOW, CHAINS).map((s) => s.chain)).toEqual([
+      "gnosis",
+    ]);
   });
 });
 
@@ -150,6 +199,6 @@ describe("describeStaleChains", () => {
       { chain: "gnosis", blockNumber: null, lagSeconds: null, maxLagSeconds: 300 },
     ]);
 
-    expect(message).toBe("Chain sync is stalled — gnosis: no synced block reported.");
+    expect(message).toBe("Chain sync is stalled — gnosis: no indexed block reported.");
   });
 });
