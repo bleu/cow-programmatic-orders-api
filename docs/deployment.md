@@ -134,6 +134,27 @@ Docker never restarts a container because its health check fails — `restart: u
 
 The 24-hour start period exists because a cold start legitimately fails `/readyz` for hours. During the start period a failing check does not mark the container unhealthy; the first success ends it. The owner-backfill gate cannot flap afterwards — generators created during live sync are written with `historyBackfilled = true`, so the pending count never climbs back above zero once the initial drain finishes.
 
+### Splitting the API from the Indexer
+
+Today one container does both jobs: `pnpm start` runs `ponder start`, which indexes and serves HTTP in a single process. Every indexer restart therefore takes the API down with it — including the automatic ones autoheal performs when the sync stalls. Ponder supports separating the two, and this section records what that would involve. **It has not been run in this project** — treat it as a researched option, not a tested path.
+
+`ponder serve` starts the HTTP server without the indexer. Same image, different command: one container keeps running `ponder start` (indexing, and incidentally still serving on its own port), a second runs `ponder serve` against the same database and schema, and the public route points at the second one. Restarting the indexer then leaves API traffic untouched.
+
+Four constraints, read off the installed Ponder 0.16.6:
+
+| Aspect | Behaviour under `ponder serve` |
+|--------|-------------------------------|
+| Database | Postgres only — it exits with an error on PGlite. |
+| Schema | Must already exist. It logs `Schema does not exist` and exits 1, so the API container cannot start before the indexer has created the schema. Plan the startup ordering, or let it restart until the schema appears. |
+| `/ready` | Works normally. It reads the `is_ready` flag from the database rather than from process state. |
+| `ponder_sync_*` metrics | Absent. They are in-memory gauges set only by the indexing runtime (`runtime/realtime.js`, `runtime/historical.js`), which serve mode never runs. |
+
+The RPC diagnostic is skipped in serve mode, but `ponder.config.ts` still executes, so give both containers the same environment rather than trimming the RPC variables from the API one.
+
+That last table row is the trap. `/readyz`'s freshness gate reads `ponder_sync_block_timestamp` from `/metrics`, which only exists in the indexing process. On an API-only container every chain would read as "no synced block reported", `/readyz` would return 503 permanently, and the health check plus autoheal would restart that container in a loop. **If you split, move the freshness gate off the metrics endpoint** and onto `_ponder_checkpoint`, a table in the app schema holding `chain_name`, `chain_id`, and `latest_checkpoint` for each chain. The checkpoint is a fixed-width encoding whose leading 10 digits are the block timestamp, with the block number in a later field. Both processes can read it, so the same probe then works in either topology, and it removes the self-HTTP call to `/metrics`. The cost is a dependency on an internal table — the `_ponder_` prefix marks it as Ponder's own, and its encoding may change across versions, whereas metric names are the more stable surface.
+
+Be clear about what this does and does not buy. It keeps the API available across indexer restarts. It does nothing about staleness: during a stall the API stays up and serves stale data, which is the failure mode described under `/ready` vs `/readyz` Semantics. Splitting decouples availability from restarts; the readiness gate is what tells you the data has gone cold.
+
 ### Structured Logging
 
 `pnpm start` runs with `--log-format json`, which makes both Ponder's internal log lines and the handler log lines emit newline-delimited JSON. Each handler log line includes structured fields (e.g. `chainId`, `block`) enabling log aggregators (Datadog, CloudWatch, Loki) to filter and alert by chain.
