@@ -31,11 +31,18 @@ RUN pnpm install --frozen-lockfile \
 
 USER node
 
+# /readyz, not Ponder's /ready: /ready returns 200 forever once historical sync
+# finishes, so a stalled realtime subscription still reports healthy. /readyz also
+# checks that each chain's newest synced block is keeping up with wall-clock.
+# Note: Docker never restarts a container for failing its healthcheck — the
+# `autoheal` label on the ponder service is what turns unhealthy into a restart.
 HEALTHCHECK \
     --start-period=24h \
     --start-interval=1s \
+    --interval=30s \
+    --timeout=10s \
     --retries=3 \
-    CMD curl -f http://localhost:3000/ready || exit 1
+    CMD curl -f http://localhost:3000/readyz || exit 1
 
 EXPOSE 3000/tcp
 
