@@ -101,9 +101,9 @@ The indexer exposes two health endpoints with distinct semantics:
 | `/ready` | Ponder sync — has it reached the chain tip? | Only when historical sync is complete |
 | `/readyz` | **Readiness** — synced, keeping up, **and** owner backfill complete | Ponder synced AND every active chain within its staleness budget AND no non-deterministic historical generator still pending |
 
-Use **`/readyz`** as the readiness/promotion probe. Ponder's built-in `/ready` flips as soon as historical sync reaches the tip, and `OwnerBackfillLive` then drains historical discrete orders across the following live-sync blocks. `/readyz` waits for all three conditions: Ponder synced, no chain lagging the tip, and `COUNT(historyBackfilled = false) = 0` (it internally checks `/ready` first, so it also can't false-positive on an empty fresh DB). Expect it to report pending during the drain, which begins after `/ready` flips. Ponder reserves the `/ready` path, so `/readyz` is a distinct endpoint served by the app.
+Use **`/readyz`** as the readiness/promotion probe. Ponder's built-in `/ready` flips as soon as historical sync reaches the tip. `/readyz` waits for all three conditions: Ponder synced, no chain lagging the tip, and `COUNT(historyBackfilled = false) = 0`. Expect it to report pending during the drain, which begins after `/ready` flips. Ponder reserves the `/ready` path, so `/readyz` is a distinct endpoint served by the app.
 
-The staleness check reads each chain's newest indexed block from Ponder's `/status` and compares its timestamp against wall-clock time. Anything older than `READINESS_MAX_LAG_SECONDS` (default 300, overridable per chain with a numeric chain-id suffix) makes `/readyz` return 503 naming the chain, its newest block, and the measured lag. It deliberately does not call the RPC for the current head, because it wants to be robust to RPC outages. `/status` decodes the `_ponder_checkpoint` table, so the check reads committed database state rather than the indexing process's memory — which is what keeps it correct if the API is ever run separately from the indexer.
+The staleness check reads each chain's newest indexed block from Ponder's `/status` and compares its timestamp against wall-clock time. Anything older than `READINESS_MAX_LAG_SECONDS` (default 300) makes `/readyz` return 503 naming the chain, its newest block, and the measured lag. It deliberately does not call the RPC for the current head, because it wants to be robust to RPC outages.
 
 Map these to different K8s probe types. The specific timing values (`periodSeconds`, `failureThreshold`, `initialDelaySeconds`) depend on your cluster's SLOs; what matters is which path and port to use:
 
@@ -136,25 +136,21 @@ The 24-hour start period exists because a cold start legitimately fails `/readyz
 
 ### Splitting the API from the Indexer
 
-Today one container does both jobs: `pnpm start` runs `ponder start`, which indexes and serves HTTP in a single process. Every indexer restart therefore takes the API down with it — including the automatic ones autoheal performs when the sync stalls. Ponder supports separating the two.
+Today one container does both jobs: `pnpm start` runs `ponder start`, which indexes and serves HTTP in a single process. Every indexer restart therefore takes the API down with it. Ponder supports separating the two. This also useful for horizontal scaling the API side of the application.
 
-`ponder serve` starts the HTTP server without the indexer. Same image, different command: one container keeps running `ponder start` (indexing, and incidentally still serving on its own port), a second runs `ponder serve` against the same database and schema, and the public route points at the second one. Restarting the indexer then leaves API traffic untouched.
+`ponder serve` starts the HTTP server without the indexer. Same image, different command: one container keeps running `ponder start`, a second runs `ponder serve` against the same database and schema, and the public route points at the second one.
 
 Four constraints, read off the installed Ponder 0.16.6:
 
 | Aspect | Behaviour under `ponder serve` |
 |--------|-------------------------------|
-| Database | Postgres only — it exits with an error on PGlite. |
-| Schema | Must already exist. It logs `Schema does not exist` and exits 1, so the API container cannot start before the indexer has created the schema. Plan the startup ordering, or let it restart until the schema appears. |
-| `/ready` | Works normally. It reads the `is_ready` flag from the database rather than from process state. |
-| `/status` | Works normally. It decodes the `_ponder_checkpoint` table, so it reports the newest indexed block per chain regardless of which process is asking. |
-| `ponder_sync_*` metrics | Absent. They are in-memory gauges set only by the indexing runtime (`runtime/realtime.js`, `runtime/historical.js`), which serve mode never runs. Nothing in this repo depends on them; `/api/sync-progress` reads the `ponder_historical_*` gauges and would report empty on an API-only container. |
+| Database | Postgres only |
+| Schema | Must already exist. |
+| `/ready` | Works normally. |
+| `/status` | Works normally. |
+| `ponder_sync_*` metrics | Absent. They are in-memory gauges set only by the indexing runtime (`runtime/realtime.js`, `runtime/historical.js`), which serve mode never runs. |
 
 The RPC diagnostic is skipped in serve mode, but `ponder.config.ts` still executes, so give both containers the same environment rather than trimming the RPC variables from the API one.
-
-`/readyz` works in either topology. Both conditions it evaluates — Ponder's `/ready` and the per-chain freshness check via `/status` — read committed database state, so an API-only container reports on the indexer's progress correctly rather than on its own idle process. This is the reason the freshness gate reads `/status` and not `ponder_sync_block_timestamp` from `/metrics`: the metrics route would have pinned the probe to the indexing process and made an API-only container fail readiness permanently.
-
-Be clear about what this does and does not buy. It keeps the API available across indexer restarts. It does nothing about staleness: during a stall the API stays up and serves stale data, which is the failure mode described under `/ready` vs `/readyz` Semantics. Splitting decouples availability from restarts; the readiness gate is what tells you the data has gone cold.
 
 ### Structured Logging
 
@@ -220,9 +216,9 @@ A reindex that reuses an existing `ponder_sync` cache (same chain, same start bl
 
 `GET /ready` (Ponder built-in) returns `200` when Ponder has processed all historical blocks up to the tip and the live indexer is running. It does **not** guarantee historical discrete-order data is complete — `OwnerBackfillLive` drains that across live blocks after the tip.
 
-`GET /readyz` (app) returns `200` only when Ponder is synced, no active chain has fallen behind the tip, **and** the owner backfill has finished (no non-deterministic historical generator with `historyBackfilled = false`). This is the promotion gate: it guarantees a newly-promoted pod has the full historical discrete-order set, so blue-green promotion never drops a complete pod for one that's still filling. It returns `503` (with the pending count) while the drain is in progress.
+`GET /readyz` (app) returns `200` only when Ponder is synced, no active chain has fallen behind the tip, **and** the owner backfill has finished (no non-deterministic historical generator with `historyBackfilled = false`). It guarantees a newly-promoted pod has the full historical discrete-order set. It returns `503` (with the pending count) while the drain is in progress.
 
-The staleness condition also makes `/readyz` useful after startup, which `/ready` is not. `/ready` latches at 200 once historical sync completes and never goes back, so an indexer whose realtime subscription dies keeps advertising itself as ready while its data silently ages. That happened in production: a dRPC WebSocket stopped delivering `newHeads` without closing the connection, Ponder logged one "No new block received within expected time" warning and then sat idle, and `/ready` plus the container health check both stayed green for a week.
+The staleness condition also makes `/readyz` useful after startup, which `/ready` has a bug. During our tests, we notice that `/ready` latches at 200 once historical sync completes and doesn't go back in case of RPC websocket connection stopped delivering new blocks.
 
 During backfill both return `503`. GraphQL queries are still available but data is incomplete (generators and transactions accumulate; discrete orders fill in as live sync progresses).
 
