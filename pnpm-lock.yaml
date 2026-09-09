@@ -5,9 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  ponder@0.16.6:
-    hash: f0612e7102efb92911aeae79416c3c5c52fcaf41c4a22e7903ba90ef8aa952d5
-    path: patches/ponder@0.16.6.patch
+  ponder@0.16.6: f0612e7102efb92911aeae79416c3c5c52fcaf41c4a22e7903ba90ef8aa952d5
 
 importers:
 
@@ -15,25 +13,25 @@ importers:
     dependencies:
       '@cowprotocol/cow-sdk':
         specifier: ^7.3.8
-        version: 7.3.8(@openzeppelin/merkle-tree@1.0.8)(ajv@8.18.0)(cross-fetch@3.2.0)(ipfs-only-hash@4.0.0)(multiformats@9.9.0)
+        version: 7.3.8(@openzeppelin/merkle-tree@1.0.8(supports-color@7.2.0))(ajv@8.18.0)(cross-fetch@3.2.0)(ipfs-only-hash@4.0.0(supports-color@7.2.0))(multiformats@9.9.0)
       '@hono/swagger-ui':
         specifier: ^0.5.3
-        version: 0.5.3(hono@4.12.3)
+        version: 0.5.3(hono@4.13.5)
       '@hono/zod-openapi':
         specifier: ^0.19.10
-        version: 0.19.10(hono@4.12.3)(zod@3.25.76)
+        version: 0.19.10(hono@4.13.5)(zod@3.25.76)
       drizzle-orm:
         specifier: 0.41.0
         version: 0.41.0(@electric-sql/pglite@0.2.13)(@opentelemetry/api@1.9.0)(kysely@0.26.3)(pg@8.19.0)
       hono:
-        specifier: ^4.5.0
-        version: 4.12.3
+        specifier: ^4.13.5
+        version: 4.13.5
       ponder:
         specifier: ^0.16.6
-        version: 0.16.6(patch_hash=f0612e7102efb92911aeae79416c3c5c52fcaf41c4a22e7903ba90ef8aa952d5)(@opentelemetry/api@1.9.0)(@types/node@20.19.35)(hono@4.12.3)(typescript@5.9.3)(viem@2.46.3(typescript@5.9.3)(zod@3.25.76))(zod@3.25.76)
+        version: 0.16.6(patch_hash=f0612e7102efb92911aeae79416c3c5c52fcaf41c4a22e7903ba90ef8aa952d5)(@opentelemetry/api@1.9.0)(@types/node@20.19.35)(hono@4.13.5)(supports-color@7.2.0)(typescript@5.9.3)(viem@2.46.3(typescript@5.9.3)(zod@3.25.76))(zod@3.25.76)
       ponder-enrich-gql-docs-middleware:
         specifier: ^0.1.3
-        version: 0.1.3(graphql@16.8.2)(hono@4.12.3)
+        version: 0.1.3(graphql@16.13.0)(hono@4.13.5)
       viem:
         specifier: ^2.21.3
         version: 2.46.3(typescript@5.9.3)(zod@3.25.76)
@@ -46,10 +44,10 @@ importers:
         version: 20.19.35
       eslint:
         specifier: ^8.53.0
-        version: 8.57.1
+        version: 8.57.1(supports-color@7.2.0)
       eslint-config-ponder:
         specifier: ^0.16.2
-        version: 0.16.3(@typescript-eslint/eslint-plugin@6.21.0(@typescript-eslint/parser@6.21.0(eslint@8.57.1)(typescript@5.9.3))(eslint@8.57.1)(typescript@5.9.3))(@typescript-eslint/parser@6.21.0(eslint@8.57.1)(typescript@5.9.3))(eslint@8.57.1)
+        version: 0.16.3(@typescript-eslint/eslint-plugin@6.21.0(@typescript-eslint/parser@6.21.0(eslint@8.57.1(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3))(eslint@8.57.1(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3))(@typescript-eslint/parser@6.21.0(eslint@8.57.1(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3))(eslint@8.57.1(supports-color@7.2.0))
       tsx:
         specifier: ^4.0.0
         version: 4.22.3
@@ -61,10 +59,10 @@ importers:
         version: 6.4.1(@types/node@20.19.35)(tsx@4.22.3)(yaml@2.8.3)
       vite-tsconfig-paths:
         specifier: ^5.0.0
-        version: 5.1.4(typescript@5.9.3)(vite@6.4.1(@types/node@20.19.35)(tsx@4.22.3)(yaml@2.8.3))
+        version: 5.1.4(supports-color@7.2.0)(typescript@5.9.3)(vite@6.4.1(@types/node@20.19.35)(tsx@4.22.3)(yaml@2.8.3))
       vitest:
         specifier: ^2.0.0
-        version: 2.1.9(@types/node@20.19.35)
+        version: 2.1.9(@types/node@20.19.35)(supports-color@7.2.0)
 
 packages:
 
@@ -878,66 +876,79 @@ packages:
     resolution: {integrity: sha512-t4ONHboXi/3E0rT6OZl1pKbl2Vgxf9vJfWgmUoCEVQVxhW6Cw/c8I6hbbu7DAvgp82RKiH7TpLwxnJeKv2pbsw==}
     cpu: [arm]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-arm-musleabihf@4.59.0':
     resolution: {integrity: sha512-CikFT7aYPA2ufMD086cVORBYGHffBo4K8MQ4uPS/ZnY54GKj36i196u8U+aDVT2LX4eSMbyHtyOh7D7Zvk2VvA==}
     cpu: [arm]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-linux-arm64-gnu@4.59.0':
     resolution: {integrity: sha512-jYgUGk5aLd1nUb1CtQ8E+t5JhLc9x5WdBKew9ZgAXg7DBk0ZHErLHdXM24rfX+bKrFe+Xp5YuJo54I5HFjGDAA==}
     cpu: [arm64]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-arm64-musl@4.59.0':
     resolution: {integrity: sha512-peZRVEdnFWZ5Bh2KeumKG9ty7aCXzzEsHShOZEFiCQlDEepP1dpUl/SrUNXNg13UmZl+gzVDPsiCwnV1uI0RUA==}
     cpu: [arm64]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-linux-loong64-gnu@4.59.0':
     resolution: {integrity: sha512-gbUSW/97f7+r4gHy3Jlup8zDG190AuodsWnNiXErp9mT90iCy9NKKU0Xwx5k8VlRAIV2uU9CsMnEFg/xXaOfXg==}
     cpu: [loong64]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-loong64-musl@4.59.0':
     resolution: {integrity: sha512-yTRONe79E+o0FWFijasoTjtzG9EBedFXJMl888NBEDCDV9I2wGbFFfJQQe63OijbFCUZqxpHz1GzpbtSFikJ4Q==}
     cpu: [loong64]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-linux-ppc64-gnu@4.59.0':
     resolution: {integrity: sha512-sw1o3tfyk12k3OEpRddF68a1unZ5VCN7zoTNtSn2KndUE+ea3m3ROOKRCZxEpmT9nsGnogpFP9x6mnLTCaoLkA==}
     cpu: [ppc64]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-ppc64-musl@4.59.0':
     resolution: {integrity: sha512-+2kLtQ4xT3AiIxkzFVFXfsmlZiG5FXYW7ZyIIvGA7Bdeuh9Z0aN4hVyXS/G1E9bTP/vqszNIN/pUKCk/BTHsKA==}
     cpu: [ppc64]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-linux-riscv64-gnu@4.59.0':
     resolution: {integrity: sha512-NDYMpsXYJJaj+I7UdwIuHHNxXZ/b/N2hR15NyH3m2qAtb/hHPA4g4SuuvrdxetTdndfj9b1WOmy73kcPRoERUg==}
     cpu: [riscv64]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-riscv64-musl@4.59.0':
     resolution: {integrity: sha512-nLckB8WOqHIf1bhymk+oHxvM9D3tyPndZH8i8+35p/1YiVoVswPid2yLzgX7ZJP0KQvnkhM4H6QZ5m0LzbyIAg==}
     cpu: [riscv64]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-linux-s390x-gnu@4.59.0':
     resolution: {integrity: sha512-oF87Ie3uAIvORFBpwnCvUzdeYUqi2wY6jRFWJAy1qus/udHFYIkplYRW+wo+GRUP4sKzYdmE1Y3+rY5Gc4ZO+w==}
     cpu: [s390x]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-x64-gnu@4.59.0':
     resolution: {integrity: sha512-3AHmtQq/ppNuUspKAlvA8HtLybkDflkMuLK4DPo77DfthRb71V84/c4MlWJXixZz4uruIH4uaa07IqoAkG64fg==}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-x64-musl@4.59.0':
     resolution: {integrity: sha512-2UdiwS/9cTAx7qIUZB/fWtToJwvt0Vbo0zmnYt7ED35KPg13Q0ym1g442THLC7VyI6JfYTP4PiSOWyoMdV2/xg==}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-openbsd-x64@4.59.0':
     resolution: {integrity: sha512-M3bLRAVk6GOwFlPTIxVBSYKUaqfLrn8l0psKinkCFxl4lQvOSz8ZrKDz2gxcBwHFpci0B6rttydI4IpS4IS/jQ==}
@@ -1074,6 +1085,7 @@ packages:
 
   '@ungap/structured-clone@1.3.0':
     resolution: {integrity: sha512-WmoN8qaIAo7WTYWbAZuG8PYEhn5fkz7dZrqTBZ7dtt//lL2Gwms1IcnQ5yHqjDfX8Ft5j4YzDM23f87zBfDe9g==}
+    deprecated: Potential CWE-502 - Update to 1.3.1 or higher
 
   '@vitest/expect@2.1.9':
     resolution: {integrity: sha512-UJCIkTBenHeKT1TTlKMJWy1laZewsRIzYighyYiJKZreqtdxSos/S1t+ktRMQWu2CKqaarrkeszJx1cgC5tGZw==}
@@ -1724,8 +1736,8 @@ packages:
     resolution: {integrity: sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ==}
     engines: {node: '>= 0.4'}
 
-  hono@4.12.3:
-    resolution: {integrity: sha512-SFsVSjp8sj5UumXOOFlkZOG6XS9SJDKw0TbwFeV+AJ8xlST8kxK5Z/5EYa111UY8732lK2S/xB653ceuaoGwpg==}
+  hono@4.13.5:
+    resolution: {integrity: sha512-O6+/eCYRkzzzy0rPWwKLiGBR1nFuUPZynnwjxN1MBA62NNqbT0wQEzQyK2gSO5yDIDB336sXQleAhOHrzlYyKw==}
     engines: {node: '>=16.9.0'}
 
   hosted-git-info@2.8.9:
@@ -2281,6 +2293,7 @@ packages:
   prom-client@15.1.3:
     resolution: {integrity: sha512-6ZiOBfCywsD4k1BN9IX0uZhF+tJkV8q8llP64G5Hajs4JOeVLPCwpPVcpXy3BwYiUGgyJzsJJQeOIv7+hDSq8g==}
     engines: {node: ^16 || ^18 || >=20}
+    deprecated: prom-client has been replaced by @prometheus-io/client
 
   protobufjs@6.11.4:
     resolution: {integrity: sha512-5kQWPaJHi1WoCpjTGszzQ32PG2F4+wRY6BmAT4Vfw56Q2FZ4YZzK20xUYQH4YkfehY1e6QSICrJquM6xXZNcrw==}
@@ -2547,6 +2560,7 @@ packages:
   tsconfck@3.1.6:
     resolution: {integrity: sha512-ks6Vjr/jEw0P1gmOVwutM3B7fWxoWBL2KRDb1JfqGVawBmO5UsvmWOQFGHBPl5yxYz4eERr19E6L7NMv+Fej4w==}
     engines: {node: ^18 || >=20}
+    deprecated: unmaintained
     hasBin: true
     peerDependencies:
       typescript: ^5.0.0
@@ -2869,30 +2883,30 @@ snapshots:
     dependencies:
       commander: 12.1.0
 
-  '@cowprotocol/cow-sdk@7.3.8(@openzeppelin/merkle-tree@1.0.8)(ajv@8.18.0)(cross-fetch@3.2.0)(ipfs-only-hash@4.0.0)(multiformats@9.9.0)':
+  '@cowprotocol/cow-sdk@7.3.8(@openzeppelin/merkle-tree@1.0.8(supports-color@7.2.0))(ajv@8.18.0)(cross-fetch@3.2.0)(ipfs-only-hash@4.0.0(supports-color@7.2.0))(multiformats@9.9.0)':
     dependencies:
-      '@cowprotocol/sdk-app-data': 4.6.5(ajv@8.18.0)(cross-fetch@3.2.0)(ipfs-only-hash@4.0.0)(multiformats@9.9.0)
+      '@cowprotocol/sdk-app-data': 4.6.5(ajv@8.18.0)(cross-fetch@3.2.0)(ipfs-only-hash@4.0.0(supports-color@7.2.0))(multiformats@9.9.0)
       '@cowprotocol/sdk-common': 0.6.2
       '@cowprotocol/sdk-config': 0.8.1
       '@cowprotocol/sdk-contracts-ts': 1.6.1
       '@cowprotocol/sdk-order-book': 1.0.0
       '@cowprotocol/sdk-order-signing': 0.1.34
-      '@cowprotocol/sdk-trading': 1.0.0(ajv@8.18.0)(cross-fetch@3.2.0)(ipfs-only-hash@4.0.0)(multiformats@9.9.0)
+      '@cowprotocol/sdk-trading': 1.0.0(ajv@8.18.0)(cross-fetch@3.2.0)(ipfs-only-hash@4.0.0(supports-color@7.2.0))(multiformats@9.9.0)
       cross-fetch: 3.2.0
     optionalDependencies:
-      '@openzeppelin/merkle-tree': 1.0.8
-      ipfs-only-hash: 4.0.0
+      '@openzeppelin/merkle-tree': 1.0.8(supports-color@7.2.0)
+      ipfs-only-hash: 4.0.0(supports-color@7.2.0)
       multiformats: 9.9.0
     transitivePeerDependencies:
       - ajv
       - encoding
 
-  '@cowprotocol/sdk-app-data@4.6.5(ajv@8.18.0)(cross-fetch@3.2.0)(ipfs-only-hash@4.0.0)(multiformats@9.9.0)':
+  '@cowprotocol/sdk-app-data@4.6.5(ajv@8.18.0)(cross-fetch@3.2.0)(ipfs-only-hash@4.0.0(supports-color@7.2.0))(multiformats@9.9.0)':
     dependencies:
       '@cowprotocol/sdk-common': 0.6.2
       ajv: 8.18.0
       cross-fetch: 3.2.0
-      ipfs-only-hash: 4.0.0
+      ipfs-only-hash: 4.0.0(supports-color@7.2.0)
       json-stringify-deterministic: 1.0.12
       multiformats: 9.9.0
 
@@ -2929,9 +2943,9 @@ snapshots:
     transitivePeerDependencies:
       - encoding
 
-  '@cowprotocol/sdk-trading@1.0.0(ajv@8.18.0)(cross-fetch@3.2.0)(ipfs-only-hash@4.0.0)(multiformats@9.9.0)':
+  '@cowprotocol/sdk-trading@1.0.0(ajv@8.18.0)(cross-fetch@3.2.0)(ipfs-only-hash@4.0.0(supports-color@7.2.0))(multiformats@9.9.0)':
     dependencies:
-      '@cowprotocol/sdk-app-data': 4.6.5(ajv@8.18.0)(cross-fetch@3.2.0)(ipfs-only-hash@4.0.0)(multiformats@9.9.0)
+      '@cowprotocol/sdk-app-data': 4.6.5(ajv@8.18.0)(cross-fetch@3.2.0)(ipfs-only-hash@4.0.0(supports-color@7.2.0))(multiformats@9.9.0)
       '@cowprotocol/sdk-common': 0.6.2
       '@cowprotocol/sdk-config': 0.8.1
       '@cowprotocol/sdk-contracts-ts': 1.6.1
@@ -3215,17 +3229,17 @@ snapshots:
       graphql: 16.13.0
     optional: true
 
-  '@eslint-community/eslint-utils@4.9.1(eslint@8.57.1)':
+  '@eslint-community/eslint-utils@4.9.1(eslint@8.57.1(supports-color@7.2.0))':
     dependencies:
-      eslint: 8.57.1
+      eslint: 8.57.1(supports-color@7.2.0)
       eslint-visitor-keys: 3.4.3
 
   '@eslint-community/regexpp@4.12.2': {}
 
-  '@eslint/eslintrc@2.1.4':
+  '@eslint/eslintrc@2.1.4(supports-color@7.2.0)':
     dependencies:
       ajv: 6.14.0
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@7.2.0)
       espree: 9.6.1
       globals: 13.24.0
       ignore: 5.3.2
@@ -3323,31 +3337,31 @@ snapshots:
       '@repeaterjs/repeater': 3.0.6
       tslib: 2.8.1
 
-  '@hono/node-server@1.19.5(hono@4.12.3)':
+  '@hono/node-server@1.19.5(hono@4.13.5)':
     dependencies:
-      hono: 4.12.3
+      hono: 4.13.5
 
-  '@hono/swagger-ui@0.5.3(hono@4.12.3)':
+  '@hono/swagger-ui@0.5.3(hono@4.13.5)':
     dependencies:
-      hono: 4.12.3
+      hono: 4.13.5
 
-  '@hono/zod-openapi@0.19.10(hono@4.12.3)(zod@3.25.76)':
+  '@hono/zod-openapi@0.19.10(hono@4.13.5)(zod@3.25.76)':
     dependencies:
       '@asteasolutions/zod-to-openapi': 7.3.4(zod@3.25.76)
-      '@hono/zod-validator': 0.7.6(hono@4.12.3)(zod@3.25.76)
-      hono: 4.12.3
+      '@hono/zod-validator': 0.7.6(hono@4.13.5)(zod@3.25.76)
+      hono: 4.13.5
       openapi3-ts: 4.5.0
       zod: 3.25.76
 
-  '@hono/zod-validator@0.7.6(hono@4.12.3)(zod@3.25.76)':
+  '@hono/zod-validator@0.7.6(hono@4.13.5)(zod@3.25.76)':
     dependencies:
-      hono: 4.12.3
+      hono: 4.13.5
       zod: 3.25.76
 
-  '@humanwhocodes/config-array@0.13.0':
+  '@humanwhocodes/config-array@0.13.0(supports-color@7.2.0)':
     dependencies:
       '@humanwhocodes/object-schema': 2.0.3
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@7.2.0)
       minimatch: 3.1.5
     transitivePeerDependencies:
       - supports-color
@@ -3367,10 +3381,10 @@ snapshots:
 
   '@jridgewell/sourcemap-codec@1.5.5': {}
 
-  '@metamask/abi-utils@2.0.4':
+  '@metamask/abi-utils@2.0.4(supports-color@7.2.0)':
     dependencies:
       '@metamask/superstruct': 3.2.1
-      '@metamask/utils': 9.3.0
+      '@metamask/utils': 9.3.0(supports-color@7.2.0)
     transitivePeerDependencies:
       - supports-color
     optional: true
@@ -3378,14 +3392,14 @@ snapshots:
   '@metamask/superstruct@3.2.1':
     optional: true
 
-  '@metamask/utils@9.3.0':
+  '@metamask/utils@9.3.0(supports-color@7.2.0)':
     dependencies:
       '@ethereumjs/tx': 4.2.0
       '@metamask/superstruct': 3.2.1
       '@noble/hashes': 1.8.0
       '@scure/base': 1.2.6
       '@types/debug': 4.1.12
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@7.2.0)
       pony-cause: 2.1.11
       semver: 7.7.4
       uuid: 9.0.1
@@ -3430,9 +3444,9 @@ snapshots:
 
   '@opentelemetry/api@1.9.0': {}
 
-  '@openzeppelin/merkle-tree@1.0.8':
+  '@openzeppelin/merkle-tree@1.0.8(supports-color@7.2.0)':
     dependencies:
-      '@metamask/abi-utils': 2.0.4
+      '@metamask/abi-utils': 2.0.4(supports-color@7.2.0)
       ethereum-cryptography: 3.2.0
     transitivePeerDependencies:
       - supports-color
@@ -3600,16 +3614,16 @@ snapshots:
 
   '@types/semver@7.7.1': {}
 
-  '@typescript-eslint/eslint-plugin@6.21.0(@typescript-eslint/parser@6.21.0(eslint@8.57.1)(typescript@5.9.3))(eslint@8.57.1)(typescript@5.9.3)':
+  '@typescript-eslint/eslint-plugin@6.21.0(@typescript-eslint/parser@6.21.0(eslint@8.57.1(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3))(eslint@8.57.1(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3)':
     dependencies:
       '@eslint-community/regexpp': 4.12.2
-      '@typescript-eslint/parser': 6.21.0(eslint@8.57.1)(typescript@5.9.3)
+      '@typescript-eslint/parser': 6.21.0(eslint@8.57.1(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3)
       '@typescript-eslint/scope-manager': 6.21.0
-      '@typescript-eslint/type-utils': 6.21.0(eslint@8.57.1)(typescript@5.9.3)
-      '@typescript-eslint/utils': 6.21.0(eslint@8.57.1)(typescript@5.9.3)
+      '@typescript-eslint/type-utils': 6.21.0(eslint@8.57.1(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3)
+      '@typescript-eslint/utils': 6.21.0(eslint@8.57.1(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3)
       '@typescript-eslint/visitor-keys': 6.21.0
-      debug: 4.4.3
-      eslint: 8.57.1
+      debug: 4.4.3(supports-color@7.2.0)
+      eslint: 8.57.1(supports-color@7.2.0)
       graphemer: 1.4.0
       ignore: 5.3.2
       natural-compare: 1.4.0
@@ -3620,14 +3634,14 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@typescript-eslint/parser@6.21.0(eslint@8.57.1)(typescript@5.9.3)':
+  '@typescript-eslint/parser@6.21.0(eslint@8.57.1(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3)':
     dependencies:
       '@typescript-eslint/scope-manager': 6.21.0
       '@typescript-eslint/types': 6.21.0
-      '@typescript-eslint/typescript-estree': 6.21.0(typescript@5.9.3)
+      '@typescript-eslint/typescript-estree': 6.21.0(supports-color@7.2.0)(typescript@5.9.3)
       '@typescript-eslint/visitor-keys': 6.21.0
-      debug: 4.4.3
-      eslint: 8.57.1
+      debug: 4.4.3(supports-color@7.2.0)
+      eslint: 8.57.1(supports-color@7.2.0)
     optionalDependencies:
       typescript: 5.9.3
     transitivePeerDependencies:
@@ -3638,12 +3652,12 @@ snapshots:
       '@typescript-eslint/types': 6.21.0
       '@typescript-eslint/visitor-keys': 6.21.0
 
-  '@typescript-eslint/type-utils@6.21.0(eslint@8.57.1)(typescript@5.9.3)':
+  '@typescript-eslint/type-utils@6.21.0(eslint@8.57.1(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3)':
     dependencies:
-      '@typescript-eslint/typescript-estree': 6.21.0(typescript@5.9.3)
-      '@typescript-eslint/utils': 6.21.0(eslint@8.57.1)(typescript@5.9.3)
-      debug: 4.4.3
-      eslint: 8.57.1
+      '@typescript-eslint/typescript-estree': 6.21.0(supports-color@7.2.0)(typescript@5.9.3)
+      '@typescript-eslint/utils': 6.21.0(eslint@8.57.1(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3)
+      debug: 4.4.3(supports-color@7.2.0)
+      eslint: 8.57.1(supports-color@7.2.0)
       ts-api-utils: 1.4.3(typescript@5.9.3)
     optionalDependencies:
       typescript: 5.9.3
@@ -3652,11 +3666,11 @@ snapshots:
 
   '@typescript-eslint/types@6.21.0': {}
 
-  '@typescript-eslint/typescript-estree@6.21.0(typescript@5.9.3)':
+  '@typescript-eslint/typescript-estree@6.21.0(supports-color@7.2.0)(typescript@5.9.3)':
     dependencies:
       '@typescript-eslint/types': 6.21.0
       '@typescript-eslint/visitor-keys': 6.21.0
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@7.2.0)
       globby: 11.1.0
       is-glob: 4.0.3
       minimatch: 9.0.3
@@ -3667,15 +3681,15 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@typescript-eslint/utils@6.21.0(eslint@8.57.1)(typescript@5.9.3)':
+  '@typescript-eslint/utils@6.21.0(eslint@8.57.1(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3)':
     dependencies:
-      '@eslint-community/eslint-utils': 4.9.1(eslint@8.57.1)
+      '@eslint-community/eslint-utils': 4.9.1(eslint@8.57.1(supports-color@7.2.0))
       '@types/json-schema': 7.0.15
       '@types/semver': 7.7.1
       '@typescript-eslint/scope-manager': 6.21.0
       '@typescript-eslint/types': 6.21.0
-      '@typescript-eslint/typescript-estree': 6.21.0(typescript@5.9.3)
-      eslint: 8.57.1
+      '@typescript-eslint/typescript-estree': 6.21.0(supports-color@7.2.0)(typescript@5.9.3)
+      eslint: 8.57.1(supports-color@7.2.0)
       semver: 7.7.4
     transitivePeerDependencies:
       - supports-color
@@ -3945,9 +3959,11 @@ snapshots:
     dependencies:
       mimic-fn: 4.0.0
 
-  debug@4.4.3:
+  debug@4.4.3(supports-color@7.2.0):
     dependencies:
       ms: 2.1.3
+    optionalDependencies:
+      supports-color: 7.2.0
 
   decamelize-keys@1.1.1:
     dependencies:
@@ -4093,11 +4109,11 @@ snapshots:
 
   escape-string-regexp@4.0.0: {}
 
-  eslint-config-ponder@0.16.3(@typescript-eslint/eslint-plugin@6.21.0(@typescript-eslint/parser@6.21.0(eslint@8.57.1)(typescript@5.9.3))(eslint@8.57.1)(typescript@5.9.3))(@typescript-eslint/parser@6.21.0(eslint@8.57.1)(typescript@5.9.3))(eslint@8.57.1):
+  eslint-config-ponder@0.16.3(@typescript-eslint/eslint-plugin@6.21.0(@typescript-eslint/parser@6.21.0(eslint@8.57.1(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3))(eslint@8.57.1(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3))(@typescript-eslint/parser@6.21.0(eslint@8.57.1(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3))(eslint@8.57.1(supports-color@7.2.0)):
     dependencies:
-      '@typescript-eslint/eslint-plugin': 6.21.0(@typescript-eslint/parser@6.21.0(eslint@8.57.1)(typescript@5.9.3))(eslint@8.57.1)(typescript@5.9.3)
-      '@typescript-eslint/parser': 6.21.0(eslint@8.57.1)(typescript@5.9.3)
-      eslint: 8.57.1
+      '@typescript-eslint/eslint-plugin': 6.21.0(@typescript-eslint/parser@6.21.0(eslint@8.57.1(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3))(eslint@8.57.1(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3)
+      '@typescript-eslint/parser': 6.21.0(eslint@8.57.1(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3)
+      eslint: 8.57.1(supports-color@7.2.0)
 
   eslint-scope@7.2.2:
     dependencies:
@@ -4106,20 +4122,20 @@ snapshots:
 
   eslint-visitor-keys@3.4.3: {}
 
-  eslint@8.57.1:
+  eslint@8.57.1(supports-color@7.2.0):
     dependencies:
-      '@eslint-community/eslint-utils': 4.9.1(eslint@8.57.1)
+      '@eslint-community/eslint-utils': 4.9.1(eslint@8.57.1(supports-color@7.2.0))
       '@eslint-community/regexpp': 4.12.2
-      '@eslint/eslintrc': 2.1.4
+      '@eslint/eslintrc': 2.1.4(supports-color@7.2.0)
       '@eslint/js': 8.57.1
-      '@humanwhocodes/config-array': 0.13.0
+      '@humanwhocodes/config-array': 0.13.0(supports-color@7.2.0)
       '@humanwhocodes/module-importer': 1.0.1
       '@nodelib/fs.walk': 1.2.8
       '@ungap/structured-clone': 1.3.0
       ajv: 6.14.0
       chalk: 4.1.2
       cross-spawn: 7.0.6
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@7.2.0)
       doctrine: 3.0.0
       escape-string-regexp: 4.0.0
       eslint-scope: 7.2.2
@@ -4354,7 +4370,7 @@ snapshots:
     dependencies:
       function-bind: 1.1.2
 
-  hono@4.12.3: {}
+  hono@4.13.5: {}
 
   hosted-git-info@2.8.9: {}
 
@@ -4397,15 +4413,15 @@ snapshots:
       multicodec: 3.2.1
       multihashes: 4.0.3
 
-  ipfs-only-hash@4.0.0:
+  ipfs-only-hash@4.0.0(supports-color@7.2.0):
     dependencies:
-      ipfs-unixfs-importer: 7.0.3
+      ipfs-unixfs-importer: 7.0.3(supports-color@7.2.0)
       meow: 9.0.0
     transitivePeerDependencies:
       - encoding
       - supports-color
 
-  ipfs-unixfs-importer@7.0.3:
+  ipfs-unixfs-importer@7.0.3(supports-color@7.2.0):
     dependencies:
       bl: 5.1.0
       cids: 1.1.9
@@ -4419,7 +4435,7 @@ snapshots:
       it-parallel-batch: 1.0.11
       merge-options: 3.0.4
       multihashing-async: 2.1.4
-      rabin-wasm: 0.1.5
+      rabin-wasm: 0.1.5(supports-color@7.2.0)
       uint8arrays: 2.1.10
     transitivePeerDependencies:
       - encoding
@@ -4844,12 +4860,12 @@ snapshots:
       sonic-boom: 3.8.1
       thread-stream: 2.7.0
 
-  ponder-enrich-gql-docs-middleware@0.1.3(graphql@16.8.2)(hono@4.12.3):
+  ponder-enrich-gql-docs-middleware@0.1.3(graphql@16.13.0)(hono@4.13.5):
     dependencies:
-      graphql: 16.8.2
-      hono: 4.12.3
+      graphql: 16.13.0
+      hono: 4.13.5
 
-  ponder@0.16.6(patch_hash=f0612e7102efb92911aeae79416c3c5c52fcaf41c4a22e7903ba90ef8aa952d5)(@opentelemetry/api@1.9.0)(@types/node@20.19.35)(hono@4.12.3)(typescript@5.9.3)(viem@2.46.3(typescript@5.9.3)(zod@3.25.76))(zod@3.25.76):
+  ponder@0.16.6(patch_hash=f0612e7102efb92911aeae79416c3c5c52fcaf41c4a22e7903ba90ef8aa952d5)(@opentelemetry/api@1.9.0)(@types/node@20.19.35)(hono@4.13.5)(supports-color@7.2.0)(typescript@5.9.3)(viem@2.46.3(typescript@5.9.3)(zod@3.25.76))(zod@3.25.76):
     dependencies:
       '@babel/code-frame': 7.29.0
       '@commander-js/extra-typings': 12.1.0(commander@12.1.0)
@@ -4857,7 +4873,7 @@ snapshots:
       '@escape.tech/graphql-armor-max-aliases': 2.6.2
       '@escape.tech/graphql-armor-max-depth': 2.4.2
       '@escape.tech/graphql-armor-max-tokens': 2.5.1
-      '@hono/node-server': 1.19.5(hono@4.12.3)
+      '@hono/node-server': 1.19.5(hono@4.13.5)
       '@ponder/utils': 0.2.18(typescript@5.9.3)(viem@2.46.3(typescript@5.9.3)(zod@3.25.76))
       abitype: 0.10.3(typescript@5.9.3)(zod@3.25.76)
       ansi-escapes: 7.3.0
@@ -4870,7 +4886,7 @@ snapshots:
       glob: 10.5.0
       graphql: 16.8.2
       graphql-yoga: 5.17.1(graphql@16.8.2)
-      hono: 4.12.3
+      hono: 4.13.5
       http-terminator: 3.2.0
       kysely: 0.26.3
       pg: 8.19.0
@@ -4886,8 +4902,8 @@ snapshots:
       terminal-size: 4.0.1
       viem: 2.46.3(typescript@5.9.3)(zod@3.25.76)
       vite: 5.4.21(@types/node@20.19.35)
-      vite-node: 1.0.2(@types/node@20.19.35)
-      vite-tsconfig-paths: 4.3.1(typescript@5.9.3)(vite@5.4.21(@types/node@20.19.35))
+      vite-node: 1.0.2(@types/node@20.19.35)(supports-color@7.2.0)
+      vite-tsconfig-paths: 4.3.1(supports-color@7.2.0)(typescript@5.9.3)(vite@5.4.21(@types/node@20.19.35))
       ws: 8.19.0
     optionalDependencies:
       typescript: 5.9.3
@@ -4985,11 +5001,11 @@ snapshots:
 
   quick-lru@4.0.1: {}
 
-  rabin-wasm@0.1.5:
+  rabin-wasm@0.1.5(supports-color@7.2.0):
     dependencies:
       '@assemblyscript/loader': 0.9.4
       bl: 5.1.0
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@7.2.0)
       minimist: 1.2.8
       node-fetch: 2.7.0
       readable-stream: 3.6.2
@@ -5314,10 +5330,10 @@ snapshots:
       - utf-8-validate
       - zod
 
-  vite-node@1.0.2(@types/node@20.19.35):
+  vite-node@1.0.2(@types/node@20.19.35)(supports-color@7.2.0):
     dependencies:
       cac: 6.7.14
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@7.2.0)
       pathe: 1.1.2
       picocolors: 1.1.1
       vite: 5.4.21(@types/node@20.19.35)
@@ -5332,10 +5348,10 @@ snapshots:
       - supports-color
       - terser
 
-  vite-node@2.1.9(@types/node@20.19.35):
+  vite-node@2.1.9(@types/node@20.19.35)(supports-color@7.2.0):
     dependencies:
       cac: 6.7.14
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@7.2.0)
       es-module-lexer: 1.7.0
       pathe: 1.1.2
       vite: 5.4.21(@types/node@20.19.35)
@@ -5350,9 +5366,9 @@ snapshots:
       - supports-color
       - terser
 
-  vite-tsconfig-paths@4.3.1(typescript@5.9.3)(vite@5.4.21(@types/node@20.19.35)):
+  vite-tsconfig-paths@4.3.1(supports-color@7.2.0)(typescript@5.9.3)(vite@5.4.21(@types/node@20.19.35)):
     dependencies:
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@7.2.0)
       globrex: 0.1.2
       tsconfck: 3.1.6(typescript@5.9.3)
     optionalDependencies:
@@ -5361,9 +5377,9 @@ snapshots:
       - supports-color
       - typescript
 
-  vite-tsconfig-paths@5.1.4(typescript@5.9.3)(vite@6.4.1(@types/node@20.19.35)(tsx@4.22.3)(yaml@2.8.3)):
+  vite-tsconfig-paths@5.1.4(supports-color@7.2.0)(typescript@5.9.3)(vite@6.4.1(@types/node@20.19.35)(tsx@4.22.3)(yaml@2.8.3)):
     dependencies:
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@7.2.0)
       globrex: 0.1.2
       tsconfck: 3.1.6(typescript@5.9.3)
     optionalDependencies:
@@ -5395,7 +5411,7 @@ snapshots:
       tsx: 4.22.3
       yaml: 2.8.3
 
-  vitest@2.1.9(@types/node@20.19.35):
+  vitest@2.1.9(@types/node@20.19.35)(supports-color@7.2.0):
     dependencies:
       '@vitest/expect': 2.1.9
       '@vitest/mocker': 2.1.9(vite@5.4.21(@types/node@20.19.35))
@@ -5405,7 +5421,7 @@ snapshots:
       '@vitest/spy': 2.1.9
       '@vitest/utils': 2.1.9
       chai: 5.3.3
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@7.2.0)
       expect-type: 1.3.0
       magic-string: 0.30.21
       pathe: 1.1.2
@@ -5415,7 +5431,7 @@ snapshots:
       tinypool: 1.1.1
       tinyrainbow: 1.2.0
       vite: 5.4.21(@types/node@20.19.35)
-      vite-node: 2.1.9(@types/node@20.19.35)
+      vite-node: 2.1.9(@types/node@20.19.35)(supports-color@7.2.0)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 20.19.35
