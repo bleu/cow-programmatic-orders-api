@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, expectTypeOf } from "vitest";
 import { encodeAbiParameters, type Hex } from "viem";
 import {
   decodeTwapStaticInput,
@@ -12,7 +12,7 @@ import {
   decodeStaticInput,
 } from "../../src/decoders/index";
 import { TWAP_ABI } from "../../src/decoders/twap";
-import { STOP_LOSS_ABI } from "../../src/decoders/stop-loss";
+import { STOP_LOSS_ABI, type StopLossDecodedParams } from "../../src/decoders/stop-loss";
 import { PERPETUAL_SWAP_ABI } from "../../src/decoders/perpetual-swap";
 import { GOOD_AFTER_TIME_ABI } from "../../src/decoders/good-after-time";
 import { TRADE_ABOVE_THRESHOLD_ABI } from "../../src/decoders/trade-above-threshold";
@@ -167,13 +167,35 @@ describe("decodeErc4626CowSwapFeeBurnerStaticInput", () => {
   });
 });
 
-describe("decodeStaticInput error handling", () => {
-  it("throws on malformed staticInput for a known type", () => {
-    expect(() => decodeTwapStaticInput("0xdeadbeef")).toThrow();
+describe("decodeStaticInput", () => {
+  it("pairs the order type with native StopLoss parameters", () => {
+    const encoded = encodeAbiParameters(STOP_LOSS_ABI, [{
+      sellToken: ADDR_A, buyToken: ADDR_B, sellAmount: 500n, buyAmount: 400n,
+      appData: APP_DATA, receiver: ADDR_C, isSellOrder: true,
+      isPartiallyFillable: false, validTo: 86400, sellTokenPriceOracle: ADDR_A,
+      buyTokenPriceOracle: ADDR_B, strike: -1000n,
+      maxTimeSinceLastOracleUpdate: 3600n,
+    }]);
+    const order = decodeStaticInput("StopLoss", encoded);
+    if (order?.orderType !== "StopLoss") throw new Error("Expected a decoded StopLoss order");
+
+    expectTypeOf(order.decodedParams).toEqualTypeOf<StopLossDecodedParams>();
+    expect(order.decodedParams).toMatchObject({
+      sellAmount: 500n,
+      isSellOrder: true,
+      isPartiallyFillable: false,
+      validTo: 86400,
+    });
   });
 
-  it("returns null for Unknown order type", () => {
-    const result = decodeStaticInput("Unknown", "0x1234" as Hex);
-    expect(result).toBeNull();
+  it("throws on malformed staticInput for a known type", () => {
+    expect(() => decodeStaticInput("TWAP", "0xdeadbeef")).toThrow();
   });
+
+  it.each(["Unknown", "CurveCowSwapBurner", "BalancerCowSwapFeeBurner", "CowAmmConstantProduct"] as const)(
+    "returns null for unsupported %s orders",
+    (orderType) => {
+      expect(decodeStaticInput(orderType, "0x1234")).toBeNull();
+    },
+  );
 });

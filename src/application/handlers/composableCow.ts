@@ -43,9 +43,9 @@ import {
   transaction,
 } from "ponder:schema";
 import { encodeAbiParameters, keccak256, type Hex } from "viem";
-import { getOrderTypeFromHandler, isOwnerBackfillEligible, type OrderType } from "../../utils/order-types";
+import { getOrderTypeFromHandler, isOwnerBackfillEligible } from "../../utils/order-types";
 import { decodeStaticInput } from "../../decoders/index";
-import { precomputeAndDiscover } from "../helpers/uidPrecompute";
+import { precomputeAndDiscover, type GeneratorDecodedOrder } from "../helpers/uidPrecompute";
 import { ZERO_TOTALS } from "../helpers/executedAmounts";
 import { CirclesBackingOrderAbi } from "../../../abis/CirclesBackingOrderAbi";
 import { log } from "../helpers/logger";
@@ -109,8 +109,7 @@ async function insertGenerator(
 ): Promise<{
   ownerAddress: Hex;
   chainId: number;
-  decodedParams: Record<string, string> | null;
-  orderType: OrderType;
+  decodedOrder: GeneratorDecodedOrder;
 }> {
   const { owner, params } = event.args;
   const { handler, salt, staticInput } = params;
@@ -141,38 +140,29 @@ async function insertGenerator(
   }
 
   // Decode staticInput; for CirclesBackingOrder, also merge in handler immutables.
-  let decodedParams: Record<string, string> | null = null;
+  let decodedOrder: GeneratorDecodedOrder = { orderType, decodedParams: null };
   let decodeError: string | null = null;
 
   if (orderType !== "Unknown") {
     try {
-      const decoded = decodeStaticInput(orderType, staticInput) ?? null;
-      // Resolve t0=0: the contract uses block.timestamp when staticInput has t0=0.
-      // Store the resolved value so precompute always has the real start time.
-      if (
-        decoded &&
-        orderType === "TWAP" &&
-        BigInt(((decoded as Record<string, unknown>).t0 as bigint) ?? 0n) === 0n
-      ) {
-        (decoded as Record<string, unknown>).t0 = event.block.timestamp;
+      const decoded = decodeStaticInput(orderType, staticInput);
+      // Resolve t0=0 before storing or calculating TWAP parts.
+      if (decoded?.orderType === "TWAP" && decoded.decodedParams.t0 === 0n) {
+        decoded.decodedParams.t0 = event.block.timestamp;
       }
-      decodedParams = decoded
-        ? (replaceBigInts(decoded, String) as Record<string, string>)
-        : null;
 
-      if (orderType === "CirclesBackingOrder" && decodedParams) {
-        const { sellToken, sellAmount } = await fetchCirclesBackingImmutables(
-          context, chainId, handler,
-        );
-        decodedParams = {
-          ...decodedParams,
-          sellToken,
-          sellAmount: sellAmount.toString(),
+      if (decoded?.orderType === "CirclesBackingOrder") {
+        const immutables = await fetchCirclesBackingImmutables(context, chainId, handler);
+        decodedOrder = {
+          orderType: decoded.orderType,
+          decodedParams: { ...decoded.decodedParams, ...immutables },
         };
+      } else if (decoded) {
+        decodedOrder = decoded;
       }
     } catch (err) {
       log("warn", "composableCow:decodeFailed", { event: event.id, orderType, err: String(err) });
-      decodedParams = null;
+      decodedOrder = { orderType, decodedParams: null };
       decodeError = "invalid_static_input";
     }
   }
@@ -220,7 +210,9 @@ async function insertGenerator(
       hash,
       orderType,
       status: "Active",
-      decodedParams,
+      decodedParams: decodedOrder.decodedParams
+        ? replaceBigInts(decodedOrder.decodedParams, String)
+        : null,
       decodeError,
       additionalData: orderType === "TWAP" ? ZERO_TOTALS : null,
       txHash: event.transaction.hash,
@@ -236,7 +228,7 @@ async function insertGenerator(
     })
     .onConflictDoNothing();
 
-  return { ownerAddress, chainId, decodedParams, orderType };
+  return { ownerAddress, chainId, decodedOrder };
 }
 
 // ─── Backfill handler (ComposableCow — historical) ─────────────────────────
@@ -244,13 +236,13 @@ async function insertGenerator(
 ponder.on(
   "ComposableCow:ConditionalOrderCreated",
   async ({ event, context }) => {
-    const { ownerAddress, chainId, decodedParams, orderType } = await insertGenerator(event, context, false);
+    const { ownerAddress, chainId, decodedOrder } = await insertGenerator(event, context, false);
 
     // Pre-compute UIDs for deterministic order types (TWAP, StopLoss, CirclesBackingOrder).
     // Fetches status from API by UID, upserts discrete orders, and
     // deactivates the generator if all orders are already terminal.
     await precomputeAndDiscover(
-      context, chainId, event.id, ownerAddress, orderType, decodedParams, event.block.timestamp, event.block.number,
+      context, chainId, event.id, ownerAddress, decodedOrder, event.block.timestamp, event.block.number,
     );
   },
 );
@@ -262,10 +254,10 @@ ponder.on(
 ponder.on(
   "ComposableCowLive:ConditionalOrderCreated",
   async ({ event, context }) => {
-    const { ownerAddress, chainId, decodedParams, orderType } = await insertGenerator(event, context, true);
+    const { ownerAddress, chainId, decodedOrder } = await insertGenerator(event, context, true);
 
     await precomputeAndDiscover(
-      context, chainId, event.id, ownerAddress, orderType, decodedParams, event.block.timestamp, event.block.number,
+      context, chainId, event.id, ownerAddress, decodedOrder, event.block.timestamp, event.block.number,
     );
   },
 );

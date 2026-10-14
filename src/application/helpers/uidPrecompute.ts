@@ -15,7 +15,11 @@
  * Reference: composable-cow/src/types/twap/TWAP.sol, StopLoss.sol, circles-lbp/CirclesBackingOrder.sol
  */
 
-import type { Hex } from "viem";
+import { isHex, type Hex } from "viem";
+import type { DecodedOrder } from "../../decoders";
+import type { StopLossDecodedParams } from "../../decoders/stop-loss";
+import type { TwapDecodedParams } from "../../decoders/twap";
+import type { CirclesBackingOrderDecodedParams } from "../../decoders/circles-backing-order";
 import type { Context } from "ponder:registry";
 import { and, eq, sql } from "ponder";
 import { candidateDiscreteOrder, conditionalOrderGenerator, discreteOrder } from "ponder:schema";
@@ -27,6 +31,16 @@ import { MAX_TWAP_PRECOMPUTE_PARTS } from "../../constants";
 import { refreshTwapExecutionState } from "./executedAmounts";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
+
+export type EnrichedCirclesDecodedParams = CirclesBackingOrderDecodedParams & {
+  sellToken: Hex;
+  sellAmount: bigint;
+};
+
+export type GeneratorDecodedOrder =
+  | Exclude<DecodedOrder, { orderType: "CirclesBackingOrder" }>
+  | { orderType: "CirclesBackingOrder"; decodedParams: EnrichedCirclesDecodedParams }
+  | { orderType: OrderType; decodedParams: null };
 
 export interface PrecomputedOrder {
   orderUid: string;
@@ -47,31 +61,29 @@ export interface PrecomputedOrder {
  *
  * @param chainId - chain ID
  * @param owner - order owner address
- * @param orderType - decoded order type
- * @param decodedParams - decoded staticInput params (stringified bigints)
+ * @param decodedOrder - order type paired with native decoded parameters
  * @param blockTimestamp - event.block.timestamp (used as t0 when t0=0 for TWAP)
  */
 export function precomputeOrderUids(
   chainId: number,
   owner: Hex,
-  orderType: OrderType,
-  decodedParams: Record<string, string> | null,
+  decodedOrder: GeneratorDecodedOrder,
   blockTimestamp: bigint,
 ): PrecomputedOrder[] | null {
-  if (!decodedParams) {
-    if (DETERMINISTIC_ORDER_TYPE[orderType]) {
-      log("warn", "precompute:skip", { orderType, owner, chainId, reason: "decodedParams_null" });
+  if (!decodedOrder.decodedParams) {
+    if (DETERMINISTIC_ORDER_TYPE[decodedOrder.orderType]) {
+      log("warn", "precompute:skip", { orderType: decodedOrder.orderType, owner, chainId, reason: "decodedParams_null" });
     }
     return null;
   }
 
-  switch (orderType) {
+  switch (decodedOrder.orderType) {
     case "TWAP":
-      return precomputeTwapUids(chainId, owner, decodedParams, blockTimestamp);
+      return precomputeTwapUids(chainId, owner, decodedOrder.decodedParams, blockTimestamp);
     case "StopLoss":
-      return precomputeStopLossUid(chainId, owner, decodedParams);
+      return precomputeStopLossUid(chainId, owner, decodedOrder.decodedParams);
     case "CirclesBackingOrder":
-      return precomputeCirclesBackingOrderUid(chainId, owner, decodedParams);
+      return precomputeCirclesBackingOrderUid(chainId, owner, decodedOrder.decodedParams);
     default:
       // PerpetualSwap, GoodAfterTime, TradeAboveThreshold — not deterministic
       return null;
@@ -91,12 +103,11 @@ export async function precomputeAndDiscover(
   chainId: number,
   generatorEventId: string,
   owner: Hex,
-  orderType: OrderType,
-  decodedParams: Record<string, string> | null,
+  decodedOrder: GeneratorDecodedOrder,
   blockTimestamp: bigint,
   blockNumber: bigint,
 ): Promise<boolean> {
-  const precomputed = precomputeOrderUids(chainId, owner, orderType, decodedParams, blockTimestamp);
+  const precomputed = precomputeOrderUids(chainId, owner, decodedOrder, blockTimestamp);
   if (!precomputed || precomputed.length === 0) return false;
 
   const uids = precomputed.map((o) => o.orderUid);
@@ -225,6 +236,11 @@ export async function precomputeAndDiscover(
   return false;
 }
 
+function requireHex(value: string): Hex {
+  if (!isHex(value)) throw new Error("Expected a decoded hex value");
+  return value;
+}
+
 // ─── TWAP ────────────────────────────────────────────────────────────────────
 
 /**
@@ -243,30 +259,15 @@ export async function precomputeAndDiscover(
 function precomputeTwapUids(
   chainId: number,
   owner: Hex,
-  params: Record<string, string>,
+  params: TwapDecodedParams,
   blockTimestamp: bigint,
 ): PrecomputedOrder[] | null {
-  const sellToken = params["sellToken"] as Hex | undefined;
-  const buyToken = params["buyToken"] as Hex | undefined;
-  const receiver = params["receiver"] as Hex | undefined;
-  const partSellAmount = params["partSellAmount"];
-  const minPartLimit = params["minPartLimit"];
-  const t0Raw = params["t0"];
-  const n = params["n"];
-  const t = params["t"];
-  const span = params["span"];
-  const appData = params["appData"] as Hex | undefined;
-
-  if (!sellToken || !buyToken || !partSellAmount || !minPartLimit || !n || !t || !appData) {
-    log("warn", "precompute:skip", { orderType: "TWAP", owner, chainId, reason: "missing_params", missing: [!sellToken && "sellToken", !buyToken && "buyToken", !partSellAmount && "partSellAmount", !minPartLimit && "minPartLimit", !n && "n", !t && "t", !appData && "appData"].filter(Boolean).join(",") });
-    return null;
-  }
-
-  const nParts = Number(BigInt(n));
-  const tSeconds = BigInt(t);
-  const spanSeconds = BigInt(span ?? "0");
+  const { sellToken, buyToken, receiver, partSellAmount, minPartLimit, t0: startTime, n, t, span, appData } = params;
+  const nParts = Number(n);
+  const tSeconds = t;
+  const spanSeconds = span;
   // When t0 = 0, the contract uses block.timestamp at creation
-  const t0 = BigInt(t0Raw ?? "0") === 0n ? blockTimestamp : BigInt(t0Raw!);
+  const t0 = startTime === 0n ? blockTimestamp : startTime;
 
   if (nParts <= 0 || tSeconds <= 0n) {
     log("warn", "precompute:skip", { orderType: "TWAP", owner, chainId, reason: "invalid_math", nParts, tSeconds: String(tSeconds) });
@@ -295,16 +296,16 @@ function precomputeTwapUids(
     const resolvedReceiver =
       receiver === "0x0000000000000000000000000000000000000000"
         ? owner
-        : (receiver ?? owner);
+        : receiver;
 
     const orderData: GPv2OrderData = {
-      sellToken,
-      buyToken,
-      receiver: resolvedReceiver as Hex,
-      sellAmount: BigInt(partSellAmount),
-      buyAmount: BigInt(minPartLimit),
+      sellToken: requireHex(sellToken),
+      buyToken: requireHex(buyToken),
+      receiver: requireHex(resolvedReceiver),
+      sellAmount: partSellAmount,
+      buyAmount: minPartLimit,
       validTo,
-      appData,
+      appData: requireHex(appData),
       feeAmount: 0n,
       kind: KIND_SELL,
       partiallyFillable: false,
@@ -317,8 +318,8 @@ function precomputeTwapUids(
     orders.push({
       orderUid: uid.toLowerCase(),
       validTo,
-      sellAmount: partSellAmount,
-      buyAmount: minPartLimit,
+      sellAmount: partSellAmount.toString(),
+      buyAmount: minPartLimit.toString(),
       feeAmount: "0",
       possibleValidAfterTimestamp: Number(t0 + partIndex * tSeconds),
     });
@@ -342,39 +343,25 @@ function precomputeTwapUids(
 function precomputeStopLossUid(
   chainId: number,
   owner: Hex,
-  params: Record<string, string>,
-): PrecomputedOrder[] | null {
-  const sellToken = params["sellToken"] as Hex | undefined;
-  const buyToken = params["buyToken"] as Hex | undefined;
-  const receiver = params["receiver"] as Hex | undefined;
-  const sellAmount = params["sellAmount"];
-  const buyAmount = params["buyAmount"];
-  const appData = params["appData"] as Hex | undefined;
-  const isSellOrder = params["isSellOrder"];
-  const isPartiallyFillable = params["isPartiallyFillable"];
-  const validTo = params["validTo"];
-
-  if (!sellToken || !buyToken || !sellAmount || !buyAmount || !appData || !validTo) {
-    log("warn", "precompute:skip", { orderType: "StopLoss", owner, chainId, reason: "missing_params", missing: [!sellToken && "sellToken", !buyToken && "buyToken", !sellAmount && "sellAmount", !buyAmount && "buyAmount", !appData && "appData", !validTo && "validTo"].filter(Boolean).join(",") });
-    return null;
-  }
-
+  params: StopLossDecodedParams,
+): PrecomputedOrder[] {
+  const { sellToken, buyToken, receiver, sellAmount, buyAmount, appData, isSellOrder, isPartiallyFillable, validTo } = params;
   const resolvedReceiver =
     receiver === "0x0000000000000000000000000000000000000000"
       ? owner
-      : (receiver ?? owner);
+      : receiver;
 
   const orderData: GPv2OrderData = {
-    sellToken,
-    buyToken,
-    receiver: resolvedReceiver as Hex,
-    sellAmount: BigInt(sellAmount),
-    buyAmount: BigInt(buyAmount),
-    validTo: Number(validTo),
-    appData,
+    sellToken: requireHex(sellToken),
+    buyToken: requireHex(buyToken),
+    receiver: requireHex(resolvedReceiver),
+    sellAmount,
+    buyAmount,
+    validTo,
+    appData: requireHex(appData),
     feeAmount: 0n,
-    kind: isSellOrder === "true" ? KIND_SELL : KIND_BUY,
-    partiallyFillable: isPartiallyFillable === "true",
+    kind: isSellOrder ? KIND_SELL : KIND_BUY,
+    partiallyFillable: isPartiallyFillable,
     sellTokenBalance: BALANCE_ERC20,
     buyTokenBalance: BALANCE_ERC20,
   };
@@ -383,9 +370,9 @@ function precomputeStopLossUid(
 
   return [{
     orderUid: uid.toLowerCase(),
-    validTo: Number(validTo),
-    sellAmount,
-    buyAmount,
+    validTo,
+    sellAmount: sellAmount.toString(),
+    buyAmount: buyAmount.toString(),
     feeAmount: "0",
     possibleValidAfterTimestamp: null,
   }];
@@ -409,27 +396,17 @@ function precomputeStopLossUid(
 function precomputeCirclesBackingOrderUid(
   chainId: number,
   owner: Hex,
-  params: Record<string, string>,
-): PrecomputedOrder[] | null {
-  const sellToken = params["sellToken"] as Hex | undefined;
-  const buyToken = params["buyToken"] as Hex | undefined;
-  const sellAmount = params["sellAmount"];
-  const buyAmount = params["buyAmount"];
-  const validTo = params["validTo"];
-  const appData = params["appData"] as Hex | undefined;
-
-  if (!sellToken || !buyToken || !sellAmount || !buyAmount || !validTo || !appData) {
-    return null;
-  }
-
+  params: EnrichedCirclesDecodedParams,
+): PrecomputedOrder[] {
+  const { sellToken, buyToken, sellAmount, buyAmount, validTo, appData } = params;
   const orderData: GPv2OrderData = {
     sellToken,
-    buyToken,
+    buyToken: requireHex(buyToken),
     receiver: owner,
-    sellAmount: BigInt(sellAmount),
-    buyAmount: BigInt(buyAmount),
-    validTo: Number(validTo),
-    appData,
+    sellAmount,
+    buyAmount,
+    validTo,
+    appData: requireHex(appData),
     feeAmount: 0n,
     kind: KIND_SELL,
     partiallyFillable: false,
@@ -441,9 +418,9 @@ function precomputeCirclesBackingOrderUid(
 
   return [{
     orderUid: uid.toLowerCase(),
-    validTo: Number(validTo),
-    sellAmount,
-    buyAmount,
+    validTo,
+    sellAmount: sellAmount.toString(),
+    buyAmount: buyAmount.toString(),
     feeAmount: "0",
     possibleValidAfterTimestamp: null,
   }];
