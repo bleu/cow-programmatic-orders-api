@@ -345,8 +345,8 @@ function precomputeStopLossUid(
   const sellAmount = params["sellAmount"];
   const buyAmount = params["buyAmount"];
   const appData = params["appData"] as Hex | undefined;
-  const isSellOrder = params["isSellOrder"];
-  const isPartiallyFillable = params["isPartiallyFillable"];
+  const isSellOrder = params["isSellOrder"] as string | boolean | undefined;
+  const isPartiallyFillable = params["isPartiallyFillable"] as string | boolean | undefined;
   const validTo = params["validTo"];
 
   if (!sellToken || !buyToken || !sellAmount || !buyAmount || !appData || !validTo) {
@@ -368,8 +368,8 @@ function precomputeStopLossUid(
     validTo: Number(validTo),
     appData,
     feeAmount: 0n,
-    kind: isSellOrder === "true" ? KIND_SELL : KIND_BUY,
-    partiallyFillable: isPartiallyFillable === "true",
+    kind: isSellOrder === true || isSellOrder === "true" ? KIND_SELL : KIND_BUY,
+    partiallyFillable: isPartiallyFillable === true || isPartiallyFillable === "true",
     sellTokenBalance: BALANCE_ERC20,
     buyTokenBalance: BALANCE_ERC20,
   };
