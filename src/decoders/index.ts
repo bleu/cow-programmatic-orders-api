@@ -20,16 +20,26 @@ export {
   decodeErc4626CowSwapFeeBurnerStaticInput,
 };
 
-export function decodeStaticInput(orderType: OrderType, staticInput: Hex): unknown {
+export type DecodedOrder =
+  | { orderType: "TWAP"; decodedParams: ReturnType<typeof decodeTwapStaticInput> }
+  | { orderType: "StopLoss"; decodedParams: ReturnType<typeof decodeStopLossStaticInput> }
+  | { orderType: "PerpetualSwap"; decodedParams: ReturnType<typeof decodePerpetualSwapStaticInput> }
+  | { orderType: "GoodAfterTime"; decodedParams: ReturnType<typeof decodeGoodAfterTimeStaticInput> }
+  | { orderType: "TradeAboveThreshold"; decodedParams: ReturnType<typeof decodeTradeAboveThresholdStaticInput> }
+  | { orderType: "CirclesBackingOrder"; decodedParams: ReturnType<typeof decodeCirclesBackingOrderStaticInput> }
+  | { orderType: "SwapOrderHandler"; decodedParams: ReturnType<typeof decodeSwapOrderHandlerStaticInput> }
+  | { orderType: "ERC4626CowSwapFeeBurner"; decodedParams: ReturnType<typeof decodeErc4626CowSwapFeeBurnerStaticInput> };
+
+export function decodeStaticInput(orderType: OrderType, staticInput: Hex): DecodedOrder | null {
   switch (orderType) {
-    case "TWAP":                    return decodeTwapStaticInput(staticInput);
-    case "StopLoss":                return decodeStopLossStaticInput(staticInput);
-    case "PerpetualSwap":           return decodePerpetualSwapStaticInput(staticInput);
-    case "GoodAfterTime":           return decodeGoodAfterTimeStaticInput(staticInput);
-    case "TradeAboveThreshold":     return decodeTradeAboveThresholdStaticInput(staticInput);
-    case "CirclesBackingOrder":     return decodeCirclesBackingOrderStaticInput(staticInput);
-    case "SwapOrderHandler":        return decodeSwapOrderHandlerStaticInput(staticInput);
-    case "ERC4626CowSwapFeeBurner": return decodeErc4626CowSwapFeeBurnerStaticInput(staticInput);
-    case "Unknown":                 return null;
+    case "TWAP":                    return { orderType, decodedParams: decodeTwapStaticInput(staticInput) };
+    case "StopLoss":                return { orderType, decodedParams: decodeStopLossStaticInput(staticInput) };
+    case "PerpetualSwap":           return { orderType, decodedParams: decodePerpetualSwapStaticInput(staticInput) };
+    case "GoodAfterTime":           return { orderType, decodedParams: decodeGoodAfterTimeStaticInput(staticInput) };
+    case "TradeAboveThreshold":     return { orderType, decodedParams: decodeTradeAboveThresholdStaticInput(staticInput) };
+    case "CirclesBackingOrder":     return { orderType, decodedParams: decodeCirclesBackingOrderStaticInput(staticInput) };
+    case "SwapOrderHandler":        return { orderType, decodedParams: decodeSwapOrderHandlerStaticInput(staticInput) };
+    case "ERC4626CowSwapFeeBurner": return { orderType, decodedParams: decodeErc4626CowSwapFeeBurnerStaticInput(staticInput) };
+    default:                        return null;
   }
 }
